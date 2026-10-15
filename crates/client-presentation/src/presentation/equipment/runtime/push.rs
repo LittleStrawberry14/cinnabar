@@ -283,10 +283,32 @@ impl EquipmentRuntime {
             .map_or(binding.geometry.identifier.as_ref(), |selected| {
                 selected.geometry.as_ref()
             });
-        let Some(geometry) = self.armor_geometry_for(geometry_identifier, from_pack) else {
+        let geometry = self
+            .armor_geometry_for(geometry_identifier, from_pack)
+            .map(|geometry| (geometry_identifier, geometry))
+            .or_else(|| {
+                if from_pack
+                    || selected.is_some()
+                    || binding.category != (EquipmentCategory::Armor { slot })
+                    || binding.geometry.resolution != EntityDependencyResolution::External
+                {
+                    return None;
+                }
+                // Native external models keep a static startup mesh without its owner scripts.
+                catalog
+                    .bindings_for(&item.identifier)
+                    .iter()
+                    .rev()
+                    .find_map(|fallback| {
+                        self.armor_geometry_for(&fallback.geometry.identifier, false)
+                            .map(|geometry| (fallback.geometry.identifier.as_ref(), geometry))
+                    })
+            });
+        let Some((geometry_identifier, geometry)) = geometry else {
             return;
         };
-        if geometry_identifier != binding.geometry.identifier.as_ref()
+        if selected.is_some()
+            && geometry_identifier != binding.geometry.identifier.as_ref()
             && self.selected_geometries.insert(geometry.rig)
         {
             let assets = if from_pack {

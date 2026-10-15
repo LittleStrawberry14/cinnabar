@@ -156,6 +156,48 @@ fn armour_stand_chestplates_and_leggings_keep_their_authored_bones() {
 }
 
 #[test]
+fn native_external_armour_keeps_its_startup_mesh_for_stands() {
+    let item = "minecraft:iron_chestplate";
+    let mut files = owner_armour_pack(item, false);
+    let mut ordinary: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
+    let mut player = ordinary.clone();
+    ordinary["minecraft:attachable"]["description"]["geometry"]["default"] =
+        "geometry.humanoid.armor.chestplate".into();
+    files[0].1 = serde_json::to_vec(&ordinary).unwrap();
+    player["minecraft:attachable"]["description"]["identifier"] =
+        "minecraft:iron_chestplate.player".into();
+    player["minecraft:attachable"]["description"]["item"] =
+        serde_json::json!({(item): "query.owner_identifier == 'minecraft:player'"});
+    player["minecraft:attachable"]["description"]["scripts"]["pre_animation"] =
+        serde_json::json!(["v.coat=1;"]);
+    files.push((
+        "attachables/player_armour.json".into(),
+        serde_json::to_vec(&player).unwrap(),
+    ));
+    let (mut runtime, pages) = startup_runtime(files);
+    let body = player_body(&mut runtime);
+    let mut stand = owner();
+    stand.kind = protocol::ActorKind::Entity {
+        identifier: "minecraft:armor_stand".into(),
+    };
+    let drawn = layers(&mut runtime, &body, &stand, &worn_armour(item, 1), 1);
+    assert_eq!(
+        drawn.len(),
+        1,
+        "native geometry keeps its static startup fallback"
+    );
+    assert_eq!(selected_pixel(&pages, &drawn[0]), PLAIN);
+    assert!(
+        drawn[0]
+            .submission
+            .input
+            .current_bones
+            .iter()
+            .any(|bone| { bone.translation_scale[3] > 0.0 })
+    );
+}
+
+#[test]
 fn armour_controllers_select_geometry_and_hide_only_their_own_bones() {
     let mut files = coat_pack("v.coat=0;");
     let mut model: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
