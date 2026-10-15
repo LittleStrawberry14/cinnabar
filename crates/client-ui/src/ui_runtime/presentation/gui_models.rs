@@ -519,10 +519,17 @@ impl UiPresentationRuntime {
             }
             let hand = hand.as_ref()?;
             if let Some(selected) = self.gui_models.selected_held[index].as_ref()
+                && selected.ready
                 && selected.item.identifier.as_ref() == hand.identifier.as_ref()
                 && selected.item.metadata == hand.metadata
             {
-                return Some(selected.model.with_grip(hand.grip).with_glint(hand.glint));
+                return Some(
+                    selected
+                        .model
+                        .as_ref()?
+                        .with_grip(hand.grip)
+                        .with_glint(hand.glint),
+                );
             }
             let (identifier, metadata) = Self::item_icon_key(
                 &hand.identifier,

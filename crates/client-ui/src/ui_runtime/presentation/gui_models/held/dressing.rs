@@ -62,14 +62,15 @@ impl UiPresentationRuntime {
                         uv: [0, 0, texture.width, texture.height],
                         glint: false,
                     },
-                )?
+                )
             };
             Some((binding, entities, Arc::clone(artwork), model))
         });
         self.wear_pack_equipment(
             worn,
             selected.each_ref().map(|selected| {
-                let (binding, _, artwork, _) = selected.as_ref()?;
+                let (binding, _, artwork, model) = selected.as_ref()?;
+                model.as_ref()?;
                 pack.as_ref().filter(|pack| Arc::ptr_eq(pack, artwork))?;
                 Some(binding.texture.identifier.as_ref())
             }),
@@ -84,35 +85,45 @@ impl UiPresentationRuntime {
                 let reusable = previous
                     .as_ref()
                     .filter(|previous| previous.matches(binding, &entities, &artwork, hand_pivots));
-                let source = if pack
-                    .as_ref()
-                    .is_some_and(|pack| Arc::ptr_eq(pack, &artwork))
-                {
-                    *self
-                        .gui_models
-                        .pack_equipment
-                        .regions
-                        .get(&binding.texture.identifier)?
-                } else if let Some(previous) = reusable {
-                    previous.model.source
-                } else {
-                    *self
-                        .gui_models
-                        .textures
-                        .get(&atlas::key([texture.width, texture.height], &texture.rgba8))?
-                };
-                let source = source.with_glint(entities.item_visuals().iter().any(|visual| {
-                    visual.key.identifier.as_ref() == hand.identifier.as_ref()
-                        && visual.key.metadata == hand.metadata
-                        && visual.glint.enabled().unwrap_or(false)
-                }));
-                model.source = source;
+                let source = model.as_ref().and_then(|_| {
+                    if pack
+                        .as_ref()
+                        .is_some_and(|pack| Arc::ptr_eq(pack, &artwork))
+                    {
+                        self.gui_models
+                            .pack_equipment
+                            .regions
+                            .get(&binding.texture.identifier)
+                            .copied()
+                    } else if let Some(previous) = reusable {
+                        previous
+                            .model
+                            .as_ref()
+                            .filter(|_| previous.ready)
+                            .map(|model| model.source)
+                    } else {
+                        self.gui_models
+                            .textures
+                            .get(&atlas::key([texture.width, texture.height], &texture.rgba8))
+                            .copied()
+                    }
+                });
+                let ready = source.is_some();
+                if let (Some(source), Some(model)) = (source, model.as_mut()) {
+                    model.source =
+                        source.with_glint(entities.item_visuals().iter().any(|visual| {
+                            visual.key.identifier.as_ref() == hand.identifier.as_ref()
+                                && visual.key.metadata == hand.metadata
+                                && visual.glint.enabled().unwrap_or(false)
+                        }));
+                }
                 if let Some(mut previous) = previous
                     && previous.item.identifier.as_ref() == hand.identifier.as_ref()
                     && previous.item.metadata == hand.metadata
                     && previous.matches(binding, &entities, &artwork, hand_pivots)
                 {
                     previous.model = model;
+                    previous.ready = ready;
                     return Some(previous);
                 }
                 Some(SelectedModel {
@@ -123,6 +134,7 @@ impl UiPresentationRuntime {
                     artwork,
                     definition: binding.attachable_identifier().into(),
                     entities,
+                    ready,
                     model,
                 })
             })();

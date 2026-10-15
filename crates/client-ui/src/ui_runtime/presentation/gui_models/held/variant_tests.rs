@@ -366,3 +366,6 @@ fn selection_consumers_ownerless_shield_thumbnail_keeps_the_ordinary_definition(
     .unwrap();
     assert_eq!(actual.vertices(), expected.vertices());
 }
+
+#[path = "selected_cache_tests.rs"]
+mod cache;

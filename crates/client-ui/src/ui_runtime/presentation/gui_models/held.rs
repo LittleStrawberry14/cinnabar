@@ -324,7 +324,10 @@ pub(super) struct SelectedModel {
     definition: Box<str>,
     entities: Arc<RuntimeEntityAssets>,
     artwork: Arc<RuntimeEquipmentCatalog>,
-    pub model: PreviewHeldModel,
+    /// Missing geometry is cached; unavailable artwork retains prepared geometry for retry.
+    pub model: Option<PreviewHeldModel>,
+    /// Whether the current atlas admits this model's artwork.
+    pub ready: bool,
 }
 
 impl SelectedModel {
@@ -339,6 +342,9 @@ impl SelectedModel {
         self.definition.as_ref() == binding.attachable_identifier()
             && Arc::ptr_eq(&self.entities, entities)
             && Arc::ptr_eq(&self.artwork, artwork)
-            && self.model.hand_pivots == hand_pivots
+            && self
+                .model
+                .as_ref()
+                .is_none_or(|model| model.hand_pivots == hand_pivots)
     }
 }
