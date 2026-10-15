@@ -343,6 +343,7 @@ impl CompiledEntityAssets {
     }
 }
 
+mod attachable;
 mod runtime;
 pub use runtime::RuntimeEntityAssets;
 

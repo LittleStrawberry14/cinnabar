@@ -306,6 +306,23 @@ impl EquipmentRuntime {
         texture: &str,
         source: &BindingSource,
     ) -> Option<(Arc<RuntimeEquipmentCatalog>, usize, ActorArtworkLocation)> {
+        let base = self.catalog.as_ref().unwrap_or(&source.catalog);
+        self.artwork_for_texture(texture, base).or_else(|| {
+            if !source.from_pack {
+                return None;
+            }
+            let catalog = self.catalog.as_ref()?;
+            let binding = catalog.bindings().get(source.startup?)?;
+            self.artwork_for_texture(&binding.texture.identifier, catalog)
+        })
+    }
+
+    /// Looks up one texture with pack precedence, without selecting another fallback binding.
+    fn artwork_for_texture(
+        &self,
+        texture: &str,
+        base: &Arc<RuntimeEquipmentCatalog>,
+    ) -> Option<(Arc<RuntimeEquipmentCatalog>, usize, ActorArtworkLocation)> {
         if let Some(pack) = &self.pack
             && let Some(artwork) = &pack.catalog
             && let Some(location) = pack.texture_locations.get(texture)
@@ -316,7 +333,6 @@ impl EquipmentRuntime {
         {
             return Some((Arc::clone(artwork), index, *location));
         }
-        let base = self.catalog.as_ref().unwrap_or(&source.catalog);
         if let Some(index) = base
             .textures()
             .iter()
@@ -325,21 +341,7 @@ impl EquipmentRuntime {
         {
             return Some((Arc::clone(base), index, *location));
         }
-        if !source.from_pack {
-            return None;
-        }
-        let catalog = self.catalog.as_ref()?;
-        let binding = catalog.bindings().get(source.startup?)?;
-        let texture = &binding.texture.identifier;
-        let index = catalog
-            .textures()
-            .iter()
-            .position(|image| &image.identifier == texture)?;
-        Some((
-            Arc::clone(catalog),
-            index,
-            *self.texture_locations.get(texture)?,
-        ))
+        None
     }
 
     pub(super) fn texture_location(

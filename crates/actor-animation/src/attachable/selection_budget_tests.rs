@@ -8,6 +8,19 @@ fn candidates(
     reads: usize,
     shared: bool,
 ) -> (Arc<RuntimeEntityAssets>, RuntimeEquipmentCatalog) {
+    let (compiled, catalog) = candidate_parts(count, reads, shared);
+    (
+        Arc::new(RuntimeEntityAssets::from_compiled(compiled).unwrap()),
+        catalog,
+    )
+}
+
+/// Builds sorted candidate symbols and selection-only rigs without overlapping geometry ranges.
+fn candidate_parts(
+    count: usize,
+    reads: usize,
+    shared: bool,
+) -> (assets::CompiledEntityAssets, RuntimeEquipmentCatalog) {
     let mut compiled = owner_reference_tests::compiled_fixture(true);
     compiled.rig_bindings[0].item_condition = None;
     compiled.molang_symbols[1].identifier = "query.is_sneaking".into();
@@ -52,11 +65,14 @@ fn candidates(
     let mut symbols = compiled.symbols.into_vec();
     let mut rigs = compiled.rig_bindings.into_vec();
     for index in 0..count {
-        let name: Box<str> = format!("fixture:candidate_{index:04}").into();
+        let name: Box<str> = format!("test:candidate_{index:04}").into();
         let mut symbol = symbols[4].clone();
         symbol.identifier = name.clone();
-        let mut rig = rigs[0].clone();
+        let mut rig = rigs[0];
         rig.entity_symbol = symbols.len() as u32;
+        rig.first_geometry = compiled.rig_geometries.len() as u32;
+        rig.geometry_count = 0;
+        rig.render_controller = None;
         rig.item_condition = Some(if shared { 0 } else { index as u32 });
         symbols.push(symbol);
         rigs.push(rig);
@@ -68,11 +84,11 @@ fn candidates(
     compiled.symbols = symbols.into();
     compiled.rig_bindings = rigs.into();
     let catalog = RuntimeEquipmentCatalog::from_parts([1; 32], bindings, Vec::new()).unwrap();
-    (
-        Arc::new(RuntimeEntityAssets::from_compiled(compiled).unwrap()),
-        catalog,
-    )
+    (compiled, catalog)
 }
+
+#[path = "selection_lookup_tests.rs"]
+mod lookup;
 
 /// Selects actual candidates and checks measured query work against the caller's spent budget.
 fn select(

@@ -32,6 +32,7 @@ pub struct RuntimeEntityAssets {
     pub(super) controller_animations: Arc<[EntityControllerAnimation]>,
     pub(super) controller_transitions: Arc<[EntityControllerTransition]>,
     pub(super) rig_bindings: Arc<[EntityRigBinding]>,
+    pub(super) attachable_rigs: Arc<[usize]>,
     pub(super) rig_geometries: Arc<[EntityRigGeometryBinding]>,
     pub(super) rig_animations: Arc<[EntityRigAnimationBinding]>,
     pub(super) rig_controllers: Arc<[EntityRigControllerBinding]>,
@@ -159,6 +160,7 @@ impl RuntimeEntityAssets {
     pub fn from_compiled(compiled: CompiledEntityAssets) -> Result<Self, AssetError> {
         let geometry_parents = validate_compiled(&compiled)?;
         let locator_catalog = locator::compile(&compiled.geometries, &geometry_parents)?;
+        let attachable_rigs = attachable::compile(&compiled.symbols, &compiled.rig_bindings);
         Ok(Self {
             carrier_identity: None,
             item_use_profiles: Arc::from(compiled.item_use_profiles),
@@ -185,6 +187,7 @@ impl RuntimeEntityAssets {
             controller_animations: Arc::from(compiled.controller_animations),
             controller_transitions: Arc::from(compiled.controller_transitions),
             rig_bindings: Arc::from(compiled.rig_bindings),
+            attachable_rigs,
             rig_geometries: Arc::from(compiled.rig_geometries),
             rig_animations: Arc::from(compiled.rig_animations),
             rig_controllers: Arc::from(compiled.rig_controllers),
