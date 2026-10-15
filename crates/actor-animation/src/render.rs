@@ -250,10 +250,11 @@ pub(super) fn evaluate_render(
     let mut output = Vec::new();
     let mut unresolved_artwork = false;
     let multitexture = assets::native_actor_uses_multitexture(assets, rig.binding);
-    let actor_color = assets
+    let symbol = assets
         .rig_bindings()
         .get(rig.binding)
-        .and_then(|binding| assets.symbols().get(binding.entity_symbol as usize))
+        .and_then(|binding| assets.symbols().get(binding.entity_symbol as usize));
+    let actor_color = symbol
         .filter(|symbol| symbol.kind == EntityAssetKind::Entity)
         .map_or([1.0; 4], |_| {
             super::query::wolf::default_render_color(evaluator.actor)
@@ -407,7 +408,10 @@ pub(super) fn evaluate_render(
             });
         }
     }
-    if output.is_empty() && unresolved_artwork {
+    if output.is_empty()
+        && unresolved_artwork
+        && symbol.is_some_and(|symbol| symbol.kind == EntityAssetKind::Attachable)
+    {
         Err(EvalError::Invalid)
     } else {
         Ok(output)
