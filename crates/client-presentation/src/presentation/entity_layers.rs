@@ -6,8 +6,8 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use actor_animation::ActorRigSnapshot;
 use actor_animation::{BoneTransform, RenderTextureLayer};
 use render_model::{
-    ACTOR_LAYER_BODY, ActorArtworkLocation, ActorArtworkPages, ActorRigSubmission,
-    pack_actor_light_without_lightmap, pack_overlay_rgba8,
+    ActorArtworkLocation, ActorArtworkPages, ActorRigSubmission, pack_actor_light_without_lightmap,
+    pack_overlay_rgba8,
 };
 use render_model::{EntityRigId, RenderBoneTransform, layer_geometry_rig_id};
 

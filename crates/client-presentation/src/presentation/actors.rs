@@ -7,7 +7,7 @@ use client_world::{ActorSnapshot, PlayerProfile};
 use protocol::{ActorKind, PlayerSkin};
 use render_api::SkinRgba8;
 use render_model::{
-    ActorSkinPixels, EntityRigId, MAX_RENDERED_PLAYERS, RenderBoneTransform,
+    ACTOR_LAYER_BODY, ActorSkinPixels, EntityRigId, MAX_RENDERED_PLAYERS, RenderBoneTransform,
     default_actor_skin_rgba8,
 };
 use {
