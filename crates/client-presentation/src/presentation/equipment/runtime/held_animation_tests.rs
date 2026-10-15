@@ -1187,3 +1187,6 @@ fn animated_held_attachables_skip_the_hurt_overlay_in_both_views() {
 
 #[path = "held_artwork_tests.rs"]
 mod artwork;
+
+#[path = "held_variant_tests.rs"]
+mod variants;

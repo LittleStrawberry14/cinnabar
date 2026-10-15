@@ -35,14 +35,31 @@ impl EquipmentRuntime {
             return None;
         }
         let (_, body_bones) = self.body_bones_for(body.input.rig)?;
-        let (catalog, from_pack) = self.binding_source(&item.identifier)?;
+        let (catalog, from_pack, index) = self.selected_binding_source(
+            item,
+            EquipmentAnimation {
+                owner,
+                rig: owner_rig,
+                frame_alpha: input.frame_alpha,
+                delta_seconds: input.delta_seconds.unwrap_or_default(),
+            },
+            input,
+        )?;
+        let binding = &catalog.bindings()[index];
+        if !matches!(
+            self.effective_category(&item.identifier, binding.category),
+            EquipmentCategory::Held | EquipmentCategory::Shield
+        ) {
+            return None;
+        }
         let (assets, runtime) = if from_pack {
             let pack = self.pack.as_mut()?;
             (Arc::clone(&pack.assets), &mut pack.attachables)
         } else {
             (Arc::clone(&self.assets), &mut self.attachables)
         };
-        let evaluated = runtime.evaluate(&item.identifier, owner, owner_rig, input)?;
+        let evaluated =
+            runtime.evaluate(binding.attachable_identifier(), owner, owner_rig, input)?;
         // Each hand has its own item texture page. Multi-layer attachables remain
         // explicitly incomplete rather than accidentally displaying an enchantment layer.
         let selected = evaluated

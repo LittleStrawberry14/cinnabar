@@ -464,53 +464,29 @@ impl EquipmentRuntime {
             }
             // Authored item poses use the owning actor and the same sampled body as equipment.
             let animated = animation
-                .filter(|_| {
+                .filter(|animation| {
                     if layer == LAYER_MAIN_HAND
                         && input.java.is_some()
                         && !self.is_vanilla_attachable(&item.identifier)
                     {
                         return false;
                     }
-                    self.binding_source(&item.identifier)
-                        .is_some_and(|(catalog, _)| {
-                            catalog.binding(&item.identifier).is_some_and(|binding| {
-                                matches!(
-                                    self.effective_category(&item.identifier, binding.category),
-                                    EquipmentCategory::Held | EquipmentCategory::Shield
-                                ) && (input.java.is_none()
-                                    || binding.third_person.literal().is_none())
-                            })
+                    self.held_binding_source(item, input, Some(*animation), layer == LAYER_OFF_HAND)
+                        .is_some_and(|(catalog, _, index)| {
+                            let binding = &catalog.bindings()[index];
+                            matches!(
+                                self.effective_category(&item.identifier, binding.category),
+                                EquipmentCategory::Held | EquipmentCategory::Shield
+                            ) && (input.java.is_none() || binding.third_person.literal().is_none())
                         })
                 })
                 .and_then(|animation| {
-                    let elapsed = animation
-                        .owner
-                        .is_using_item()
-                        .then_some(animation.rig.hand[1].use_ticks);
-                    let use_facts = input
-                        .main
-                        .as_ref()
-                        .map(|main| main.use_facts)
-                        .unwrap_or_default();
-                    let duration = use_facts.ticks.unwrap_or_default();
                     self.held_attachable(
                         body,
                         item,
                         animation.owner,
                         animation.rig,
-                        input.attachable_input(actor_animation::AttachableAnimationInput {
-                            off_hand: layer == LAYER_OFF_HAND,
-                            frame_alpha: animation.frame_alpha,
-                            use_elapsed_ticks: elapsed,
-                            delta_seconds: Some(animation.delta_seconds),
-                            animation_frame: inventory::ranged_animation_frame(
-                                use_facts.animation,
-                                elapsed,
-                                duration,
-                            ),
-                            max_use_ticks: duration,
-                            ..Default::default()
-                        }),
+                        animation.held_input(input, layer == LAYER_OFF_HAND),
                         None,
                     )
                 });
@@ -520,11 +496,11 @@ impl EquipmentRuntime {
             }
             match input.java.filter(|_| layer == LAYER_MAIN_HAND) {
                 Some(grip) => {
-                    if !self.push_attachable(body, item, layer, bone, false, layers) {
+                    if !self.push_attachable(body, item, layer, bone, (input, animation), layers) {
                         self.push_java_held(body, item, &bones, grip, layers);
                     }
                 }
-                None => self.push_held(body, item, layer, bone, layers),
+                None => self.push_held(body, item, layer, bone, (input, animation), layers),
             }
             if layers.len() == before {
                 self.note_missing_layer(item, None, bone);

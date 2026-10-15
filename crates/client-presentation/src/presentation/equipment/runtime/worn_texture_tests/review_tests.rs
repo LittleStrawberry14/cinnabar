@@ -176,3 +176,59 @@ fn an_unplaceable_armour_bone_keeps_controller_texture_and_other_bones() {
     assert_eq!(poses[1].translation_scale[3], 0.0);
     assert_eq!(poses[2].translation_scale[3], 0.0);
 }
+
+#[test]
+fn partial_artwork_preserves_available_missing_disabled_and_hidden_branches() {
+    for (branch, active, hidden) in [
+        (0, true, false),
+        (1, true, false),
+        (1, false, false),
+        (0, true, true),
+        (1, true, true),
+    ] {
+        let (mut runtime, base_pages) = startup_runtime(coat_pack("v.coat=0;"));
+        let body = player_body(&mut runtime);
+        let mut files = coat_pack(&format!("v.coat={branch};"));
+        files.retain(|(path, _)| path.as_ref() != "textures/models/coat_painted.png");
+        files[3].0 = "textures/models/coat_available.png".into();
+        files[3].1 = texture(PAINTED);
+        let mut definition: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
+        definition["minecraft:attachable"]["description"]["textures"]["plain"] =
+            "textures/models/coat_available".into();
+        definition["minecraft:attachable"]["description"]["render_controllers"] =
+            serde_json::json!([{"controller.render.test_coat": if active {"1"} else {"0"}}]);
+        files[0].1 = serde_json::to_vec(&definition).unwrap();
+        if hidden {
+            let mut controller: serde_json::Value = serde_json::from_slice(&files[2].1).unwrap();
+            controller["render_controllers"]["controller.render.test_coat"]["part_visibility"] =
+                serde_json::json!([{"*":"0"}]);
+            files[2].1 = serde_json::to_vec(&controller).unwrap();
+        }
+        let (entities, catalog) = pack_catalog(files);
+        let (pages, locations) =
+            base_pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+        runtime.set_pack_layer(Some((entities, Some(catalog), locations)));
+        let drawn = layers(&mut runtime, &body, &owner(), &helmet(), 1);
+        if !active || (hidden && branch == 1) {
+            assert!(
+                drawn.is_empty(),
+                "inactive or fully hidden missing artwork must stay hidden"
+            );
+        } else {
+            assert_eq!(drawn.len(), 1, "active branch {branch} must retain artwork");
+            assert_eq!(
+                selected_pixel(&pages, &drawn[0]),
+                if branch == 0 { PAINTED } else { PLAIN }
+            );
+            assert_eq!(
+                drawn[0]
+                    .submission
+                    .input
+                    .current_bones
+                    .iter()
+                    .all(|bone| bone.translation_scale[3] == 0.0),
+                hidden
+            );
+        }
+    }
+}

@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 mod owner_predicates;
 mod texture_resolution;
+mod variant_transforms;
 
 const MANIFEST: &[u8] = include_bytes!("../../../../../assets/vanilla-source.json");
 

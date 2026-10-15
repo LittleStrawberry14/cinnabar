@@ -268,10 +268,6 @@ pub(super) fn evaluate_render(
         {
             continue;
         }
-        if layer.unresolved_textures {
-            unresolved_artwork = true;
-            continue;
-        }
         let choices = render
             .geometries
             .get(
@@ -319,6 +315,11 @@ pub(super) fn evaluate_render(
                 }
             }
         }
+        let visible = hidden.iter().any(|hidden| !hidden);
+        if layer.unresolved_textures {
+            unresolved_artwork |= visible;
+            continue;
+        }
         let hidden_bones: Arc<[u32]> = hidden
             .iter()
             .enumerate()
@@ -358,6 +359,7 @@ pub(super) fn evaluate_render(
                         ..slot.first_candidate as usize + usize::from(slot.candidate_count),
                 )
                 .ok_or(EvalError::Invalid)?;
+            let mut resolved = false;
             for candidate in candidates {
                 budget.charge_work()?;
                 let selected = match candidate.condition {
@@ -367,6 +369,7 @@ pub(super) fn evaluate_render(
                         .truthy(),
                 };
                 if selected {
+                    resolved = true;
                     // Later slots are samplers for this draw, not additional mesh layers.
                     if multitexture || texture_slot == 0 {
                         selected_sources.push(candidate.source);
@@ -374,6 +377,8 @@ pub(super) fn evaluate_render(
                     break;
                 }
             }
+            // A live selector with no source is missing artwork, not a disabled controller.
+            unresolved_artwork |= texture_slot == 0 && !resolved && visible;
         }
         if multitexture && selected_sources.len() != 3 {
             continue;

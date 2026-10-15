@@ -37,11 +37,68 @@ impl EquipmentRuntime {
         animation: EquipmentAnimation<'_>,
         slot: ArmorSlot,
     ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
-        let variables = [(
+        self.selected_binding_source(item, animation, animation.worn_input(equipment, slot, &[]))
+    }
+
+    /// Selects held variants with the same owner timing and hand context as animation.
+    pub(super) fn held_binding_source(
+        &mut self,
+        item: &WornItem,
+        equipment: &ActorEquipmentInput,
+        animation: Option<EquipmentAnimation<'_>>,
+        off_hand: bool,
+    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+        if let Some(animation) = animation {
+            return self.selected_binding_source(
+                item,
+                animation,
+                animation.held_input(equipment, off_hand),
+            );
+        }
+        // Without an owner, conditional definitions cannot be admitted.
+        [
+            self.pack
+                .as_ref()
+                .and_then(|pack| pack.catalog.as_ref())
+                .map(|catalog| (catalog, true)),
+            self.catalog.as_ref().map(|catalog| (catalog, false)),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|(catalog, from_pack)| {
+            let start = catalog
+                .bindings()
+                .partition_point(|binding| binding.identifier.as_ref() < item.identifier.as_ref());
+            let offset = catalog
+                .bindings_for(&item.identifier)
+                .iter()
+                .rposition(|binding| binding.attachable.is_none())?;
+            Some((Arc::clone(catalog), from_pack, start + offset))
+        })
+    }
+
+    /// Admits one drawable definition using the caller's complete inputs and a shared budget.
+    pub(super) fn selected_binding_source(
+        &mut self,
+        item: &WornItem,
+        animation: EquipmentAnimation<'_>,
+        input: actor_animation::AttachableAnimationInput<'_>,
+    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+        let enchanted = (
             assets::entity::EngineVariable::IsEnchanted.name(),
             f32::from(item.enchanted),
-        )];
-        let input = animation.worn_input(equipment, slot, &variables);
+        );
+        let variables = if input.owner_variables.is_empty() {
+            std::borrow::Cow::Borrowed(std::slice::from_ref(&enchanted))
+        } else {
+            let mut values = input.owner_variables.to_vec();
+            values.push(enchanted);
+            std::borrow::Cow::Owned(values)
+        };
+        let input = actor_animation::AttachableAnimationInput {
+            owner_variables: &variables,
+            ..input
+        };
         let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
         if let Some(pack) = self.pack.as_mut()
             && let Some(catalog) = pack.catalog.as_ref()

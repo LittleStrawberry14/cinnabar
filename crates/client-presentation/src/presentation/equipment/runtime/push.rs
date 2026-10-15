@@ -14,9 +14,10 @@ impl EquipmentRuntime {
         item: &WornItem,
         layer: u8,
         hand: Option<usize>,
+        context: (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
         layers: &mut Vec<EquipmentPresentation>,
     ) {
-        if self.push_attachable(body, item, layer, hand, layer == LAYER_OFF_HAND, layers) {
+        if self.push_attachable(body, item, layer, hand, context, layers) {
             return;
         }
         self.push_attached(body, item, layer, hand, None, layers);
@@ -31,7 +32,7 @@ impl EquipmentRuntime {
         item: &WornItem,
         layer: u8,
         hand: Option<usize>,
-        off_hand: bool,
+        (equipment, animation): (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
         layers: &mut Vec<EquipmentPresentation>,
     ) -> bool {
         if self.uses_native_item_mesh(&item.identifier) {
@@ -40,12 +41,13 @@ impl EquipmentRuntime {
         let Some(hand) = hand else {
             return false;
         };
-        let Some((catalog, from_pack)) = self.binding_source(&item.identifier) else {
+        let off_hand = layer == LAYER_OFF_HAND;
+        let Some((catalog, from_pack, index)) =
+            self.held_binding_source(item, equipment, animation, off_hand)
+        else {
             return false;
         };
-        let Some(binding) = catalog.binding(&item.identifier) else {
-            return false;
-        };
+        let binding = &catalog.bindings()[index];
         let Some((_, _, location)) = self.draw_artwork(
             &item.identifier,
             &binding.texture.identifier,

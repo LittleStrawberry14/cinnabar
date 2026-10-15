@@ -122,12 +122,13 @@ pub(super) fn compile_bindings(
     Ok(bindings.into_boxed_slice())
 }
 
-/// Literal transforms keyed by item identifier, for `item::compile`.
+/// Ordinary definitions supply item defaults; owner mappings stay in the runtime catalog.
 pub(super) fn transform_lookup(
     bindings: &[EquipmentBinding],
 ) -> BTreeMap<Box<str>, ItemTransforms> {
     bindings
         .iter()
+        .filter(|binding| binding.attachable.is_none())
         .map(|binding| {
             (
                 binding.identifier.clone(),

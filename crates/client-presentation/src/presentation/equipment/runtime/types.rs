@@ -158,6 +158,19 @@ pub(super) struct WornRender {
 }
 
 impl EquipmentAnimation<'_> {
+    /// Supplies held selection and animation with identical hand, owner and use inputs.
+    pub(super) fn held_input<'a>(
+        self,
+        equipment: &'a ActorEquipmentInput,
+        off_hand: bool,
+    ) -> actor_animation::AttachableAnimationInput<'a> {
+        actor_animation::AttachableAnimationInput {
+            off_hand,
+            worn: false,
+            ..self.worn_input(equipment, assets::ArmorSlot::Helmet, &[])
+        }
+    }
+
     /// Supplies the same main-hand use clock to worn selection and controller evaluation.
     pub(super) fn worn_input<'a>(
         self,
