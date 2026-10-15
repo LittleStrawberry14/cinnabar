@@ -52,7 +52,7 @@ fn worn_armour(item: &str, slot: usize) -> ActorEquipmentInput {
 }
 
 #[test]
-fn owner_specific_chestplates_and_leggings_keep_the_player_definition() {
+fn armour_owner_conditions_keep_player_chestplates_and_leggings() {
     for (item, slot) in [
         ("minecraft:iron_chestplate", 1),
         ("minecraft:iron_leggings", 2),
@@ -106,7 +106,7 @@ fn armour_stand_chestplates_and_leggings_keep_their_authored_bones() {
 }
 
 #[test]
-fn worn_controllers_select_geometry_and_hide_only_their_own_bones() {
+fn armour_controllers_select_geometry_and_hide_only_their_own_bones() {
     let mut files = coat_pack("v.coat=0;");
     let mut model: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
     let mut alternate = model["minecraft:geometry"][0].clone();
