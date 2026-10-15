@@ -37,7 +37,10 @@ impl EquipmentRuntime {
         animation: EquipmentAnimation<'_>,
         slot: ArmorSlot,
     ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
-        let variables = [("variable.is_enchanted", f32::from(item.enchanted))];
+        let variables = [(
+            assets::entity::EngineVariable::IsEnchanted.name(),
+            f32::from(item.enchanted),
+        )];
         let input = equipment.attachable_input(actor_animation::AttachableAnimationInput {
             worn: true,
             worn_slot: slot as u8,
