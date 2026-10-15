@@ -239,12 +239,13 @@ fn color(
 }
 
 /// Evaluates the rig's render controllers against the actor's Molang state.
+/// Unavailable attachable artwork returns `None` without invalidating authored state.
 pub(super) fn evaluate_render(
     evaluator: &Evaluator<'_>,
     variables: &mut MolangVariables,
     rig: RenderRig<'_>,
     budget: &mut EvalBudget<'_>,
-) -> Result<Vec<RenderTextureLayer>, EvalError> {
+) -> Result<Option<Vec<RenderTextureLayer>>, EvalError> {
     let assets = evaluator.assets;
     let render = assets.render_data();
     let mut output = Vec::new();
@@ -417,9 +418,9 @@ pub(super) fn evaluate_render(
         && unresolved_artwork
         && symbol.is_some_and(|symbol| symbol.kind == EntityAssetKind::Attachable)
     {
-        Err(EvalError::Invalid)
+        Ok(None)
     } else {
-        Ok(output)
+        Ok(Some(output))
     }
 }
 

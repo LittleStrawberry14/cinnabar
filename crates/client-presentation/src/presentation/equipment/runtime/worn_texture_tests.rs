@@ -461,3 +461,6 @@ fn worn_elytra_receives_the_attachable_render_delta() {
 
 #[path = "worn_texture_tests/review_tests.rs"]
 mod review_tests;
+
+#[path = "worn_texture_tests/artwork_state_tests.rs"]
+mod artwork_state_tests;

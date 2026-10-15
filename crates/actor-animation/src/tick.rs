@@ -715,7 +715,10 @@ pub(super) fn evaluate_state(
         },
         budget,
     )
-    .and_then(|mut layers| {
+    .and_then(|layers| {
+        let Some(mut layers) = layers else {
+            return Ok(None);
+        };
         let posed = super::render::pose_layers(
             &evaluator,
             &variables,
@@ -728,10 +731,10 @@ pub(super) fn evaluate_state(
         if !state.initialized {
             posed?;
         }
-        Ok(layers)
+        Ok(Some(layers))
     });
     let render = match render {
-        Ok(layers) => Some(layers),
+        Ok(layers) => layers,
         Err(error) if !state.initialized => return Err(error),
         Err(_) => None,
     };
