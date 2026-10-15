@@ -457,3 +457,6 @@ fn worn_elytra_receives_the_attachable_render_delta() {
         assert_eq!(selected_pixel(&pages, &layer[0]), expected);
     }
 }
+
+#[path = "worn_texture_tests/review_tests.rs"]
+mod review_tests;

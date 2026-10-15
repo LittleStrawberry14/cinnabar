@@ -157,7 +157,7 @@ pub(super) fn compile_render(
         else {
             continue;
         };
-        if rig_geometries.get(rig.first_geometry as usize).is_none() {
+        if rig.geometry_count == 0 {
             continue;
         }
         let geometry_aliases = lowercase_map(description.get("geometry"));

@@ -176,6 +176,7 @@ pub struct AttachablesRuntime {
     previewed: Vec<AttachableKey>,
     selection_variables: evaluation::MolangVariables,
     selection_stack: Vec<evaluation::MolangValue>,
+    selections: selection::SelectionCache,
     #[cfg(test)]
     commits: u64,
 }
@@ -188,6 +189,7 @@ impl AttachablesRuntime {
             layout,
             selection_variables,
             selection_stack: Vec::new(),
+            selections: selection::SelectionCache::default(),
             assets,
             states: BTreeMap::new(),
             evaluations: 0,
@@ -201,6 +203,7 @@ impl AttachablesRuntime {
     /// Discards owner lifetimes when a session ends or its active asset catalog changes.
     pub fn clear(&mut self) {
         self.states.clear();
+        self.selections = selection::SelectionCache::default();
         self.previewed.clear();
         self.previewing = false;
     }
@@ -504,3 +507,7 @@ mod parent_frame_tests;
 
 #[cfg(test)]
 mod spear_tests;
+
+#[cfg(test)]
+#[path = "attachable/selection_tests.rs"]
+mod review_tests;

@@ -156,3 +156,39 @@ pub(super) struct WornRender {
     pub layer: actor_animation::RenderTextureLayer,
     pub pose: Vec<render_model::RenderBoneTransform>,
 }
+
+impl EquipmentAnimation<'_> {
+    /// Supplies the same main-hand use clock to worn selection and controller evaluation.
+    pub(super) fn worn_input<'a>(
+        self,
+        equipment: &'a ActorEquipmentInput,
+        slot: assets::ArmorSlot,
+        variables: &'a [(&'a str, f32)],
+    ) -> actor_animation::AttachableAnimationInput<'a> {
+        let elapsed = self
+            .owner
+            .is_using_item()
+            .then_some(self.rig.hand[1].use_ticks);
+        let use_facts = equipment
+            .main
+            .as_ref()
+            .map(|main| main.use_facts)
+            .unwrap_or_default();
+        let duration = use_facts.ticks.unwrap_or_default();
+        equipment.attachable_input(actor_animation::AttachableAnimationInput {
+            worn: true,
+            worn_slot: slot as u8,
+            frame_alpha: self.frame_alpha,
+            delta_seconds: Some(self.delta_seconds),
+            use_elapsed_ticks: elapsed,
+            max_use_ticks: duration,
+            animation_frame: inventory::ranged_animation_frame(
+                use_facts.animation,
+                elapsed,
+                duration,
+            ),
+            owner_variables: variables,
+            ..Default::default()
+        })
+    }
+}

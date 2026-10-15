@@ -412,32 +412,11 @@ impl EquipmentRuntime {
         body: &ActorRigSubmission,
         bones: &BodyBones,
     ) -> Result<Option<types::WornRender>, ()> {
-        let elapsed = animation
-            .owner
-            .is_using_item()
-            .then_some(animation.rig.hand[1].use_ticks);
-        let use_facts = equipment
-            .main
-            .as_ref()
-            .map(|main| main.use_facts)
-            .unwrap_or_default();
-        let duration = use_facts.ticks.unwrap_or_default();
-        let variables = [("variable.is_enchanted", f32::from(item.enchanted))];
-        let input = equipment.attachable_input(actor_animation::AttachableAnimationInput {
-            worn: true,
-            worn_slot: slot as u8,
-            frame_alpha: animation.frame_alpha,
-            use_elapsed_ticks: elapsed,
-            delta_seconds: Some(animation.delta_seconds),
-            animation_frame: inventory::ranged_animation_frame(
-                use_facts.animation,
-                elapsed,
-                duration,
-            ),
-            max_use_ticks: duration,
-            owner_variables: &variables,
-            ..Default::default()
-        });
+        let variables = [(
+            assets::entity::EngineVariable::IsEnchanted.name(),
+            f32::from(item.enchanted),
+        )];
+        let input = animation.worn_input(equipment, slot, &variables);
         let (assets, runtime) = if from_pack {
             let pack = self.pack.as_mut().ok_or(())?;
             (&pack.assets, &mut pack.attachables)
@@ -495,8 +474,8 @@ impl EquipmentRuntime {
                 )?;
                 modern::compose_parent(parent, *local)
             })
-            .collect::<Option<Vec<_>>>()
-            .ok_or(())?;
+            .map(|pose| pose.unwrap_or_else(hidden_bone))
+            .collect();
         let path = &assets.sources().get(layer.source as usize).ok_or(())?.path;
         let texture = path
             .strip_suffix(".png")

@@ -196,7 +196,9 @@ fn with_equipment_geometry(
     }
     for rig in &mut compiled.rig_bindings {
         rig.entity_symbol = symbol_indices[rig.entity_symbol as usize];
-        rig.render_controller = symbol_indices[rig.render_controller as usize];
+        rig.render_controller = rig
+            .render_controller
+            .map(|index| symbol_indices[index as usize]);
     }
     let bytes = assets::encode_entity_blob(&compiled).unwrap();
     Arc::new(assets::RuntimeEntityAssets::decode(&bytes).unwrap())

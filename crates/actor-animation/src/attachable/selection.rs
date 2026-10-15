@@ -1,6 +1,36 @@
 //! Owner conditions select an item definition before its animation state is created.
 use super::*;
-use crate::evaluation::Evaluator;
+use crate::evaluation::{Evaluator, ObservedInputs};
+
+type SelectionKey = (AttachableKey, u32);
+
+/// Bounded predicate results whose observed owner inputs are still identical.
+#[derive(Debug, Default)]
+pub(super) struct SelectionCache {
+    entries: BTreeMap<SelectionKey, (ObservedInputs, bool)>,
+    weight: usize,
+}
+
+impl SelectionCache {
+    /// Replaces an entry and evicts entries before retained reads exceed one world budget.
+    fn insert(&mut self, key: SelectionKey, reads: ObservedInputs, result: bool) {
+        if let Some((old, _)) = self.entries.remove(&key) {
+            self.weight -= old.weight();
+        }
+        let weight = reads.weight();
+        if weight > MAX_MOLANG_OPS_PER_WORLD_TICK {
+            return;
+        }
+        while self.weight + weight > MAX_MOLANG_OPS_PER_WORLD_TICK {
+            let Some((_, (old, _))) = self.entries.pop_first() else {
+                break;
+            };
+            self.weight -= old.weight();
+        }
+        self.weight += weight;
+        self.entries.insert(key, (reads, result));
+    }
+}
 
 impl AttachablesRuntime {
     /// Tests an owner condition within the caller's shared operation budget; absent rigs stay unresolved.
@@ -16,9 +46,6 @@ impl AttachablesRuntime {
         let Some(condition) = self.assets.rig_bindings()[binding].item_condition else {
             return Some(true);
         };
-        if *operations_left == 0 {
-            return Some(false);
-        }
         let frame_alpha = if input.frame_alpha.is_finite() {
             input.frame_alpha.clamp(0.0, 1.0)
         } else {
@@ -54,15 +81,6 @@ impl AttachablesRuntime {
             &context,
             &tick_input,
         );
-        let mut budget = EvalBudget {
-            actor_left: *operations_left,
-            world_left: operations_left,
-            work_left: MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK,
-            transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
-            used: 0,
-            stack: std::mem::take(&mut self.selection_stack),
-            static_draw: None,
-        };
         let evaluator = Evaluator {
             assets: &self.assets,
             pack: true,
@@ -82,15 +100,54 @@ impl AttachablesRuntime {
             bones: &[],
             bone_names: &[],
         };
-        let matches = evaluator
-            .run(
-                condition as usize,
-                &mut self.selection_variables,
-                0.0,
-                &mut budget,
-            )
-            .is_ok_and(|value| value.truthy());
+        let key = (
+            (
+                rig.actor,
+                input.off_hand,
+                input.first_person,
+                input.worn,
+                input.worn_slot,
+            ),
+            condition,
+        );
+        if self
+            .selections
+            .entries
+            .first_key_value()
+            .is_some_and(|((actor, _), _)| actor.0.session_id != rig.actor.session_id)
+        {
+            self.selections = SelectionCache::default();
+        }
+        if let Some((reads, result)) = self.selections.entries.get(&key)
+            && reads.matches(&evaluator, &self.selection_variables)
+        {
+            return Some(*result);
+        }
+        if *operations_left == 0 {
+            return Some(false);
+        }
+        let mut reads = ObservedInputs::new(&self.selection_variables);
+        let mut budget = EvalBudget {
+            actor_left: *operations_left,
+            world_left: operations_left,
+            work_left: MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK,
+            transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
+            used: 0,
+            stack: std::mem::take(&mut self.selection_stack),
+            static_draw: None,
+        };
+        let result = evaluator.run_observed(
+            condition as usize,
+            &mut self.selection_variables,
+            0.0,
+            &mut budget,
+            Some(&mut reads),
+        );
         self.selection_stack = budget.stack;
+        let matches = result.as_ref().is_ok_and(|value| value.truthy());
+        if result.is_ok() {
+            self.selections.insert(key, reads, matches);
+        }
         Some(matches)
     }
 }

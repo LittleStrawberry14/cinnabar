@@ -79,7 +79,7 @@ fn fixture(multiple_geometry: bool, fail_selected: bool) -> Arc<RuntimeEntityAss
         );
         compiled.symbols = symbols.into();
         compiled.rig_bindings[0].entity_symbol += 1;
-        compiled.rig_bindings[0].render_controller += 1;
+        *compiled.rig_bindings[0].render_controller.as_mut().unwrap() += 1;
         compiled.animation_clips[0].symbol += 1;
         let mut animations = compiled.rig_animations.into_vec();
         animations.push(animations[0]);

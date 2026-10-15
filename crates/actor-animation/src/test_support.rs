@@ -162,7 +162,7 @@ pub fn compiled_fixture() -> CompiledEntityAssets {
         rig_bindings: vec![EntityRigBinding {
             placement_frame: assets::placement::EntityPlacementFrame::Unresolved,
             entity_symbol: 4,
-            render_controller: 2,
+            render_controller: Some(2),
             first_geometry: 0,
             geometry_count: 1,
             fallback: EntityRigFallback::Skip,
@@ -251,7 +251,7 @@ pub fn counting_random_compiled(identifier: &str) -> assets::CompiledEntityAsset
     compiled.symbols[4].identifier = identifier.into();
     compiled.symbols.rotate_right(1);
     compiled.rig_bindings[0].entity_symbol = 0;
-    compiled.rig_bindings[0].render_controller = 3;
+    compiled.rig_bindings[0].render_controller = Some(3);
     compiled.animation_clips[0].symbol = 2;
     let scalar = |value| EntityGeometryScalar::new(value).unwrap();
     compiled.molang_ops = vec![

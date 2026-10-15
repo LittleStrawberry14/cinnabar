@@ -47,7 +47,9 @@ pub fn native_actor_uses_multitexture(entities: &RuntimeEntityAssets, binding: u
         entities.sources().get(symbol.source_index as usize)
     };
     source(rig.entity_symbol).is_some_and(|source| matches(&policy().multitexture_entities, source))
-        && source(rig.render_controller)
+        && rig
+            .render_controller
+            .and_then(source)
             .is_some_and(|source| matches(&policy().multitexture_controllers, source))
 }
 

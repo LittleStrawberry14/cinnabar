@@ -248,7 +248,9 @@ pub struct EntityRigBinding {
     /// The admitted placement and target-rotation contract for this exact rig.
     pub placement_frame: super::placement::EntityPlacementFrame,
     pub entity_symbol: u32,
-    pub render_controller: u32,
+    /// Absent when only an attachable owner condition can be compiled locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_controller: Option<u32>,
     pub first_geometry: u32,
     pub geometry_count: u16,
     pub fallback: EntityRigFallback,
@@ -417,7 +419,7 @@ impl RuntimeEntityAssets {
         &self.rig_bindings
     }
 
-    /// The unambiguous animated attachable rig with this authored identifier.
+    /// The unambiguous attachable rig, including selection-only rigs, with this identifier.
     #[must_use]
     pub fn attachable_rig_binding(&self, identifier: &str) -> Option<usize> {
         let mut matches = self.rig_bindings.iter().enumerate().filter(|(_, rig)| {

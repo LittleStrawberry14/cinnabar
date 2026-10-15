@@ -11,6 +11,7 @@ use pack_entity_compiler::compile_entity_assets_with_report;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
+mod owner_predicates;
 mod texture_resolution;
 
 const MANIFEST: &[u8] = include_bytes!("../../../../../assets/vanilla-source.json");

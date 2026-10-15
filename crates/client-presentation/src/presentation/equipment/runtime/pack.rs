@@ -41,14 +41,8 @@ impl EquipmentRuntime {
             assets::entity::EngineVariable::IsEnchanted.name(),
             f32::from(item.enchanted),
         )];
-        let input = equipment.attachable_input(actor_animation::AttachableAnimationInput {
-            worn: true,
-            worn_slot: slot as u8,
-            frame_alpha: animation.frame_alpha,
-            delta_seconds: Some(animation.delta_seconds),
-            owner_variables: &variables,
-            ..Default::default()
-        });
+        let input = animation.worn_input(equipment, slot, &variables);
+        let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
         if let Some(pack) = self.pack.as_mut()
             && let Some(catalog) = pack.catalog.as_ref()
             && let Some(index) = select_owner_binding(
@@ -57,6 +51,7 @@ impl EquipmentRuntime {
                 &item.identifier,
                 animation,
                 input,
+                &mut operations_left,
                 |binding| {
                     find_geometry_index(&pack.assets, &binding.geometry.identifier)
                         .or_else(|| find_geometry_index(&self.assets, &binding.geometry.identifier))
@@ -73,16 +68,13 @@ impl EquipmentRuntime {
             &item.identifier,
             animation,
             input,
-            |binding| find_geometry_index(&self.assets, &binding.geometry.identifier).is_some(),
-        )
-        .or_else(|| {
-            // Retain the static model fallback for native geometry absent from pack sources.
-            catalog.bindings().iter().rposition(|binding| {
-                binding.identifier.as_ref() == item.identifier.as_ref()
-                    && binding.attachable.is_none()
-                    && binding.geometry.resolution == EntityDependencyResolution::External
-            })
-        })?;
+            &mut operations_left,
+            |binding| {
+                find_geometry_index(&self.assets, &binding.geometry.identifier).is_some()
+                    || (binding.attachable.is_none()
+                        && binding.geometry.resolution == EntityDependencyResolution::External)
+            },
+        )?;
         Some((Arc::clone(catalog), false, index))
     }
 
@@ -323,9 +315,9 @@ fn select_owner_binding(
     identifier: &str,
     animation: EquipmentAnimation<'_>,
     input: actor_animation::AttachableAnimationInput<'_>,
+    operations_left: &mut usize,
     static_geometry: impl Fn(&assets::EquipmentBinding) -> bool,
 ) -> Option<usize> {
-    let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
     let start = catalog
         .bindings()
         .partition_point(|binding| binding.identifier.as_ref() < identifier);
@@ -336,15 +328,15 @@ fn select_owner_binding(
         .filter(|(_, binding)| binding.attachable.is_some())
         .chain(candidates.filter(|(_, binding)| binding.attachable.is_none()))
         .find_map(|(offset, binding)| {
-            runtime
+            let matches = runtime
                 .matches_owner(
                     binding.attachable_identifier(),
                     animation.owner,
                     animation.rig,
                     input,
-                    &mut operations_left,
+                    operations_left,
                 )
-                .unwrap_or_else(|| binding.attachable.is_none() && static_geometry(binding))
-                .then_some(start + offset)
+                .unwrap_or(binding.attachable.is_none());
+            (matches && static_geometry(binding)).then_some(start + offset)
         })
 }

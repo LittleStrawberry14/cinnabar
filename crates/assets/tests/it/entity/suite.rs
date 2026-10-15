@@ -601,7 +601,7 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
         rig_bindings: vec![EntityRigBinding {
             placement_frame: assets::placement::EntityPlacementFrame::Unresolved,
             entity_symbol: 0,
-            render_controller: 4,
+            render_controller: Some(4),
             first_geometry: 0,
             geometry_count: 1,
             fallback: EntityRigFallback::GeometryOnly,

@@ -61,15 +61,23 @@ pub(super) fn validate_rig_payload(compiled: &CompiledEntityAssets) -> Result<()
             &compiled.symbols,
             binding.entity_symbol,
             EntityAssetKind::Attachable,
-        ) || !index_has_kind(
-            &compiled.symbols,
-            binding.render_controller,
-            EntityAssetKind::RenderController,
-        ) || !range_in_bounds(
+        ) || binding.render_controller.is_some_and(|controller| {
+            !index_has_kind(
+                &compiled.symbols,
+                controller,
+                EntityAssetKind::RenderController,
+            )
+        }) || !range_in_bounds(
             binding.first_geometry,
             u32::from(binding.geometry_count),
             compiled.rig_geometries.len(),
-        ) || binding.geometry_count == 0
+        ) || (binding.geometry_count == 0
+            && !index_has_kind(
+                &compiled.symbols,
+                binding.entity_symbol,
+                EntityAssetKind::Attachable,
+            ))
+            || (binding.geometry_count > 0 && binding.render_controller.is_none())
             || [
                 binding.initialize,
                 binding.pre_animation,
