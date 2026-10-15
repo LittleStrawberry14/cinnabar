@@ -226,3 +226,6 @@ fn owner_context_held_enchantments_select_geometry_without_changing_intrinsic_gl
         }
     }
 }
+
+#[path = "selection_consumer_tests.rs"]
+mod consumers;

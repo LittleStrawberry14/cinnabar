@@ -472,8 +472,8 @@ impl EquipmentRuntime {
                         return false;
                     }
                     self.held_binding_source(item, input, Some(*animation), layer == LAYER_OFF_HAND)
-                        .is_some_and(|(catalog, _, index)| {
-                            let binding = &catalog.bindings()[index];
+                        .is_some_and(|source| {
+                            let binding = &source.catalog.bindings()[source.index];
                             matches!(
                                 self.effective_category(&item.identifier, binding.category),
                                 EquipmentCategory::Held | EquipmentCategory::Shield

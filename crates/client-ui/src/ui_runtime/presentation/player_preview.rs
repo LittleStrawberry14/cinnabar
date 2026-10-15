@@ -77,6 +77,7 @@ impl UiPresentationRuntime {
 
     /// Where worn armor textures come from; without it the model wears none.
     pub fn set_equipment_catalog(&mut self, catalog: Option<Arc<RuntimeEquipmentCatalog>>) {
+        self.gui_models.selected_held = [None, None];
         self.equipment_catalog = catalog;
     }
 
@@ -136,6 +137,20 @@ impl UiPresentationRuntime {
                 },
             })
         });
+        let hands = [held.as_ref(), off_hand.as_ref()].map(|item| {
+            let (identifier, stack, item) = item?;
+            Some((
+                PreviewHandItem {
+                    grip: Some(item.grip),
+                    glint: Some(runtime.item_glint(stack, item.glint)),
+                    identifier: Arc::clone(identifier),
+                    metadata: stack.metadata,
+                    use_animation: item.use_animation,
+                    charged_projectile: item.charged_projectile_role,
+                },
+                item.enchanted,
+            ))
+        });
         self.set_preview_gear(
             armor.each_ref().map(|worn| {
                 worn.as_ref().map(|(id, stack, item)| {
@@ -146,23 +161,12 @@ impl UiPresentationRuntime {
                     )
                 })
             }),
-            held.as_ref().map(|(id, stack, _)| (&**id, stack.metadata)),
+            hands,
             owner,
         );
         self.player_preview_gear.armor_glint = armor.each_ref().map(|worn| {
             worn.as_ref()
                 .is_some_and(|(_, stack, item)| runtime.item_glint(stack, item.glint))
-        });
-        self.player_preview_gear.hands = [held, off_hand].map(|item| {
-            let (identifier, stack, item) = item?;
-            Some(PreviewHandItem {
-                grip: Some(item.grip),
-                glint: Some(runtime.item_glint(&stack, item.glint)),
-                identifier,
-                metadata: stack.metadata,
-                use_animation: item.use_animation,
-                charged_projectile: item.charged_projectile_role,
-            })
         });
     }
 
@@ -175,7 +179,7 @@ impl UiPresentationRuntime {
     ) {
         self.set_preview_gear(
             armor.map(|item| item.map(|(id, dye)| (id, dye, false))),
-            held,
+            selection::standalone_hands(held),
             None,
         );
     }
@@ -184,7 +188,7 @@ impl UiPresentationRuntime {
     fn set_preview_gear(
         &mut self,
         armor: [Option<(&str, Option<u32>, bool)>; 4],
-        held: Option<(&str, u32)>,
+        hands: [Option<(PreviewHandItem, bool)>; 2],
         owner: Option<PreviewEquipmentOwner<'_>>,
     ) {
         let pack = self.gui_models.pack_equipment.source.clone();
@@ -192,22 +196,26 @@ impl UiPresentationRuntime {
         let mut budgets = [actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK; 4];
         let resolved: [_; 4] = std::array::from_fn(|slot| {
             let (identifier, dye, enchanted) = armor[slot]?;
-            let binding = self.preview_equipment_selection.binding(
+            let (binding, _) = self.preview_equipment_selection.binding(
                 base.as_deref(),
                 pack.as_deref(),
                 identifier,
                 enchanted,
                 owner,
-                slot,
+                Some(slot),
                 &mut budgets[slot],
             )?;
             worn_armor(binding, pack.as_deref(), base.as_deref(), dye)
         });
-        self.wear_pack_armor(std::array::from_fn(|slot| {
-            let (_, texture) = resolved[slot].as_ref()?;
-            pack.as_deref()?.texture(texture)?;
-            Some(*texture)
-        }));
+        self.prepare_preview_hands(
+            &hands,
+            owner,
+            std::array::from_fn(|slot| {
+                let (_, texture) = resolved[slot].as_ref()?;
+                pack.as_deref()?.texture(texture)?;
+                Some(*texture)
+            }),
+        );
         let armor = std::array::from_fn(|slot| {
             // A supplied image that could not fit the GUI atlas retains base artwork.
             if self.gui_models.enabled
@@ -218,31 +226,22 @@ impl UiPresentationRuntime {
                 && self.gui_models.pack_equipment.region(slot).is_none()
             {
                 let (identifier, dye, enchanted) = armor[slot]?;
-                let binding = self.preview_equipment_selection.binding(
+                let (binding, _) = self.preview_equipment_selection.binding(
                     base.as_deref(),
                     None,
                     identifier,
                     enchanted,
                     owner,
-                    slot,
+                    Some(slot),
                     &mut budgets[slot],
                 )?;
                 return worn_armor(binding, None, base.as_deref(), dye).map(|(preview, _)| preview);
             }
             resolved[slot].as_ref().map(|(preview, _)| preview.clone())
         });
-        let hands = [
-            held.map(|(identifier, metadata)| PreviewHandItem {
-                grip: None,
-                glint: None,
-                identifier: Arc::from(identifier),
-                metadata,
-                use_animation: assets::item_use::ItemUseAnimation::None,
-                charged_projectile: assets::item_use::ItemProjectileRole::None,
-            }),
-            None,
-        ];
-        let held = held.and_then(|(identifier, metadata)| {
+        let held = hands[0].as_ref().and_then(|(hand, _)| {
+            let identifier = hand.identifier.as_ref();
+            let metadata = hand.metadata;
             if let Some(sprite) = self.session_icons.sprite(identifier, metadata) {
                 return Some(PreviewTexture {
                     rgba: self.session_icons.sprite_pixels(identifier, metadata)?,
@@ -263,7 +262,7 @@ impl UiPresentationRuntime {
             armor,
             armor_glint: [false; 4],
             held,
-            hands,
+            hands: hands.map(|hand| hand.map(|(hand, _)| hand)),
         };
     }
 

@@ -337,11 +337,6 @@ impl AttachablesRuntime {
         }
         entry.static_draw = None;
         let state = &mut entry.rig;
-        let frame_alpha = if input.frame_alpha.is_finite() {
-            input.frame_alpha.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
         let mut context = selection::owner_context(owner_rig, input);
         if !input.worn && input.off_hand {
             context
@@ -352,30 +347,10 @@ impl AttachablesRuntime {
                 .main_hand
                 .get_or_insert_with(|| Arc::from(identifier));
         }
-        let mut item =
-            owner_rig.item_animation[0].interpolate(owner_rig.item_animation[1], frame_alpha);
-        item.attack_time = owner_rig.item_animation[0]
-            .interpolate(
-                owner_rig.item_animation[1],
-                owner_rig.java.local_swing_alpha.unwrap_or(frame_alpha),
-            )
-            .attack_time;
-        let offhand = owner_rig.off_hand_animation[0]
-            .interpolate(owner_rig.off_hand_animation[1], frame_alpha);
         state.history.clear();
-        state.history.push_back(ActorTickInput {
-            position: owner.position(),
-            velocity: owner.velocity(),
-            on_ground: owner.on_ground(),
-            body_yaw: owner_rig.body_yaw,
-            head_yaw: owner.head_yaw(),
-            pitch: owner.pitch(),
-            item_use_ticks: input.use_elapsed_ticks.unwrap_or(0),
-            attack_time: item.attack_time,
-            arm_height: item.arm_height,
-            off_hand_arm_height: offhand.arm_height,
-            ..owner_rig.animation_variables.input().unwrap_or_default()
-        });
+        state
+            .history
+            .push_back(selection::owner_frame(owner, owner_rig, input));
         let mut world_left = MAX_MOLANG_OPS_PER_ACTOR_TICK;
         let mut budget = EvalBudget {
             actor_left: MAX_MOLANG_OPS_PER_ACTOR_TICK,

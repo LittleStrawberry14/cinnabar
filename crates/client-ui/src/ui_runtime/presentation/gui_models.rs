@@ -100,6 +100,7 @@ pub(super) struct GuiModels {
     textures: BTreeMap<atlas::TextureKey, IconRef>,
     held: BTreeMap<assets::ItemVisualKey, held::HeldModel>,
     hand_pivots: Option<[[f32; 3]; 2]>,
+    selected_held: [Option<held::SelectedModel>; 2],
     fire: fire::FireAtlas,
 }
 
@@ -189,7 +190,11 @@ impl UiPresentationRuntime {
             for texture in equipment.textures() {
                 atlas.insert([texture.width, texture.height], &texture.rgba8)?;
             }
-            if let Some(binding) = equipment.binding(assets::gui_item::SHIELD_IDENTIFIER)
+            if let Some(binding) = equipment
+                .bindings_for(assets::gui_item::SHIELD_IDENTIFIER)
+                .iter()
+                .rev()
+                .find(|binding| player_preview::selection::unrestricted(binding, Some(entities)))
                 && let Some(geometry) = entities
                     .geometries()
                     .iter()
@@ -308,6 +313,7 @@ impl UiPresentationRuntime {
         self.gui_models.required_pages = required_pages;
         self.gui_models.textures = textures;
         self.gui_models.held = held;
+        self.gui_models.selected_held = [None, None];
         self.gui_models.hand_pivots = held::player_hands(entities);
         self.gui_models.fire.pages_start = None;
         self.install_gui_fire()?;
@@ -512,6 +518,12 @@ impl UiPresentationRuntime {
                 return None;
             }
             let hand = hand.as_ref()?;
+            if let Some(selected) = self.gui_models.selected_held[index].as_ref()
+                && selected.item.identifier.as_ref() == hand.identifier.as_ref()
+                && selected.item.metadata == hand.metadata
+            {
+                return Some(selected.model.with_grip(hand.grip).with_glint(hand.glint));
+            }
             let (identifier, metadata) = Self::item_icon_key(
                 &hand.identifier,
                 hand.metadata,

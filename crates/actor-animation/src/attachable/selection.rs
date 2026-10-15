@@ -81,18 +81,9 @@ impl AttachablesRuntime {
         let Some(condition) = self.assets.rig_bindings()[binding].item_condition else {
             return Some(true);
         };
-        let frame_alpha = if input.frame_alpha.is_finite() {
-            input.frame_alpha.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let frame_alpha = sample_alpha(input);
         let context = owner_context(rig, input);
-        let tick_input = ActorTickInput {
-            position: owner.position(),
-            velocity: owner.velocity(),
-            on_ground: owner.on_ground(),
-            ..rig.animation_variables.input().unwrap_or_default()
-        };
+        let tick_input = owner_frame(owner, rig, input);
         self.selection_variables
             .reset(owner.runtime_id() ^ owner.spawn_revision().rotate_left(32));
         tick::apply_engine_variables(
@@ -105,6 +96,13 @@ impl AttachablesRuntime {
         );
         rig.animation_variables
             .copy_to(&self.assets, &self.layout, &mut self.selection_variables);
+        rig.animation_variables.sample_spear_to(
+            &self.layout.engine.spear,
+            &mut self.selection_variables,
+            owner,
+            &tick_input,
+            frame_alpha,
+        );
         for (name, value) in input.owner_variables {
             self.selection_variables
                 .set(self.layout.named_slot(&self.assets, name), *value);
@@ -116,13 +114,15 @@ impl AttachablesRuntime {
             &context,
             &tick_input,
         );
+        self.selection_variables.clear_temporaries();
+        let evaluated_input = tick::evaluation_input(tick_input, &context);
         let evaluator = Evaluator {
             assets: &self.assets,
             pack: true,
             layout: &self.layout,
             program: None,
             actor: owner,
-            input: &tick_input,
+            input: &evaluated_input,
             context: &context,
             anim_tick: rig.animation_variables.anim_tick(),
             anim_time: None,
@@ -192,11 +192,7 @@ pub(super) fn owner_context(
     owner_rig: &ActorRigSnapshot<'_>,
     input: AttachableAnimationInput<'_>,
 ) -> ActorTickContext {
-    let frame_alpha = if input.frame_alpha.is_finite() {
-        input.frame_alpha.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let frame_alpha = sample_alpha(input);
     let query_context = AttachableQueryContext {
         first_person: input.first_person,
         off_hand: input.off_hand,
@@ -231,5 +227,42 @@ pub(super) fn owner_context(
         main_hand: input.owner_main_hand.map(Arc::from),
         off_hand: input.owner_off_hand.map(Arc::from),
         ..owner_context.cloned().unwrap_or_default()
+    }
+}
+
+/// Samples the owner frame shared by predicates and attachable evaluation, including Java swing.
+pub(super) fn owner_frame(
+    owner: &dyn AnimatedActor,
+    rig: &ActorRigSnapshot<'_>,
+    input: AttachableAnimationInput<'_>,
+) -> ActorTickInput {
+    let alpha = sample_alpha(input);
+    let item = rig.item_animation[0].interpolate(rig.item_animation[1], alpha);
+    let swing = rig.item_animation[0].interpolate(
+        rig.item_animation[1],
+        rig.java.local_swing_alpha.unwrap_or(alpha),
+    );
+    let offhand = rig.off_hand_animation[0].interpolate(rig.off_hand_animation[1], alpha);
+    ActorTickInput {
+        position: owner.position(),
+        velocity: owner.velocity(),
+        on_ground: owner.on_ground(),
+        body_yaw: rig.body_yaw,
+        head_yaw: owner.head_yaw(),
+        pitch: owner.pitch(),
+        item_use_ticks: input.use_elapsed_ticks.unwrap_or(0),
+        attack_time: swing.attack_time,
+        arm_height: item.arm_height,
+        off_hand_arm_height: offhand.arm_height,
+        ..rig.animation_variables.input().unwrap_or_default()
+    }
+}
+
+/// Normalizes the presentation fraction before every owner-frame consumer samples it.
+pub(super) fn sample_alpha(input: AttachableAnimationInput<'_>) -> f32 {
+    if input.frame_alpha.is_finite() {
+        input.frame_alpha.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }

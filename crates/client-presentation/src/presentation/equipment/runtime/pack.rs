@@ -5,6 +5,14 @@ use super::*;
 /// Separates armor mappings sourced from a replaceable pack.
 pub(super) const ARMOR_CACHE_PREFIX: &str = "\u{1}pack:";
 
+/// The selected model and the owner-admitted startup definition for missing artwork.
+pub(super) struct BindingSource {
+    pub catalog: Arc<RuntimeEquipmentCatalog>,
+    pub from_pack: bool,
+    pub index: usize,
+    pub startup: Option<usize>,
+}
+
 /// A server pack's entity catalog, its attachables if it has any, and their artwork locations.
 pub type PackEquipmentLayer = (
     Arc<RuntimeEntityAssets>,
@@ -36,7 +44,7 @@ impl EquipmentRuntime {
         equipment: &ActorEquipmentInput,
         animation: EquipmentAnimation<'_>,
         slot: ArmorSlot,
-    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+    ) -> Option<BindingSource> {
         self.selected_binding_source(item, animation, animation.worn_input(equipment, slot, &[]))
     }
 
@@ -47,7 +55,7 @@ impl EquipmentRuntime {
         equipment: &ActorEquipmentInput,
         animation: Option<EquipmentAnimation<'_>>,
         off_hand: bool,
-    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+    ) -> Option<BindingSource> {
         if let Some(animation) = animation {
             return self.selected_binding_source(
                 item,
@@ -55,8 +63,12 @@ impl EquipmentRuntime {
                 animation.held_input(equipment, off_hand),
             );
         }
-        // Without an owner, conditional definitions cannot be admitted.
-        [
+        self.unowned_binding_source(item)
+    }
+
+    /// Admits ordinary definitions only, retaining the same startup choice for fallback.
+    pub(super) fn unowned_binding_source(&self, item: &WornItem) -> Option<BindingSource> {
+        let mut sources = [
             self.pack
                 .as_ref()
                 .and_then(|pack| pack.catalog.as_ref())
@@ -65,7 +77,7 @@ impl EquipmentRuntime {
         ]
         .into_iter()
         .flatten()
-        .find_map(|(catalog, from_pack)| {
+        .filter_map(|(catalog, from_pack)| {
             let start = catalog
                 .bindings()
                 .partition_point(|binding| binding.identifier.as_ref() < item.identifier.as_ref());
@@ -74,6 +86,18 @@ impl EquipmentRuntime {
                 .iter()
                 .rposition(|binding| binding.attachable.is_none())?;
             Some((Arc::clone(catalog), from_pack, start + offset))
+        });
+        let (catalog, from_pack, index) = sources.next()?;
+        let startup = if from_pack {
+            sources.next().map(|(_, _, index)| index)
+        } else {
+            Some(index)
+        };
+        Some(BindingSource {
+            catalog,
+            from_pack,
+            index,
+            startup,
         })
     }
 
@@ -83,7 +107,7 @@ impl EquipmentRuntime {
         item: &WornItem,
         animation: EquipmentAnimation<'_>,
         input: actor_animation::AttachableAnimationInput<'_>,
-    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+    ) -> Option<BindingSource> {
         let enchanted = (
             assets::entity::EngineVariable::IsEnchanted.name(),
             f32::from(item.enchanted),
@@ -100,9 +124,9 @@ impl EquipmentRuntime {
             ..input
         };
         let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
-        if let Some(pack) = self.pack.as_mut()
-            && let Some(catalog) = pack.catalog.as_ref()
-            && let Some(index) = pack.attachables.select_equipment_binding(
+        let pack_selection = self.pack.as_mut().and_then(|pack| {
+            let catalog = pack.catalog.as_ref()?;
+            let index = pack.attachables.select_equipment_binding(
                 catalog,
                 &item.identifier,
                 animation.owner,
@@ -114,25 +138,35 @@ impl EquipmentRuntime {
                         .or_else(|| find_geometry_index(&self.assets, &binding.geometry.identifier))
                         .is_some()
                 },
+            )?;
+            Some((Arc::clone(catalog), index))
+        });
+        let startup = self.catalog.as_ref().and_then(|catalog| {
+            self.attachables.select_equipment_binding(
+                catalog,
+                &item.identifier,
+                animation.owner,
+                animation.rig,
+                input,
+                &mut operations_left,
+                |binding| {
+                    find_geometry_index(&self.assets, &binding.geometry.identifier).is_some()
+                        || (binding.attachable.is_none()
+                            && binding.geometry.resolution == EntityDependencyResolution::External)
+                },
             )
-        {
-            return Some((Arc::clone(catalog), true, index));
-        }
-        let catalog = self.catalog.as_ref()?;
-        let index = self.attachables.select_equipment_binding(
+        });
+        let (catalog, from_pack, index) = if let Some((catalog, index)) = pack_selection {
+            (catalog, true, index)
+        } else {
+            (Arc::clone(self.catalog.as_ref()?), false, startup?)
+        };
+        Some(BindingSource {
             catalog,
-            &item.identifier,
-            animation.owner,
-            animation.rig,
-            input,
-            &mut operations_left,
-            |binding| {
-                find_geometry_index(&self.assets, &binding.geometry.identifier).is_some()
-                    || (binding.attachable.is_none()
-                        && binding.geometry.resolution == EntityDependencyResolution::External)
-            },
-        )?;
-        Some((Arc::clone(catalog), false, index))
+            from_pack,
+            index,
+            startup,
+        })
     }
 
     /// Rasters of the pack's attachable textures, in catalog order.
@@ -262,9 +296,8 @@ impl EquipmentRuntime {
     /// Authored models with missing artwork may use their startup item's default raster.
     pub(super) fn draw_artwork(
         &self,
-        identifier: &str,
         texture: &str,
-        (catalog, from_pack): (Arc<RuntimeEquipmentCatalog>, bool),
+        source: &BindingSource,
     ) -> Option<(Arc<RuntimeEquipmentCatalog>, usize, ActorArtworkLocation)> {
         if let Some(pack) = &self.pack
             && let Some(artwork) = &pack.catalog
@@ -276,7 +309,7 @@ impl EquipmentRuntime {
         {
             return Some((Arc::clone(artwork), index, *location));
         }
-        let base = self.catalog.as_ref().unwrap_or(&catalog);
+        let base = self.catalog.as_ref().unwrap_or(&source.catalog);
         if let Some(index) = base
             .textures()
             .iter()
@@ -285,16 +318,21 @@ impl EquipmentRuntime {
         {
             return Some((Arc::clone(base), index, *location));
         }
-        if !from_pack {
+        if !source.from_pack {
             return None;
         }
         let catalog = self.catalog.as_ref()?;
-        let binding = catalog.binding(identifier)?;
-        self.draw_artwork(
-            identifier,
-            &binding.texture.identifier,
-            (Arc::clone(catalog), false),
-        )
+        let binding = catalog.bindings().get(source.startup?)?;
+        let texture = &binding.texture.identifier;
+        let index = catalog
+            .textures()
+            .iter()
+            .position(|image| &image.identifier == texture)?;
+        Some((
+            Arc::clone(catalog),
+            index,
+            *self.texture_locations.get(texture)?,
+        ))
     }
 
     pub(super) fn texture_location(

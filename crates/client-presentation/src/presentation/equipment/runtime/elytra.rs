@@ -36,9 +36,16 @@ impl EquipmentRuntime {
             owner_variables: &variables,
             ..Default::default()
         });
-        let Some((catalog, from_pack)) = self.binding_source(&item.identifier) else {
+        let Some(source) = self.selected_binding_source(item, animation, input) else {
             return;
         };
+        let pack::BindingSource {
+            ref catalog,
+            from_pack,
+            index,
+            ..
+        } = source;
+        let binding = &catalog.bindings()[index];
         let (assets, runtime) = if from_pack {
             let Some(pack) = self.pack.as_mut() else {
                 return;
@@ -47,16 +54,18 @@ impl EquipmentRuntime {
         } else {
             (Arc::clone(&self.assets), &mut self.attachables)
         };
-        let Some(evaluated) =
-            runtime.evaluate(&item.identifier, animation.owner, animation.rig, input)
-        else {
+        let Some(evaluated) = runtime.evaluate(
+            binding.attachable_identifier(),
+            animation.owner,
+            animation.rig,
+            input,
+        ) else {
             return;
         };
         // The scene registers only each binding's catalog default model.
-        let registered = catalog
-            .binding(&item.identifier)
-            .filter(|binding| binding.geometry.resolution == EntityDependencyResolution::Catalog)
-            .and_then(|binding| find_geometry_index(&assets, &binding.geometry.identifier));
+        let registered = (binding.geometry.resolution == EntityDependencyResolution::Catalog)
+            .then(|| find_geometry_index(&assets, &binding.geometry.identifier))
+            .flatten();
         // Each material group draws apart; later texture slots are samplers of that draw.
         let groups: Vec<_> = evaluated
             .render
@@ -105,7 +114,7 @@ impl EquipmentRuntime {
         }
         let ids =
             std::iter::once(super::super::ELYTRA_LAYER).chain(super::super::ELYTRA_GROUP_LAYERS);
-        for (layer_id, (index, pose, hidden, material, state, source)) in ids.zip(groups) {
+        for (layer_id, (index, pose, hidden, material, state, texture_source)) in ids.zip(groups) {
             let material = render_model::ActorMaterial {
                 kind: if item.has_glint() {
                     assets::EntityRenderMaterial::Glint
@@ -120,16 +129,16 @@ impl EquipmentRuntime {
                 },
                 ..Default::default()
             };
-            let Some(source) = assets.sources().get(source as usize) else {
+            let Some(texture_source) = assets.sources().get(texture_source as usize) else {
                 continue;
             };
-            let texture = source
+            let texture = texture_source
                 .path
                 .strip_suffix(".png")
-                .or_else(|| source.path.strip_suffix(".tga"));
-            let Some((_, _, location)) = texture.and_then(|texture| {
-                self.draw_artwork(&item.identifier, texture, (Arc::clone(&catalog), from_pack))
-            }) else {
+                .or_else(|| texture_source.path.strip_suffix(".tga"));
+            let Some((_, _, location)) =
+                texture.and_then(|texture| self.draw_artwork(texture, &source))
+            else {
                 continue;
             };
             let Some(geometry) = assets.geometries().get(index as usize) else {

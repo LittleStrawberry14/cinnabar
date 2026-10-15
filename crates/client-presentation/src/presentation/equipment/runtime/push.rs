@@ -42,17 +42,17 @@ impl EquipmentRuntime {
             return false;
         };
         let off_hand = layer == LAYER_OFF_HAND;
-        let Some((catalog, from_pack, index)) =
-            self.held_binding_source(item, equipment, animation, off_hand)
-        else {
+        let Some(source) = self.held_binding_source(item, equipment, animation, off_hand) else {
             return false;
         };
+        let pack::BindingSource {
+            ref catalog,
+            from_pack,
+            index,
+            ..
+        } = source;
         let binding = &catalog.bindings()[index];
-        let Some((_, _, location)) = self.draw_artwork(
-            &item.identifier,
-            &binding.texture.identifier,
-            (Arc::clone(&catalog), from_pack),
-        ) else {
+        let Some((_, _, location)) = self.draw_artwork(&binding.texture.identifier, &source) else {
             return false;
         };
         let channels = match self.effective_category(&item.identifier, binding.category) {
@@ -234,21 +234,17 @@ impl EquipmentRuntime {
     ) {
         let source = match animation {
             Some(animation) => self.worn_binding_source(item, equipment, animation, slot),
-            None => self
-                .binding_source(&item.identifier)
-                .and_then(|(catalog, from_pack)| {
-                    let index = catalog
-                        .bindings()
-                        .partition_point(|binding| {
-                            binding.identifier.as_ref() <= item.identifier.as_ref()
-                        })
-                        .checked_sub(1)?;
-                    Some((catalog, from_pack, index))
-                }),
+            None => self.unowned_binding_source(item),
         };
-        let Some((catalog, from_pack, index)) = source else {
+        let Some(source) = source else {
             return;
         };
+        let pack::BindingSource {
+            ref catalog,
+            from_pack,
+            index,
+            ..
+        } = source;
         let binding = &catalog.bindings()[index];
         // A custom item's `minecraft:wearable` slot names where its attachable is worn.
         let category = self.effective_category(&item.identifier, binding.category);
@@ -275,9 +271,7 @@ impl EquipmentRuntime {
             .as_ref()
             .map(|selected| selected.texture.as_ref())
             .unwrap_or(&binding.texture.identifier);
-        let Some((_, _, location)) =
-            self.draw_artwork(&item.identifier, texture, (Arc::clone(&catalog), from_pack))
-        else {
+        let Some((_, _, location)) = self.draw_artwork(texture, &source) else {
             return;
         };
         let geometry_identifier = selected

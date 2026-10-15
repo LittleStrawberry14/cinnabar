@@ -35,7 +35,7 @@ impl EquipmentRuntime {
             return None;
         }
         let (_, body_bones) = self.body_bones_for(body.input.rig)?;
-        let (catalog, from_pack, index) = self.selected_binding_source(
+        let source = self.selected_binding_source(
             item,
             EquipmentAnimation {
                 owner,
@@ -45,6 +45,12 @@ impl EquipmentRuntime {
             },
             input,
         )?;
+        let pack::BindingSource {
+            ref catalog,
+            from_pack,
+            index,
+            ..
+        } = source;
         let binding = &catalog.bindings()[index];
         if !matches!(
             self.effective_category(&item.identifier, binding.category),
@@ -106,14 +112,13 @@ impl EquipmentRuntime {
                 )
             },
         )?;
-        let source = assets.sources().get(selected.source as usize)?;
-        let texture_identifier = source
+        let texture_source = assets.sources().get(selected.source as usize)?;
+        let texture_identifier = texture_source
             .path
             .strip_suffix(".png")
-            .or_else(|| source.path.strip_suffix(".tga"))
-            .unwrap_or(&source.path);
-        let (artwork, texture_index, location) =
-            self.draw_artwork(&item.identifier, texture_identifier, (catalog, from_pack))?;
+            .or_else(|| texture_source.path.strip_suffix(".tga"))
+            .unwrap_or(&texture_source.path);
+        let (artwork, texture_index, location) = self.draw_artwork(texture_identifier, &source)?;
         let texture = &artwork.textures()[texture_index];
         let key = (
             from_pack,

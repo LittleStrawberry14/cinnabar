@@ -18,16 +18,16 @@ pub(in crate::ui_runtime::presentation) struct EquipmentSelection {
 impl EquipmentSelection {
     /// Selects session artwork before startup, sharing the caller's budget across both layers.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn binding<'a>(
+    pub(in crate::ui_runtime::presentation) fn binding<'a>(
         &mut self,
         base: Option<&'a RuntimeEquipmentCatalog>,
         pack: Option<&'a RuntimeEquipmentCatalog>,
         identifier: &str,
         enchanted: bool,
         owner: Option<PreviewEquipmentOwner<'_>>,
-        slot: usize,
+        slot: Option<usize>,
         budget: &mut usize,
-    ) -> Option<&'a assets::EquipmentBinding> {
+    ) -> Option<(&'a assets::EquipmentBinding, bool)> {
         let enchantment = [(
             assets::entity::EngineVariable::IsEnchanted.name(),
             f32::from(enchanted),
@@ -62,9 +62,9 @@ impl EquipmentSelection {
                     owner.actor,
                     &owner.rig,
                     actor_animation::AttachableAnimationInput {
-                        worn: true,
+                        worn: slot.is_some(),
                         is_in_ui: true,
-                        worn_slot: slot as u8,
+                        worn_slot: slot.unwrap_or_default() as u8,
                         owner_variables: &variables,
                         ..owner.input
                     },
@@ -78,21 +78,29 @@ impl EquipmentSelection {
                     .iter()
                     .rev()
                     .find(|binding| {
-                        binding.attachable.is_none()
+                        unrestricted(binding, layer.as_ref().map(|layer| layer.source.as_ref()))
                             && drawable(binding)
-                            && layer.as_ref().is_none_or(|layer| {
-                                layer
-                                    .source
-                                    .attachable_rig_binding(binding.attachable_identifier())
-                                    .is_none_or(|rig| {
-                                        layer.source.rig_bindings()[rig].item_condition.is_none()
-                                    })
-                            })
                     });
             };
             catalog.bindings().get(index)
         };
-        select(pack, &mut self.pack).or_else(|| select(base, &mut self.base))
+        select(pack, &mut self.pack)
+            .map(|binding| (binding, true))
+            .or_else(|| select(base, &mut self.base).map(|binding| (binding, false)))
+    }
+    /// Returns the immutable geometry owner for the selected catalog layer.
+    pub(in crate::ui_runtime::presentation) fn entities(
+        &self,
+        from_pack: bool,
+    ) -> Option<Arc<assets::RuntimeEntityAssets>> {
+        Some(Arc::clone(
+            &if from_pack {
+                self.pack.as_ref()?
+            } else {
+                self.base.as_ref()?
+            }
+            .source,
+        ))
     }
 }
 
@@ -137,6 +145,39 @@ impl UiPresentationRuntime {
         held: Option<(&str, u32)>,
         owner: PreviewEquipmentOwner<'_>,
     ) {
-        self.set_preview_gear(armor, held, Some(owner));
+        self.set_preview_gear(armor, standalone_hands(held), Some(owner));
     }
+}
+
+/// Builds a main-hand preview without authoritative stack facts.
+pub(super) fn standalone_hands(held: Option<(&str, u32)>) -> [Option<(PreviewHandItem, bool)>; 2] {
+    [
+        held.map(|(identifier, metadata)| {
+            (
+                PreviewHandItem {
+                    grip: None,
+                    glint: None,
+                    identifier: Arc::from(identifier),
+                    metadata,
+                    use_animation: assets::item_use::ItemUseAnimation::None,
+                    charged_projectile: assets::item_use::ItemProjectileRole::None,
+                },
+                false,
+            )
+        }),
+        None,
+    ]
+}
+
+/// Admits a context-free model only when its definition has no owner restriction.
+pub(in crate::ui_runtime::presentation) fn unrestricted(
+    binding: &assets::EquipmentBinding,
+    entities: Option<&assets::RuntimeEntityAssets>,
+) -> bool {
+    binding.attachable.is_none()
+        && entities.is_none_or(|entities| {
+            entities
+                .attachable_rig_binding(binding.attachable_identifier())
+                .is_none_or(|rig| entities.rig_bindings()[rig].item_condition.is_none())
+        })
 }
