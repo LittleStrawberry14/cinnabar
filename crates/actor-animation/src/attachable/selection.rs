@@ -3,18 +3,22 @@ use super::*;
 use crate::evaluation::Evaluator;
 
 impl AttachablesRuntime {
-    /// Tests an authored definition's item condition; absent rigs remain unresolved.
+    /// Tests an owner condition within the caller's shared operation budget; absent rigs stay unresolved.
     pub fn matches_owner(
         &mut self,
         identifier: &str,
         owner: &dyn AnimatedActor,
         rig: &ActorRigSnapshot<'_>,
         input: AttachableAnimationInput<'_>,
+        operations_left: &mut usize,
     ) -> Option<bool> {
         let binding = self.assets.attachable_rig_binding(identifier)?;
         let Some(condition) = self.assets.rig_bindings()[binding].item_condition else {
             return Some(true);
         };
+        if *operations_left == 0 {
+            return Some(false);
+        }
         let frame_alpha = if input.frame_alpha.is_finite() {
             input.frame_alpha.clamp(0.0, 1.0)
         } else {
@@ -43,10 +47,9 @@ impl AttachablesRuntime {
             self.selection_variables
                 .set(self.layout.named_slot(&self.assets, name), *value);
         }
-        let mut world_left = MAX_MOLANG_OPS_PER_ACTOR_TICK;
         let mut budget = EvalBudget {
-            actor_left: MAX_MOLANG_OPS_PER_ACTOR_TICK,
-            world_left: &mut world_left,
+            actor_left: *operations_left,
+            world_left: operations_left,
             work_left: MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK,
             transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
             used: 0,

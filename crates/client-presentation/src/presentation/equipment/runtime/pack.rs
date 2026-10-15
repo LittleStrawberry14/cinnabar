@@ -329,6 +329,7 @@ fn select_owner_binding(
     input: actor_animation::AttachableAnimationInput<'_>,
     static_geometry: impl Fn(&assets::EquipmentBinding) -> bool,
 ) -> Option<usize> {
+    let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
     let start = catalog
         .bindings()
         .partition_point(|binding| binding.identifier.as_ref() < identifier);
@@ -344,6 +345,7 @@ fn select_owner_binding(
                     animation.owner,
                     animation.rig,
                     input,
+                    &mut operations_left,
                 )
                 .unwrap_or_else(|| binding.attachable.is_none() && static_geometry(binding))
                 .then_some(start + offset)
