@@ -81,6 +81,9 @@ impl AttachablesRuntime {
         let Some(condition) = self.assets.rig_bindings()[binding].item_condition else {
             return Some(true);
         };
+        if *operations_left == 0 {
+            return Some(false);
+        }
         let frame_alpha = sample_alpha(input);
         let context = owner_context(rig, input);
         let tick_input = owner_frame(owner, rig, input);
@@ -153,10 +156,12 @@ impl AttachablesRuntime {
         {
             self.selections = SelectionCache::default();
         }
-        if let Some((reads, result)) = self.selections.entries.get(&key)
-            && reads.matches(&evaluator, &self.selection_variables)
-        {
-            return Some(*result);
+        if let Some((reads, result)) = self.selections.entries.get(&key) {
+            match reads.matches(&evaluator, &self.selection_variables, operations_left) {
+                Some(true) => return Some(*result),
+                None => return Some(false),
+                Some(false) => {}
+            }
         }
         if *operations_left == 0 {
             return Some(false);

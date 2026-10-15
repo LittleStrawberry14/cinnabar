@@ -1,3 +1,31 @@
+## Incremental persona artwork pages
+
+Persona animation images retain bounded single-layer page slots across empty views.
+New images share their source pixels and update only their own slots; a full cache
+reuses offscreen slots. Session and base-art changes invalidate residency. Grouped
+admission remains available when the exact page layout exceeds the existing budgets.
+Regression coverage compares pixel bytes and attributable hashing and uploads with the
+grouped path. Incomplete: these changes have not been compiled or tested; matched
+rendered captures and hardware performance measurements remain pending. No parity or
+performance gate closes here.
+
+## World-service handback
+
+Retention and full-detail transitions share the poll deadline and resume between columns.
+Moving views skip unchanged row interiors. Server teleports use the same retention scan;
+later commits wait for preceding retention, and reclaim requests stop before the next item.
+Near/far terrain still hands coverage over only after its summaries and uploads are ready.
+Outgoing handoffs recheck the latest radius and player centre before withdrawing coverage.
+Discarded detail invalidates pending meshes; retained handoffs regain lighting and its halo.
+Eviction clears interrupted membership so replacement columns refresh through the entering cursor.
+Repeated restoration cancellations retain the original refresh checkpoint while keeping
+published members eligible for later edits.
+Poll reports count maintenance work and its maximum item time; trace spans record commit
+sizes and reclaim waits.
+
+Incomplete: matched release flight and teleport captures must establish reclaim max and
+p99 on target hardware. Synthetic CPU benchmarks do not close a frame-pacing or parity gate.
+
 ## Creative search under server UI packs
 
 Unchanged inventory screens keep recipe-grid virtualization even when a server supplies
@@ -70,7 +98,10 @@ finest quads whole, coarser ones per fragment. Only finest tiles reach the near 
 meshes merge equal-height tops and runs of walls on worker threads, skirt their edges down to
 the lowest neighbouring surface, rebuild at most every 250 ms when their columns change, and
 keep a replaced tile drawn until its replacements are ready, never two over one area. The GPU holds only
-the selected tiles; a still camera uploads and rebuilds nothing. Cells are lit as sky-lit
+the selected tiles; a still camera uploads and rebuilds nothing. Encoded summaries share
+immutable bytes across caches and tile snapshots. Gathering includes skirt neighbours and
+resumes within column and byte limits. Cache completions and live or retiring summary
+admission share a per-frame budget; partial disk reads keep the highest queued version. Cells are lit as sky-lit
 terrain faces and fogged with the terrain fog, which is unchanged. The render distance is how
 far the player sees: far terrain fills the gap between what the server sends and the render
 distance, within a budget set by the device tier (`render_api::far_terrain`). Video › Far
@@ -234,6 +265,15 @@ execution of this move remain unverified, and no parity gate is closed by it.
   gameplay. Interaction and camera input consume these observations directly.
 - Focus and existing input/cursor regression coverage are retained. Compilation and execution
   of this ownership change remain unverified; movement and presentation parity gates stay open.
+
+## Settings disk writes
+
+Settings edits apply to runtime authorities immediately. A single background writer keeps
+only the newest pending snapshot. It starts a 100 ms batching window with the first edit,
+without extending that window during a drag. Storage can delay completion. Failed writes
+retain the latest edits and retry after one second. Orderly shutdown flushes pending edits before releasing the writer.
+A crash can lose edits still in the batching window or waiting on storage. Native slider-drag
+frame timings remain unverified; this change does not close a hardware performance gate.
 
 ## Menu shell ownership
 
@@ -763,6 +803,10 @@ these changes do not close the movement, camera, or actor parity gates.
   replay so a relocation cannot invent a ladder climb. If replay cannot query
   terrain, its fallback preserves later retained server positions and motion.
   Unstamped or expired reset corrections keep their incoming destination.
+  Snapped MovePlayer teleports suppress travel for one completed tick, retaining
+  destination contact, jump cooldown and independent motion updates. The captured
+  input preserves that tick during correction replay. Pending anchor recovery
+  precedes resumed travel, including catch-up ticks within the same frame.
 - Actor crouch updates preserve held ability-flight descent during live input
   and correction replay; older walking-pose updates stop at the flight transition.
   Focused regressions reproduce the upward rewind caused by a server sneak clear.
@@ -849,17 +893,30 @@ these changes do not close the movement, camera, or actor parity gates.
   more render-work headroom. Unloaded tail results remain adverse and unexplained:
   the hitch and 120 Hz display gates remain incomplete. See
   [frame-pacing evidence](docs/evidence/zeqa-frame-pacing.md).
+- The opt-in `alloc-stats` feature counts requested allocations and bytes per frame
+  and timed CPU stage, with either System or mimalloc. Frame and schedule-span totals
+  cover all threads, including concurrent background work; RAII timers include nested work
+  on their calling thread. Labelled GPU-write counters
+  split retained staging and queue staging, including partial uploads. Tracy plots and
+  slow-frame fields report these diagnostics; hardware performance acceptance remains open.
 - Opt-in Tracy spans cover Bevy and owned streaming/render work; Metal pass
   durations are delayed plots. macOS zones alone cannot separate preemption from waits.
 - Per-packet ingress admission preserves queued events when consumer fan-out fills
   headroom; regression tests cover resumption and zero steady-state drain allocations.
+- Rolling frame recordings retain recent completed spans and received counters, carry input
+  identities into render submission, and queue every hard-hitch window with completeness
+  metadata. Slow reports format outside recorder locks on the console thread. Full exports move
+  ring storage to a worker and stream events individually. Delayed GPU samples still lack causal
+  CPU identities and presentation feedback remains unavailable.
 - Named schedule traces and bounded frame recordings separate main work, render
   handoff, drawable acquisition, command submission and presentation. Metal
   timestamp queries use owned render passes and leave uncovered stages absent.
 - Ordinary direct terrain draws retain CPU-selected units of at most 64 quads,
-  compact visible lists after current occlusion results, and submit one instanced
-  draw per pipeline and list page. The per-section fallback and transparency paths
-  remain available. Incomplete: Metal pixel identity and paired hardware captures
+  retain unchanged section descriptors in stable GPU slots, and upload ordered
+  visibility references separately after current occlusion results. Both regions
+  share one storage binding. Changed sections update only their descriptor spans;
+  streams exceeding that binding's capacity keep complete ordered page draws.
+  The per-section fallback and transparency paths remain available. Incomplete: Metal pixel identity and paired hardware captures
   must qualify the change before closing rendering or frame-budget acceptance.
 - Unchanged hand and cloud uniforms, inactive portals and empty item scenes skip
   redundant staging work. Regression tests assert allocations, writes and retained
@@ -962,17 +1019,22 @@ arm and fallback main-hand items. Item use and special movement retain their
 authored poses. Java 1.7 takes precedence for body, arm and item poses.
 First-person hand sway deliberately uses Java tick smoothing in both combat
 profiles, independently of the Java animation option.
+Sway retains complete camera yaw turns through tick smoothing and frame interpolation,
+including turns larger than a half turn in one input frame.
+Leaving freelook restores the actor heading with the nearest equivalent yaw winding,
+so full camera revolutions do not add artificial hand motion on release.
+Activating or leaving the sleeping camera reanchors its presentation history, including
+when sleep begins before held freelook is released; stable sleeping frames keep their history.
 Movement bob uses the physics fraction; hurt and death use the actor fraction.
 Remote movement keeps pitch in the signed half-turn range before strike poses read it.
 Frame interpolation takes the shortest pitch arc across the signed boundary in Java mode.
 Regression coverage samples repeated remote swings in Bedrock and Java modes with equivalent
-signed and wrapped pitch values; compilation and execution remain pending CI.
+signed and wrapped pitch values.
 Page-level body dye masks retain zero-alpha RGB and depth independently of armour cutout.
 
 Implementation and deterministic swing, sway, camera, overlay, equipment and shader fixtures
-are present. They have not been compiled or run. CI verification and a headless
-visual comparison remain outstanding; this does not close a parity or visual
-acceptance gate.
+are present. Full combat-profile visual comparison remains incomplete; this does
+not close a parity or visual acceptance gate.
 
 ## Java 1.7 animations
 
@@ -1414,6 +1476,7 @@ acceptance gate.
   instanced draw after opaque geometry; casters and parameters upload only when they change.
 - Caster rules (radius table, babies, slimes, projectiles, burning, invisible, dead, submerged,
   riders, ghast drops) follow [the vanilla rules](docs/reference/entity-shadows.md).
+- Width-based radii share collision scaling and its minimum size, including player fallback bounds.
 - Rigged casters follow the actor frame's drawn bodies. Incomplete parity: sign shadows are not
   drawn; the breathing point, item and local volume culling remain provisional.
 - Volumes containing the camera draw no shadow. Camera-inside and ordinary outside
@@ -1564,11 +1627,13 @@ acceptance gate.
   against both programs through their own pipelines.
 - `CINNABAR_GPU_NODES=1` plots per-node and per-section GPU times under Tracy, and Tracy
   builds expose wgpu's encode and submit zones; see the live-testing guide.
-- Metal reports `gpu_frame_completion_latency` through the stage profiler and Tracy,
-  as an informational field that never counts towards slow frames or GPU budget
-  violations. Three in-flight callback slots bound diagnostics without waiting. This CPU
-  interval includes submission, queue and polling delays; it is not GPU execution time. Incomplete: native whole-frame GPU time and shared
-  per-draw categories remain unavailable with the current command-buffer access API.
+- Metal reports `gpu_frame` from the GPU host times of two empty marker command buffers that
+  open and close the render graph's submission, read back without waiting and counted against
+  the GPU budget. It runs from the later of submission and the end of earlier queued work to
+  the end of the frame's work; submissions outside the graph are not included.
+  `gpu_frame_completion_latency` stays a separate informational CPU interval that never counts
+  towards slow frames. Incomplete: shared per-draw categories, because Apple GPUs sample
+  timestamps only at pass boundaries.
 - Evidence: [render frame time](docs/evidence/render-frame-time.md), measured on DX12 before
   Windows defaulted to Vulkan; `WGPU_BACKEND=dx12` selects that backend.
 
@@ -1796,7 +1861,8 @@ frame-budget or identical-version pixel gates.
   with its eye at the sleeping offset, while its physics stays where it stood. One shared pose
   samples loaded bed headings before Camera, including frames without actor ticks, and feeds
   camera publication, actor camera queries, body placement and particle attachments. Sleep
-  transitions reanchor camera history once; stable sleeping frames retain motion-blur history.
+  pose transitions and changes of the sleeping camera override reanchor camera history;
+  stable sleeping frames retain motion-blur history.
   Actor transitions also reanchor displacement and cape position history without restarting
   animation; stable frames preserve that history.
   Java animations retain the sleeping eye height, and named audio keeps an eligible first-person
@@ -7139,6 +7205,12 @@ particle inputs without depending on `client-presentation` or `render`.
 The existing sound and camera regressions remain in their owning crates and app
 integration tests. This move does not close audio parity or performance gates.
 
+**Audio output opening:** Frame systems poll the output worker and retain admitted
+sources within the existing voice limits until a transport is ready. Stops,
+session resets and failed opens still retire waiting work. Channel-controlled
+regressions are in place; final-revision verification and native first-sound
+frame timing remain incomplete.
+
 **Sound-bank loading:** First-use lookups queue file descriptors; the existing
 workers read and decode the sounds. Loading queues up to four finite sounds each
 for UI, footsteps and interactions, with a 1 MiB input limit. Generation checks,
@@ -8838,11 +8910,14 @@ Incomplete parity: recipe eligibility and exact pattern-choice styling remain op
   Actors with unbounded attachments, extra layers or no authored bounds also draw.
   Controllers with any replacement geometry bypass base-model terrain proofs, including
   selections between ticks; controllers that always draw the base model remain eligible.
-- Block entities use the same proof without stopping lids, rings, map requests or text
-  canvases. Global beams bypass terrain proofs. Retained vertex runs are culled at draw
-  submission, so camera turns do not rebuild or upload cached meshes.
+- Block entities reject conservative bounds outside the current camera before scene geometry
+  and GPU preparation, then use the same terrain proof. Hidden entities keep advancing lids,
+  books and ring cues, requesting maps and retaining text canvases. Unknown bounds and global
+  beams bypass preparation culling. Retained vertex runs are also culled at draw submission;
+  camera turns publish geometry when admission changes.
 - Each kind has a fixed plane/cell probe budget. Preparation counters record candidates,
-  hidden-by-occlusion and submitted; draw counters record skipped/submitted vertices.
+  hidden-by-occlusion and submitted; block entities count hidden-by-visibility to include
+  frustum rejection. Draw counters record skipped/submitted vertices.
 - Performance and rendered-frame acceptance remain incomplete until comparable captures
   verify walls, gaps, rapid motion, shadows, name tags and unchanged animation state.
 

@@ -12,44 +12,53 @@ pub(super) fn attach(
     stream: &WorldStream,
     poses: &super::layers::LayerPoses<'_>,
     frame: (f32, f32, Option<&render_scene::UiGlintSettings>),
+    mut overlay_of: impl FnMut(&render_model::ActorRigSubmission, bool) -> u32,
 ) {
     let (partial_tick, delta_seconds, glint_settings) = frame;
-    crate::presentation::actors::attach_layers(batch, equipment, |equipment, body| {
-        let runtime_id = body.input.identity.runtime_id;
-        let mut input = if runtime_id == poses.local_runtime_id {
-            local_equipment(stream, runtime_id, poses.local_equipment)
-        } else {
-            remote_input(stream, runtime_id)
-        };
-        if java::posed(poses.java_posed, runtime_id).is_some() {
-            let using = stream
+    crate::presentation::actors::attach_layers(
+        batch,
+        equipment,
+        |equipment, body, runtime_skin| {
+            let runtime_id = body.input.identity.runtime_id;
+            let mut input = if runtime_id == poses.local_runtime_id {
+                local_equipment(stream, runtime_id, poses.local_equipment)
+            } else {
+                remote_input(stream, runtime_id)
+            };
+            if java::posed(poses.java_posed, runtime_id).is_some() {
+                let using = stream
+                    .authority()
+                    .actor(runtime_id)
+                    .is_some_and(|actor| actor.is_using_item());
+                input.java = Some(crate::presentation::equipment::JavaGrip { blocking: using });
+            }
+            let animation = stream
                 .authority()
                 .actor(runtime_id)
-                .is_some_and(|actor| actor.is_using_item());
-            input.java = Some(crate::presentation::equipment::JavaGrip { blocking: using });
-        }
-        let animation = stream
-            .authority()
-            .actor(runtime_id)
-            .zip(stream.authority().actor_rig(runtime_id));
-        let layers = equipment.layers_for_profile(
-            body,
-            &input,
-            poses.combat_visuals,
-            animation.as_ref().map(|(owner, rig)| {
-                crate::presentation::equipment::EquipmentAnimation {
-                    owner,
-                    rig,
-                    frame_alpha: partial_tick,
-                    delta_seconds,
-                }
-            }),
-        );
-        for layer in layers.iter_mut() {
-            animate_glint(&mut layer.submission, partial_tick, glint_settings);
-        }
-        layers
-    });
+                .zip(stream.authority().actor_rig(runtime_id));
+            let mut styled_body = body.clone();
+            styled_body.overlay_rgba8 = runtime_skin.map_or(body.overlay_rgba8, |runtime_skin| {
+                overlay_of(body, runtime_skin)
+            });
+            let layers = equipment.layers_for_profile(
+                &styled_body,
+                &input,
+                poses.combat_visuals,
+                animation.as_ref().map(|(owner, rig)| {
+                    crate::presentation::equipment::EquipmentAnimation {
+                        owner,
+                        rig,
+                        frame_alpha: partial_tick,
+                        delta_seconds,
+                    }
+                }),
+            );
+            for layer in layers.iter_mut() {
+                animate_glint(&mut layer.submission, partial_tick, glint_settings);
+            }
+            layers
+        },
+    );
 }
 
 /// Reuses inventory facts while reading pose flags after this frame's local pose synchronization.

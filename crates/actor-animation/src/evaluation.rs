@@ -10,6 +10,17 @@ pub(super) use observed::ObservedInputs;
 mod owner_variables;
 mod presentation;
 
+#[cfg(test)]
+thread_local! {
+    static QUERY_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Takes query evaluations performed on this test thread since its last observation.
+#[cfg(test)]
+pub(super) fn take_query_work() -> usize {
+    QUERY_WORK.with(|work| work.replace(0))
+}
+
 /// Runtime values retain the attachable's owning actor reference without numeric coercion.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum MolangValue {
@@ -673,6 +684,8 @@ impl Evaluator<'_> {
     }
 
     pub(super) fn query(&self, symbol: u32, arguments: &[MolangValue]) -> MolangValue {
+        #[cfg(test)]
+        QUERY_WORK.with(|work| work.set(work.get() + 1));
         let binding = self.program.map_or_else(
             || self.assets.molang_query_binding(symbol),
             |program| program.query_binding(symbol),

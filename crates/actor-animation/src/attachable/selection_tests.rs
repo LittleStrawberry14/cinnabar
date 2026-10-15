@@ -47,9 +47,9 @@ fn worn_selection_uses_the_owner_animation_epoch_and_refreshes_cached_time() {
             runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
             Some(expected)
         );
-        assert_eq!(
-            budget, remaining,
-            "an unchanged relative clock reuses its result"
+        assert!(
+            budget < remaining,
+            "cached relative clocks charge read validation"
         );
     }
 }
@@ -81,9 +81,9 @@ fn owner_selection_reuses_unchanged_inputs_and_refreshes_changed_owner_queries()
         runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
         Some(false)
     );
-    assert_eq!(
-        budget, remaining,
-        "unchanged owner inputs must reuse the selection result"
+    assert!(
+        budget < remaining,
+        "unchanged owner inputs still charge validation"
     );
     owner.metadata.insert(0, ActorMetadataValue::Flags(1 << 40));
     assert_eq!(
@@ -96,7 +96,7 @@ fn owner_selection_reuses_unchanged_inputs_and_refreshes_changed_owner_queries()
         runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
         Some(true)
     );
-    assert_eq!(budget, remaining);
+    assert!(budget < remaining, "cache reuse charges its observed reads");
     let input = AttachableAnimationInput {
         first_person: false,
         ..input
@@ -251,7 +251,7 @@ fn cached_owner_predicates_refresh_queries_with_arguments() {
             runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
             Some(expected)
         );
-        assert_eq!(budget, remaining);
+        assert!(budget < remaining, "cache reuse charges its observed reads");
     }
 }
 
@@ -286,5 +286,8 @@ fn cached_owner_predicates_do_not_treat_scratch_writes_as_inherited_inputs() {
         runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
         Some(true)
     );
-    assert_eq!(budget, remaining);
+    assert!(budget < remaining, "cache reuse charges its observed reads");
 }
+
+#[path = "selection_budget_tests.rs"]
+mod budget;

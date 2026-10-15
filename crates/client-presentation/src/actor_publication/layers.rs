@@ -60,6 +60,18 @@ pub(super) fn attach(
         skin_rigs,
     } = caches;
     let (partial_tick, delta_seconds, glint_settings) = frame;
+    let mut layers_of = |runtime_id| {
+        let render_frame = render_frame.as_mut()?;
+        if runtime_id == local_runtime_id
+            && let Some(pose) = local_emote_pose
+        {
+            Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
+        } else {
+            render_frame
+                .layers_with_skin(runtime_id)
+                .map(|layers| layers.render)
+        }
+    };
     if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream) {
         equipment_layers::attach(
             batch,
@@ -67,25 +79,26 @@ pub(super) fn attach(
             stream,
             &poses,
             (partial_tick, delta_seconds, glint_settings),
+            |body, runtime_skin| {
+                layers_of(body.input.identity.runtime_id).map_or(body.overlay_rgba8, |layers| {
+                    crate::presentation::entity_layers::controller_overlay(
+                        body,
+                        &layers,
+                        artwork,
+                        layer_poses,
+                        runtime_skin,
+                    )
+                })
+            },
         );
     }
     // Equipment inherits animation poses before body-only visibility masks are applied.
-    if let Some(render_frame) = render_frame.as_mut() {
-        crate::presentation::entity_layers::apply_render_layers_cached(
-            batch,
-            |runtime_id| {
-                if runtime_id == local_runtime_id
-                    && let Some(pose) = local_emote_pose
-                {
-                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
-                } else {
-                    render_frame.layers(runtime_id)
-                }
-            },
-            artwork,
-            layer_poses,
-        );
-    }
+    crate::presentation::entity_layers::apply_render_layers_cached(
+        batch,
+        &mut layers_of,
+        artwork,
+        layer_poses,
+    );
     if let (Some(stream), Some((cape, preparation))) = (stream, cape_state.rig(entity_assets)) {
         if !scene.contains_geometry(cape.id) {
             let _ = scene.insert_geometry(cape.geometry.clone());

@@ -29,19 +29,33 @@ impl ObservedInputs {
         }
     }
 
-    /// Checks all reads that determined the executed branch, including query arguments.
-    pub(crate) fn matches(&self, evaluator: &Evaluator<'_>, variables: &MolangVariables) -> bool {
-        self.random == variables.random
-            && self.variables.iter().all(|(&symbol, expected)| {
-                let Some(Place::Variable(slot)) = evaluator.layout.place(symbol) else {
-                    return false;
-                };
-                variables.values.get(slot) == Some(expected)
-            })
-            && self
-                .queries
-                .iter()
-                .all(|read| evaluator.query(read.symbol, &read.arguments) == read.value)
+    /// Charges each validated input and query argument; exhaustion leaves the result unresolved.
+    pub(crate) fn matches(
+        &self,
+        evaluator: &Evaluator<'_>,
+        variables: &MolangVariables,
+        operations_left: &mut usize,
+    ) -> Option<bool> {
+        charge(operations_left, 1)?;
+        if self.random != variables.random {
+            return Some(false);
+        }
+        for (&symbol, expected) in &self.variables {
+            charge(operations_left, 1)?;
+            let Some(Place::Variable(slot)) = evaluator.layout.place(symbol) else {
+                return Some(false);
+            };
+            if variables.values.get(slot) != Some(expected) {
+                return Some(false);
+            }
+        }
+        for read in &self.queries {
+            charge(operations_left, 1 + read.arguments.len())?;
+            if evaluator.query(read.symbol, &read.arguments) != read.value {
+                return Some(false);
+            }
+        }
+        Some(true)
     }
 
     /// Counts stored values so the owner-selection cache has a shared memory bound.
@@ -80,4 +94,11 @@ impl ObservedInputs {
             value: value.clone(),
         });
     }
+}
+
+/// Reserves validation work before it runs, consuming the remainder on exhaustion.
+fn charge(operations_left: &mut usize, work: usize) -> Option<()> {
+    let remaining = operations_left.checked_sub(work);
+    *operations_left = remaining.unwrap_or(0);
+    remaining.map(|_| ())
 }

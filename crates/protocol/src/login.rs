@@ -25,6 +25,9 @@ pub(crate) mod session_join;
 mod startup;
 mod unused_packets;
 use boundary::boundary_wakeup;
+
+/// Bounds the drain that surfaces the core's Transfer or Disconnect behind a failed write.
+pub const WRITE_FAILURE_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 pub use client_data::{
     ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, LoginSettings,
     PROTOCOL_VERSION, login_memory_tier,
@@ -84,6 +87,15 @@ impl WorldIngress {
 }
 
 impl PlaySession {
+    /// Buffers raw core frames while the world consumer is full. Decoding resumes in wire
+    /// order when the caller receives again. Reading stops at the shared byte bound or the
+    /// session's terminal message; cancelling this wait retains every complete frame read.
+    pub async fn read_ahead(&mut self) {
+        self.transport
+            .read_ahead(crate::session_transport::MAX_READ_AHEAD_BYTES)
+            .await;
+    }
+
     /// Sends loading-end and initialization once the client can present the world; later
     /// calls send nothing.
     pub async fn finish_loading(&mut self) -> Result<(), ProtocolError> {

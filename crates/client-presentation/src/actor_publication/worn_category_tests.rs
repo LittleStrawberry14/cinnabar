@@ -5,6 +5,9 @@ use assets::{RuntimeEquipmentCatalog, RuntimeIconCatalog};
 use equipment::{ActorEquipmentInput, EquipmentAnimation};
 use render_model::{ActorArtworkPages, EntityRigId};
 
+#[path = "overlay_tests.rs"]
+mod overlays;
+
 const CHEST: &str = "minecraft:iron_chestplate";
 const ARMOR_GEOMETRY: &str = "geometry.fixture.armour";
 
