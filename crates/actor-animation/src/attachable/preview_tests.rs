@@ -429,6 +429,7 @@ fn attachable_preview_missing_render_returns_no_draw_and_commits_authored_state_
 fn complete_static_attachable_draws_reuse_their_committed_pose() {
     let mut compiled = crate::test_support::compiled_fixture();
     compiled.rig_geometries[0].animation_count = 0;
+    compiled.rig_animations = Box::new([]);
     compiled.rig_bindings[0].initialize = None;
     compiled.rig_bindings[0].pre_animation = None;
     let mut runtime = AttachablesRuntime::new(Arc::new(
