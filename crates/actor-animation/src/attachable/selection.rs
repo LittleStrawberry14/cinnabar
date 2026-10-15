@@ -221,6 +221,7 @@ pub(super) fn owner_context(
         main_hand_swing_seconds,
         main_hand_is_spear: owner_rig.animation_variables.is_spear(),
         is_local_first_person: input.first_person,
+        is_in_ui: input.is_in_ui || owner_context.is_some_and(|owner| owner.is_in_ui),
         is_local_player: input.is_local_player
             || input.first_person
             || owner_context.is_some_and(|owner| owner.is_local_player),

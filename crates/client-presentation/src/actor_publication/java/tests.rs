@@ -342,6 +342,7 @@ fn native_and_modern_items_stay_retained_until_equip_adopts_them() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
         variant: Default::default(),
     };
     for modern in [FILLED_MAP, "minecraft:crossbow", "minecraft:shield"] {
@@ -373,6 +374,7 @@ fn outgoing_main_use_is_idle_while_offhand_keeps_the_actual_owner_use() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
         variant: Default::default(),
     };
     let owner = ActorEquipmentInput {
@@ -449,6 +451,7 @@ fn mixed_native_map_swaps_publish_the_outgoing_mesh_until_adoption() {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
         variant: Default::default(),
     };
     for (old, new) in [(ids[0], ids[1]), (ids[1], ids[0])] {
@@ -577,6 +580,7 @@ fn worn(identifier: &str) -> WornItem {
         kind: crate::presentation::equipment::HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
     }
 }
 

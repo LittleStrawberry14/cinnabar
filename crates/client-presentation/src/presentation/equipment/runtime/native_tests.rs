@@ -152,6 +152,7 @@ fn item(identifier: &str) -> WornItem {
         kind: HeldKind::Sprite,
         dye_rgb: None,
         enchanted: true,
+        glint: Default::default(),
     }
 }
 

@@ -129,3 +129,100 @@ fn partial_artwork_held_variants_select_owner_geometry_and_placement_in_both_ord
         }
     }
 }
+
+#[test]
+fn owner_context_held_enchantments_select_geometry_without_changing_intrinsic_glint() {
+    let item = "fixture:z_tool";
+    let files = variant_pack(item, "fixture:a_tool", false);
+    let (entities, catalog) = pack_catalog(files.clone());
+    for java in [true, false] {
+        let (mut runtime, _) = startup_runtime(files.clone());
+        let body = player_body(&mut runtime);
+        let owner = super::super::elytra_tests::owner();
+        let names = [Box::from("rightItem")];
+        let rig = owner_rig(&owner, &names);
+        let mut meshes = Vec::new();
+        for (enchanted, intrinsic) in [
+            (false, false),
+            (true, false),
+            (false, true),
+            (true, true),
+            (false, false),
+        ] {
+            let stack = crate::presentation::equipment::input::canonical_fixture(
+                item, enchanted, intrinsic,
+            );
+            let worn = crate::presentation::equipment::input::worn_item(
+                &stack,
+                None,
+                client_world::EffectiveItemUse {
+                    ticks: Some(32),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let input = ActorEquipmentInput {
+                main: Some(worn),
+                java: java.then_some(JavaGrip::default()),
+                ..Default::default()
+            };
+            let drawn = runtime
+                .layers_for(
+                    &body,
+                    &input,
+                    Some(EquipmentAnimation {
+                        owner: &owner,
+                        rig: &rig,
+                        frame_alpha: 1.0,
+                        delta_seconds: 0.05,
+                    }),
+                )
+                .to_vec();
+            assert_eq!(drawn.len(), 1);
+            let selected = if enchanted { "mapped" } else { "ordinary" };
+            let geometry =
+                render_model::find_geometry_index(&entities, &format!("geometry.{selected}"))
+                    .unwrap();
+            if java {
+                assert_eq!(
+                    drawn[0].submission.input.rig,
+                    render_model::equipment_rig_id(geometry),
+                    "enchanted={enchanted} intrinsic={intrinsic}"
+                );
+            } else {
+                let expected = render_model::attachable_geometry(
+                    &entities,
+                    geometry as usize,
+                    drawn[0].submission.input.rig,
+                    &catalog.textures()[0],
+                )
+                .unwrap();
+                meshes.extend(runtime.take_pending_geometries());
+                let actual = meshes
+                    .iter()
+                    .find(|mesh| mesh.id == drawn[0].submission.input.rig)
+                    .unwrap();
+                assert_eq!(actual.vertices, expected.vertices);
+            }
+            let expected = render_model::equipment::attach(
+                body.input.current_bones[5],
+                [0.0; 3],
+                render_model::equipment::BoneChannels {
+                    translation: [if enchanted { 20.0 } else { 4.0 }, 0.0, 0.0],
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+            assert_eq!(drawn[0].submission.input.current_bones[0], expected);
+            assert_eq!(
+                drawn[0].submission.material.glint.texture,
+                if enchanted || intrinsic {
+                    render_model::GlintTexture::Item
+                } else {
+                    render_model::GlintTexture::Actor
+                }
+            );
+        }
+    }
+}

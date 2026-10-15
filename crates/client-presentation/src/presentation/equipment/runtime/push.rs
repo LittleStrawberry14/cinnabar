@@ -361,7 +361,7 @@ impl EquipmentRuntime {
             && binding.color_mask == assets::EquipmentColorMask::Dye;
         presentation.submission.material.color_mask = color_mask;
         if profile == render_api::CombatVisuals::Legacy112 {
-            presentation.submission.material.kind = if item.enchanted {
+            presentation.submission.material.kind = if item.has_glint() {
                 assets::EntityRenderMaterial::Glint
             } else {
                 assets::EntityRenderMaterial::Default
@@ -416,7 +416,7 @@ impl EquipmentRuntime {
     ) -> Result<Option<types::WornRender>, ()> {
         let variables = [(
             assets::entity::EngineVariable::IsEnchanted.name(),
-            f32::from(item.enchanted),
+            f32::from(item.has_glint()),
         )];
         let input = animation.worn_input(equipment, slot, &variables);
         let (assets, runtime) = if from_pack {
@@ -560,13 +560,13 @@ pub(super) fn attachable_glint(
     )
 }
 
-/// Adds the requested glint material when the item's stack is enchanted.
+/// Adds shine when actual enchantments or intrinsic facts request it.
 fn with_glint(
     mut presentation: EquipmentPresentation,
     item: &WornItem,
     glint: render_model::ActorGlint,
 ) -> EquipmentPresentation {
-    if item.enchanted {
+    if item.has_glint() {
         presentation.submission.material = render_model::ActorMaterial {
             glint,
             ..presentation.submission.material

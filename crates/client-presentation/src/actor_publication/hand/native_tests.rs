@@ -255,6 +255,7 @@ fn fixture_with_binding(
             damage: None,
             dye_rgb: None,
             enchanted: false,
+            glint: Default::default(),
             kind: HeldKind::Sprite,
         }),
         ..Default::default()
@@ -425,6 +426,7 @@ fn native_hand_unbound_attachables_keep_actor_frame_during_owner_swing() {
                     damage: None,
                     dye_rgb: None,
                     enchanted: false,
+                    glint: Default::default(),
                     kind: HeldKind::Sprite,
                 });
             }
@@ -587,6 +589,7 @@ fn assert_java_native_parent(main: Option<&str>, off: bool, degrees: f32) {
             damage: None,
             dye_rgb: None,
             enchanted: false,
+            glint: Default::default(),
             kind: HeldKind::Sprite,
         });
     }
@@ -914,6 +917,7 @@ fn legacy_empty_main_arm_and_native_offhand_keep_separate_pose_stacks() {
             damage: None,
             dye_rgb: None,
             enchanted: false,
+            glint: Default::default(),
             kind: HeldKind::Sprite,
         });
         let mut cache = java::HandCache::default();

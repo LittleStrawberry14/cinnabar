@@ -297,6 +297,7 @@ fn helmet() -> ActorEquipmentInput {
                 kind: HeldKind::Other,
                 dye_rgb: None,
                 enchanted: false,
+                glint: Default::default(),
             }),
             None,
             None,

@@ -113,6 +113,7 @@ fn held(identifier: &str) -> ActorEquipmentInput {
             kind: HeldKind::Sprite,
             dye_rgb: None,
             enchanted: false,
+            glint: Default::default(),
         }),
         ..Default::default()
     }

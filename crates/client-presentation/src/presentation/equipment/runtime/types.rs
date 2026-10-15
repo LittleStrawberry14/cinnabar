@@ -31,10 +31,19 @@ pub struct WornItem {
     pub damage: Option<u32>,
     pub kind: HeldKind,
     pub dye_rgb: Option<u32>,
-    /// Enables the resource pack's enchanted material on worn equipment.
+    /// Actual stack enchantment state used by semantic item queries.
     pub enchanted: bool,
+    /// Intrinsic shine admitted independently of stack enchantments.
+    pub glint: assets::item::glint::ItemGlint,
     /// Data value, block and tags whose change re-equips a held stack.
     pub variant: actor_animation::StackVariant,
+}
+
+impl WornItem {
+    /// Combines actual enchantments with the admitted intrinsic choice for visual shine.
+    pub fn has_glint(&self) -> bool {
+        self.enchanted || self.glint.enabled().unwrap_or(false)
+    }
 }
 
 /// How a held stack is drawn.

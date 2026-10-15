@@ -27,7 +27,7 @@ impl EquipmentRuntime {
         animation: EquipmentAnimation<'_>,
         layers: &mut Vec<EquipmentPresentation>,
     ) {
-        let variables = [("variable.is_enchanted", f32::from(item.enchanted))];
+        let variables = [("variable.is_enchanted", f32::from(item.has_glint()))];
         let input = equipment.attachable_input(AttachableAnimationInput {
             worn: true,
             worn_slot: ArmorSlot::Chestplate as u8,
@@ -107,7 +107,7 @@ impl EquipmentRuntime {
             std::iter::once(super::super::ELYTRA_LAYER).chain(super::super::ELYTRA_GROUP_LAYERS);
         for (layer_id, (index, pose, hidden, material, state, source)) in ids.zip(groups) {
             let material = render_model::ActorMaterial {
-                kind: if item.enchanted {
+                kind: if item.has_glint() {
                     assets::EntityRenderMaterial::Glint
                 } else {
                     material

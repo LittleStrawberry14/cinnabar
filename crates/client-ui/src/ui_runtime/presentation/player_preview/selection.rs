@@ -63,6 +63,7 @@ impl EquipmentSelection {
                     &owner.rig,
                     actor_animation::AttachableAnimationInput {
                         worn: true,
+                        is_in_ui: true,
                         worn_slot: slot as u8,
                         owner_variables: &variables,
                         ..owner.input

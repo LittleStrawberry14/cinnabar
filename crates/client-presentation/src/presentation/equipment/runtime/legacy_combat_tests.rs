@@ -45,6 +45,7 @@ fn stack(identifier: &str, leather: bool, enchanted: bool) -> WornItem {
         kind: HeldKind::Other,
         dye_rgb: leather.then_some(0x00_33_cc_66),
         enchanted,
+        glint: Default::default(),
     }
 }
 

@@ -260,8 +260,8 @@ fn player_preview_rejects_malformed_and_exhausted_owner_predicates() {
     }
 }
 
-#[test]
-fn worn_selection_in_previews_uses_stack_enchantments_independently_of_visual_glint() {
+/// Checks actual preview dressing, semantic selection, dye and shine for each stack state.
+fn check_stack_enchantment_selection(condition: &str) {
     let base = catalog(&[Definition {
         name: ITEM,
         condition: None,
@@ -270,7 +270,7 @@ fn worn_selection_in_previews_uses_stack_enchantments_independently_of_visual_gl
     }]);
     let pack = catalog(&[Definition {
         name: "fixture:enchanted",
-        condition: Some("v.is_enchanted && c.item_slot == 'torso'"),
+        condition: Some(condition),
         color: PLAYER,
         dyed: false,
     }]);
@@ -343,4 +343,53 @@ fn worn_selection_in_previews_uses_stack_enchantments_independently_of_visual_gl
             enchanted || intrinsic
         );
     }
+}
+
+#[test]
+fn worn_selection_in_previews_uses_stack_enchantments_independently_of_visual_glint() {
+    check_stack_enchantment_selection("v.is_enchanted && c.item_slot == 'torso'");
+}
+
+#[test]
+fn owner_context_preview_predicates_observe_ui_while_world_selection_stays_ordinary() {
+    let pack = catalog(&[
+        Definition {
+            name: ITEM,
+            condition: None,
+            color: STARTUP,
+            dyed: true,
+        },
+        Definition {
+            name: "fixture:ui",
+            condition: Some("q.is_in_ui && c.item_slot == 'torso'"),
+            color: PLAYER,
+            dyed: false,
+        },
+    ]);
+    let world = owner(Arc::clone(&pack.assets));
+    let mut selector = actor_animation::AttachablesRuntime::new(Arc::clone(&pack.assets));
+    let mut budget = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
+    let catalog = pack.equipment.as_ref().unwrap();
+    let index = selector
+        .select_equipment_binding(
+            catalog,
+            ITEM,
+            world.authority().actor(1).unwrap(),
+            &world.authority().actor_rig(1).unwrap(),
+            actor_animation::AttachableAnimationInput {
+                worn: true,
+                worn_slot: 1,
+                ..Default::default()
+            },
+            &mut budget,
+            |_| true,
+        )
+        .unwrap();
+    assert_eq!(
+        catalog.bindings()[index].attachable_identifier(),
+        ITEM,
+        "a world rig must not admit a UI-only mapping"
+    );
+    check_preview(pack, PLAYER, false, "armour-owner-context-ui");
+    check_stack_enchantment_selection("q.is_in_ui && v.is_enchanted && c.item_slot == 'torso'");
 }

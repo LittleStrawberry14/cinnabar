@@ -232,3 +232,88 @@ fn partial_artwork_preserves_available_missing_disabled_and_hidden_branches() {
         }
     }
 }
+
+#[test]
+fn owner_context_worn_enchantments_select_geometry_and_preserve_intrinsic_glint() {
+    let mut files = coat_pack("v.coat=0;");
+    let mut model: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
+    let mut alternate = model["minecraft:geometry"][0].clone();
+    alternate["description"]["identifier"] = "geometry.fixture.enchanted".into();
+    alternate["bones"][0]["cubes"][0]["size"] = serde_json::json!([12, 8, 8]);
+    model["minecraft:geometry"]
+        .as_array_mut()
+        .unwrap()
+        .push(alternate);
+    files[1].1 = serde_json::to_vec(&model).unwrap();
+    let mut mapped: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
+    let description = &mut mapped["minecraft:attachable"]["description"];
+    description["identifier"] = "fixture:enchanted_helmet".into();
+    description["item"] = serde_json::json!({"minecraft:iron_helmet":"v.is_enchanted"});
+    description["geometry"]["default"] = "geometry.fixture.enchanted".into();
+    files.push((
+        "attachables/enchanted.json".into(),
+        serde_json::to_vec(&mapped).unwrap(),
+    ));
+    let (entities, _) = pack_catalog(files.clone());
+    let (mut runtime, _) = startup_runtime(files);
+    let body = player_body(&mut runtime);
+    let owner = owner();
+    let names = [Box::from("head")];
+    let rig = owner_rig(&owner, &names, 1);
+    for (enchanted, intrinsic) in [
+        (false, false),
+        (true, false),
+        (false, true),
+        (true, true),
+        (false, false),
+    ] {
+        let stack = crate::presentation::equipment::input::canonical_fixture(
+            "minecraft:iron_helmet",
+            enchanted,
+            intrinsic,
+        );
+        let worn =
+            crate::presentation::equipment::input::worn_item(&stack, None, Default::default())
+                .unwrap();
+        let input = ActorEquipmentInput {
+            armor: [Some(worn), None, None, None],
+            ..Default::default()
+        };
+        let drawn = runtime
+            .layers_for_profile(
+                &body,
+                &input,
+                render_api::CombatVisuals::Legacy112,
+                Some(EquipmentAnimation {
+                    owner: &owner,
+                    rig: &rig,
+                    frame_alpha: 1.0,
+                    delta_seconds: 0.05,
+                }),
+            )
+            .to_vec();
+        assert_eq!(drawn.len(), 1);
+        let geometry = render_model::find_geometry_index(
+            &entities,
+            if enchanted {
+                "geometry.fixture.enchanted"
+            } else {
+                "geometry.test.coat_helmet"
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            drawn[0].submission.input.rig,
+            render_model::equipment_rig_id(geometry),
+            "enchanted={enchanted} intrinsic={intrinsic}"
+        );
+        assert_eq!(
+            drawn[0].submission.material.kind,
+            if enchanted || intrinsic {
+                assets::EntityRenderMaterial::Glint
+            } else {
+                assets::EntityRenderMaterial::Default
+            }
+        );
+    }
+}

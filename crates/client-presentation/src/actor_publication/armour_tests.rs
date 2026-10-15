@@ -131,6 +131,7 @@ fn hiding_a_player_torso_keeps_its_chestplate_visible() {
                 damage: None,
                 dye_rgb: None,
                 enchanted: false,
+                glint: Default::default(),
                 variant: Default::default(),
                 charged_projectile: None,
             }),

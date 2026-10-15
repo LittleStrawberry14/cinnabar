@@ -209,6 +209,7 @@ fn source_for_use_and_swing(
             damage: None,
             dye_rgb: None,
             enchanted: false,
+            glint: Default::default(),
             kind: if identifier == "minecraft:stone" {
                 HeldKind::Block(0)
             } else {
@@ -429,6 +430,7 @@ fn retained_native_bow_stays_idle_when_the_newly_selected_food_is_used() {
         kind: HeldKind::Sprite,
         dye_rgb: None,
         enchanted: false,
+        glint: Default::default(),
         variant: Default::default(),
     };
     let mut cache = HandCache::default();

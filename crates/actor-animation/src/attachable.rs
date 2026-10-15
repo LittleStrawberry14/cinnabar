@@ -23,6 +23,8 @@ pub struct AttachableAnimationInput<'a> {
     /// Armour slot index of a worn model, so each worn piece keeps its own state.
     pub worn_slot: u8,
     pub is_paperdoll: bool,
+    /// Marks a UI draw even when its owner rig was sampled in the world.
+    pub is_in_ui: bool,
     pub frame_alpha: f32,
     /// Elapsed render time for clip application; absent inputs use the actor timestep.
     pub delta_seconds: Option<f32>,
