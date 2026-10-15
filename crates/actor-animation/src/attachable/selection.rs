@@ -112,7 +112,7 @@ pub(super) fn owner_context(
     };
     let (main_hand_kinetic, main_hand_swing_seconds) = owner_rig.animation_variables.item_timings();
     let owner_context = owner_rig.animation_variables.owner_context();
-    let context = ActorTickContext {
+    ActorTickContext {
         // Attachables use render time, independently of the owner's tick batching.
         animation_elapsed_ticks: None,
         main_hand_kinetic,
@@ -128,6 +128,5 @@ pub(super) fn owner_context(
         main_hand: input.owner_main_hand.map(Arc::from),
         off_hand: input.owner_off_hand.map(Arc::from),
         ..owner_context.cloned().unwrap_or_default()
-    };
-    context
+    }
 }
