@@ -128,7 +128,8 @@ fn body(runtime: &mut EquipmentRuntime) -> ActorRigSubmission {
                     ..Default::default()
                 },
             )]
-            .into(),
+            .into_iter()
+            .collect(),
         ),
         icons: None,
     };
