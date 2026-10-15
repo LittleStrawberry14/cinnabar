@@ -395,6 +395,27 @@ fn identity_transform() -> ItemDisplayTransform {
 }
 
 #[test]
+fn unresolved_render_textures_roundtrip_without_changing_legacy_empty_layers() {
+    let mut compiled = carrier_v4_fixture();
+    let legacy = serde_json::to_value(compiled.render.layers[0]).unwrap();
+    assert!(legacy.get("unresolved_textures").is_none());
+    let restored: entity::EntityRenderLayer = serde_json::from_value(legacy).unwrap();
+    assert!(!restored.unresolved_textures);
+
+    compiled.render.layers[0].unresolved_textures = true;
+    assert!(
+        encode_entity_blob(&compiled).is_err(),
+        "a resolved slot cannot be marked unresolved"
+    );
+    compiled.render.layers[0].slot_count = 0;
+    compiled.render.slots = Box::new([]);
+    compiled.render.candidates = Box::new([]);
+    let encoded = encode_entity_blob(&compiled).unwrap();
+    let decoded = RuntimeEntityAssetsV4::decode(&encoded).unwrap();
+    assert!(decoded.render_data().layers[0].unresolved_textures);
+}
+
+#[test]
 fn render_light_multiplier_preserves_legacy_carriers_and_validates_expression_indices() {
     let mut compiled = carrier_v4_fixture();
     let layer = compiled.render.layers[0];
@@ -671,6 +692,7 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
                 condition: None,
                 first_slot: 0,
                 slot_count: 1,
+                unresolved_textures: false,
                 first_visibility: 0,
                 visibility_count: 1,
                 color: None,

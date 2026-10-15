@@ -201,6 +201,7 @@ pub fn compiled_fixture() -> CompiledEntityAssets {
                 condition: None,
                 first_slot: 0,
                 slot_count: 1,
+                unresolved_textures: false,
                 first_visibility: 0,
                 visibility_count: 0,
                 color: None,

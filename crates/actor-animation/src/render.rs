@@ -267,7 +267,7 @@ pub(super) fn evaluate_render(
         {
             continue;
         }
-        if layer.slot_count == 0 {
+        if layer.unresolved_textures {
             unresolved_artwork = true;
             continue;
         }

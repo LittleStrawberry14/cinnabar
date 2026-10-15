@@ -327,6 +327,7 @@ pub(super) fn compile_render(
                 condition,
                 first_slot: first_slot as u32,
                 slot_count: (slots.len() - first_slot) as u16,
+                unresolved_textures: slots.len() == first_slot,
                 first_visibility: first_visibility as u32,
                 visibility_count,
                 color: compile_color(molang, definition.get("color"), "1.0"),
