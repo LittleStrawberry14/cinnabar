@@ -141,9 +141,14 @@ impl EquipmentRuntime {
                 input,
                 &mut operations_left,
                 |binding| {
-                    find_geometry_index(&pack.assets, &binding.geometry.identifier)
-                        .or_else(|| find_geometry_index(&self.assets, &binding.geometry.identifier))
-                        .is_some()
+                    !pack
+                        .assets
+                        .geometry_candidates(&binding.geometry.identifier)
+                        .is_empty()
+                        || !self
+                            .assets
+                            .geometry_candidates(&binding.geometry.identifier)
+                            .is_empty()
                 },
             )?;
             Some((Arc::clone(catalog), index))
@@ -157,7 +162,10 @@ impl EquipmentRuntime {
                 input,
                 &mut operations_left,
                 |binding| {
-                    find_geometry_index(&self.assets, &binding.geometry.identifier).is_some()
+                    !self
+                        .assets
+                        .geometry_candidates(&binding.geometry.identifier)
+                        .is_empty()
                         || (binding.attachable.is_none()
                             && binding.geometry.resolution == EntityDependencyResolution::External)
                 },

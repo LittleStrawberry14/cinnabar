@@ -4,6 +4,21 @@ use std::sync::Arc;
 
 use super::*;
 
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static GEOMETRY_LOOKUP_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Compares exact identifiers in the admitted geometry order and counts real probes in tests.
+fn compare_geometry_identifier(candidate: &str, identifier: &str) -> std::cmp::Ordering {
+    #[cfg(any(test, feature = "test-support"))]
+    GEOMETRY_LOOKUP_WORK.with(|work| {
+        let (lookups, comparisons) = work.get();
+        work.set((lookups, comparisons + 1));
+    });
+    candidate.cmp(identifier)
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeEntityAssets {
     pub(super) item_use_profiles: Arc<[item_use::ItemUseDescriptor]>,
@@ -234,15 +249,28 @@ impl RuntimeEntityAssets {
         &self.geometry_parents
     }
 
+    /// Finds exact identifier matches in the immutable catalog's validated sort order.
     #[must_use]
     pub fn geometry_candidates(&self, identifier: &str) -> &[EntityGeometry] {
-        let start = self
-            .geometries
-            .partition_point(|geometry| geometry.identifier.as_ref() < identifier);
+        #[cfg(any(test, feature = "test-support"))]
+        GEOMETRY_LOOKUP_WORK.with(|work| {
+            let (lookups, comparisons) = work.get();
+            work.set((lookups + 1, comparisons));
+        });
+        let start = self.geometries.partition_point(|geometry| {
+            compare_geometry_identifier(&geometry.identifier, identifier).is_lt()
+        });
         let matching = &self.geometries[start..];
-        let length =
-            matching.partition_point(|geometry| geometry.identifier.as_ref() == identifier);
+        let length = matching.partition_point(|geometry| {
+            compare_geometry_identifier(&geometry.identifier, identifier).is_eq()
+        });
         &matching[..length]
+    }
+
+    /// Returns and resets this thread's geometry lookup calls and actual identifier comparisons.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_geometry_lookup_work() -> (usize, usize) {
+        GEOMETRY_LOOKUP_WORK.with(|work| work.replace((0, 0)))
     }
 
     #[must_use]

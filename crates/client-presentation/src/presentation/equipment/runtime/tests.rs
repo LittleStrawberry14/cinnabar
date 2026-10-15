@@ -1,5 +1,8 @@
 //! Isolated camera-item routing tests; no optional installed carriers or native art.
 
+#[path = "geometry_admission_tests.rs"]
+mod geometry_admission_tests;
+
 #[path = "missing_artwork_tests.rs"]
 mod missing_artwork_tests;
 
