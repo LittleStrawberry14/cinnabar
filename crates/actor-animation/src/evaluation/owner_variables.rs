@@ -128,6 +128,8 @@ impl<'a> ActorAnimationVariables<'a> {
         let first =
             owner_symbols.partition_point(|symbol| symbol.kind < MolangSymbolKind::Variable);
         for (offset, value) in variables.values.iter().enumerate() {
+            #[cfg(test)]
+            super::selection_work::record(|work| work.inherited += 1);
             let Some(value) = value else {
                 continue;
             };
@@ -136,6 +138,8 @@ impl<'a> ActorAnimationVariables<'a> {
             };
             if let Some(slot) = layout.named_slot(assets, &symbol.identifier) {
                 output.values[slot] = Some(value.clone());
+                #[cfg(test)]
+                super::selection_work::record(|work| work.assigned += 1);
             }
         }
     }

@@ -12,7 +12,10 @@ pub(super) fn attach(
     stream: &WorldStream,
     poses: &super::layers::LayerPoses<'_>,
     frame: (f32, f32, Option<&render_scene::UiGlintSettings>),
-    mut overlay_of: impl FnMut(&render_model::ActorRigSubmission, bool) -> u32,
+    mut style_of: impl FnMut(
+        &render_model::ActorRigSubmission,
+        bool,
+    ) -> Option<crate::presentation::entity_layers::ControllerStyle>,
 ) {
     let (partial_tick, delta_seconds, glint_settings) = frame;
     crate::presentation::actors::attach_layers(
@@ -37,9 +40,11 @@ pub(super) fn attach(
                 .actor(runtime_id)
                 .zip(stream.authority().actor_rig(runtime_id));
             let mut styled_body = body.clone();
-            styled_body.overlay_rgba8 = runtime_skin.map_or(body.overlay_rgba8, |runtime_skin| {
-                overlay_of(body, runtime_skin)
-            });
+            if let Some(style) = runtime_skin.and_then(|runtime_skin| style_of(body, runtime_skin))
+            {
+                styled_body.overlay_rgba8 = style.overlay_rgba8;
+                styled_body.light = style.light;
+            }
             let layers = equipment.layers_for_profile(
                 &styled_body,
                 &input,

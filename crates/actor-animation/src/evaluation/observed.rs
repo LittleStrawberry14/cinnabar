@@ -14,6 +14,7 @@ struct QueryRead {
 pub(crate) struct ObservedInputs {
     variables: BTreeMap<u32, Option<MolangValue>>,
     written: BTreeSet<u32>,
+    undo: Vec<(Place, Option<MolangValue>)>,
     queries: Vec<QueryRead>,
     random: u64,
 }
@@ -24,6 +25,7 @@ impl ObservedInputs {
         Self {
             variables: BTreeMap::new(),
             written: BTreeSet::new(),
+            undo: Vec::new(),
             queries: Vec::new(),
             random: variables.random,
         }
@@ -81,9 +83,32 @@ impl ObservedInputs {
         }
     }
 
-    /// Marks scratch writes so their later reads are not mistaken for inherited inputs.
-    pub(super) fn written(&mut self, symbol: u32) {
-        self.written.insert(symbol);
+    /// Records each slot's first pre-write value and excludes later reads from inherited inputs.
+    pub(super) fn written(&mut self, symbol: u32, place: Place, variables: &MolangVariables) {
+        if self.written.insert(symbol) {
+            let value = match place {
+                Place::Variable(slot) => variables.values.get(slot),
+                Place::Temporary(slot) => variables.temps.get(slot),
+            };
+            if let Some(value) = value {
+                #[cfg(test)]
+                super::selection_work::record(|work| work.saved += 1);
+                self.undo.push((place, value.clone()));
+            }
+        }
+    }
+
+    /// Restores the selection prefix after success or failure, including clean temps and RNG.
+    pub(crate) fn restore(&mut self, variables: &mut MolangVariables) {
+        for (place, value) in std::mem::take(&mut self.undo) {
+            if let Some(entry) = variables.entry(place) {
+                #[cfg(test)]
+                super::selection_work::record(|work| work.restored += 1);
+                *entry = value;
+            }
+        }
+        variables.random = self.random;
+        variables.random_draws = 0;
     }
 
     /// Records the exact arguments and value of one query along the executed branch.

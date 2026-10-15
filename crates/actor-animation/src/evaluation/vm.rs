@@ -30,8 +30,10 @@ impl Evaluator<'_> {
                     false,
                 );
         }
-        // Temporaries last for one evaluation.
-        variables.clear_temporaries();
+        // Observed owner predicates restore their writes; ordinary evaluations clear temps here.
+        if reads.is_none() {
+            variables.clear_temporaries();
+        }
         stack.reserve(expression.max_stack as usize);
         let mut loops = Vec::new();
         let mut pc = 0;
@@ -84,7 +86,7 @@ impl Evaluator<'_> {
                     let value = pop(stack)?;
                     let place = self.layout.place(symbol).ok_or(EvalError::Invalid)?;
                     if let Some(reads) = reads.as_mut() {
-                        reads.written(symbol);
+                        reads.written(symbol, place, variables);
                     }
                     variables.store(place, value)?;
                 }

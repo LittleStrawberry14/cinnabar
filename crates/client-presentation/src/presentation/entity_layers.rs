@@ -223,20 +223,42 @@ fn resolve(
     );
 }
 
-/// Resolves only the primary body's overlay without masking or replacing its attachment pose.
-pub(crate) fn controller_overlay(
+/// Admitted controller styling inherited by equipment without replacing attachment poses.
+pub(crate) struct ControllerStyle {
+    pub overlay_rgba8: u32,
+    pub light: u32,
+}
+
+/// Resolves the primary body's style independently of its model and visibility masks.
+pub(crate) fn controller_style(
     body: &ActorRigSubmission,
     layers: &[RenderTextureLayer],
     artwork: &ActorArtworkPages,
     cache: &mut LayerPoseCache,
     player_skin: bool,
-) -> u32 {
+) -> ControllerStyle {
     layers
         .iter()
         .find_map(|layer| resolve_layer(body, layer, artwork, cache, player_skin))
-        .map_or(body.overlay_rgba8, |layer| {
-            layer_overlay(body.overlay_rgba8, &layer)
-        })
+        .map_or(
+            ControllerStyle {
+                overlay_rgba8: body.overlay_rgba8,
+                light: body.light,
+            },
+            |layer| ControllerStyle {
+                overlay_rgba8: layer_overlay(body.overlay_rgba8, &layer),
+                light: layer_light(body.light, &layer),
+            },
+        )
+}
+
+/// Preserves baseline lighting unless the admitted controller bypasses the world lightmap.
+fn layer_light(inherited: u32, layer: &ResolvedLayer) -> u32 {
+    if layer.ignore_lighting {
+        pack_actor_light_without_lightmap()
+    } else {
+        inherited
+    }
 }
 
 /// Applies the controller's overlay precedence independently of its model and visibility.
@@ -284,9 +306,7 @@ fn layered(
     submission.overlay_rgba8 = layer_overlay(body.overlay_rgba8, layer);
     submission.tint = layer.tint;
     submission.uv_anim = layer.uv_anim;
-    if layer.ignore_lighting {
-        submission.light = pack_actor_light_without_lightmap();
-    }
+    submission.light = layer_light(body.light, layer);
     if !layer.hidden_bones.is_empty() {
         submission.input.previous_bones =
             cache.hide(&submission.input.previous_bones, &layer.hidden_bones);
@@ -458,6 +478,8 @@ mod tests {
             rejected.geometry = Some(0);
             rejected.overlay = [0.0, 1.0, 0.0, 0.5];
             let mut primary = layer.clone();
+            rejected.ignore_lighting = !dissolve;
+            primary.ignore_lighting = dissolve;
             if dissolve {
                 primary.material = assets::EntityRenderMaterial::DissolveColor;
             }
@@ -466,6 +488,8 @@ mod tests {
             let layers = [rejected, primary, extra];
             let artwork = ActorArtworkPages::default();
             let mut cache = LayerPoseCache::default();
+            let baseline_light = render_model::pack_actor_light(2, 3);
+            batch.submissions[0].light = baseline_light;
             let body = &batch.submissions[0];
             let original_bones = Arc::clone(&body.input.current_bones);
             let expected = if dissolve {
@@ -473,9 +497,15 @@ mod tests {
             } else {
                 pack_overlay_rgba8(layer.overlay)
             };
+            let style = controller_style(body, &layers, &artwork, &mut cache, true);
+            assert_eq!(style.overlay_rgba8, expected);
             assert_eq!(
-                controller_overlay(body, &layers, &artwork, &mut cache, true),
-                expected
+                style.light,
+                if dissolve {
+                    pack_actor_light_without_lightmap()
+                } else {
+                    body.light
+                }
             );
             assert_eq!(body.input.current_bones, original_bones);
             apply_render_layers_cached(
@@ -485,6 +515,8 @@ mod tests {
                 &mut cache,
             );
             assert_eq!(batch.submissions[0].overlay_rgba8, expected);
+            assert_eq!(batch.submissions[0].light, style.light);
+            assert_eq!(batch.submissions[1].light, baseline_light);
             assert_eq!(
                 batch.submissions[0].input.current_bones[0].translation_scale[3],
                 0.0

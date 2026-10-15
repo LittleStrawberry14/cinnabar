@@ -80,8 +80,8 @@ pub(super) fn attach(
             &poses,
             (partial_tick, delta_seconds, glint_settings),
             |body, runtime_skin| {
-                layers_of(body.input.identity.runtime_id).map_or(body.overlay_rgba8, |layers| {
-                    crate::presentation::entity_layers::controller_overlay(
+                layers_of(body.input.identity.runtime_id).map(|layers| {
+                    crate::presentation::entity_layers::controller_style(
                         body,
                         &layers,
                         artwork,

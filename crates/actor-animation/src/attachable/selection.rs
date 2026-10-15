@@ -4,6 +4,13 @@ use crate::evaluation::{Evaluator, ObservedInputs};
 
 type SelectionKey = (AttachableKey, u32);
 
+/// Common owner inputs prepared lazily for one equipment search, never retained across calls.
+struct PreparedOwner {
+    context: ActorTickContext,
+    input: ActorTickInput,
+    frame_alpha: f32,
+}
+
 /// Bounded predicate results whose observed owner inputs are still identical.
 #[derive(Debug, Default)]
 pub(super) struct SelectionCache {
@@ -50,18 +57,20 @@ impl AttachablesRuntime {
             .bindings()
             .partition_point(|binding| binding.identifier.as_ref() < identifier);
         let candidates = catalog.bindings_for(identifier).iter().enumerate().rev();
+        let mut prepared = None;
         candidates
             .clone()
             .filter(|(_, binding)| binding.attachable.is_some())
             .chain(candidates.filter(|(_, binding)| binding.attachable.is_none()))
             .find_map(|(offset, binding)| {
                 let matches = self
-                    .matches_owner(
+                    .matches_prepared_owner(
                         binding.attachable_identifier(),
                         owner,
                         rig,
                         input,
                         operations_left,
+                        &mut prepared,
                     )
                     .unwrap_or(binding.attachable.is_none());
                 (matches && drawable(binding)).then_some(start + offset)
@@ -77,6 +86,20 @@ impl AttachablesRuntime {
         input: AttachableAnimationInput<'_>,
         operations_left: &mut usize,
     ) -> Option<bool> {
+        self.matches_prepared_owner(identifier, owner, rig, input, operations_left, &mut None)
+    }
+
+    /// Shares the owner prefix while each predicate restores its own writes before returning.
+    #[allow(clippy::too_many_arguments)]
+    fn matches_prepared_owner(
+        &mut self,
+        identifier: &str,
+        owner: &dyn AnimatedActor,
+        rig: &ActorRigSnapshot<'_>,
+        input: AttachableAnimationInput<'_>,
+        operations_left: &mut usize,
+        prepared: &mut Option<PreparedOwner>,
+    ) -> Option<bool> {
         let binding = self.assets.attachable_rig_binding(identifier)?;
         let Some(condition) = self.assets.rig_bindings()[binding].item_condition else {
             return Some(true);
@@ -84,53 +107,19 @@ impl AttachablesRuntime {
         if *operations_left == 0 {
             return Some(false);
         }
-        let frame_alpha = sample_alpha(input);
-        let context = owner_context(rig, input);
-        let tick_input = owner_frame(owner, rig, input);
-        self.selection_variables
-            .reset(owner.runtime_id() ^ owner.spawn_revision().rotate_left(32));
-        tick::apply_engine_variables(
-            &self.layout.engine,
-            &mut self.selection_variables,
-            owner,
-            &context,
-            &tick_input,
-            &motion::MotionState::default(),
-        );
-        rig.animation_variables
-            .copy_to(&self.assets, &self.layout, &mut self.selection_variables);
-        rig.animation_variables.sample_spear_to(
-            &self.layout.engine.spear,
-            &mut self.selection_variables,
-            owner,
-            &tick_input,
-            frame_alpha,
-        );
-        for (name, value) in input.owner_variables {
-            self.selection_variables
-                .set(self.layout.named_slot(&self.assets, name), *value);
-        }
-        apply_context_variables(
-            &self.layout.engine,
-            &mut self.selection_variables,
-            owner,
-            &context,
-            &tick_input,
-        );
-        self.selection_variables.clear_temporaries();
-        let evaluated_input = tick::evaluation_input(tick_input, &context);
+        let prepared = prepared.get_or_insert_with(|| self.prepare_owner(owner, rig, input));
         let evaluator = Evaluator {
             assets: &self.assets,
             pack: true,
             layout: &self.layout,
             program: None,
             actor: owner,
-            input: &evaluated_input,
-            context: &context,
+            input: &prepared.input,
+            context: &prepared.context,
             anim_tick: rig.animation_variables.anim_tick(),
             anim_time: None,
             swell_amount: None,
-            presentation_alpha: Some(frame_alpha),
+            presentation_alpha: Some(prepared.frame_alpha),
             query_history: None,
             life_tick: rig.animation_variables.life_tick(),
             finished: (false, false),
@@ -184,11 +173,59 @@ impl AttachablesRuntime {
             Some(&mut reads),
         );
         self.selection_stack = budget.stack;
+        reads.restore(&mut self.selection_variables);
         let matches = result.as_ref().is_ok_and(|value| value.truthy());
         if result.is_ok() {
             self.selections.insert(key, reads, matches);
         }
         Some(matches)
+    }
+
+    /// Resets the full layout and inherits immutable owner values once before conditional search.
+    fn prepare_owner(
+        &mut self,
+        owner: &dyn AnimatedActor,
+        rig: &ActorRigSnapshot<'_>,
+        input: AttachableAnimationInput<'_>,
+    ) -> PreparedOwner {
+        let frame_alpha = sample_alpha(input);
+        let context = owner_context(rig, input);
+        let tick_input = owner_frame(owner, rig, input);
+        self.selection_variables
+            .reset(owner.runtime_id() ^ owner.spawn_revision().rotate_left(32));
+        tick::apply_engine_variables(
+            &self.layout.engine,
+            &mut self.selection_variables,
+            owner,
+            &context,
+            &tick_input,
+            &motion::MotionState::default(),
+        );
+        rig.animation_variables
+            .copy_to(&self.assets, &self.layout, &mut self.selection_variables);
+        rig.animation_variables.sample_spear_to(
+            &self.layout.engine.spear,
+            &mut self.selection_variables,
+            owner,
+            &tick_input,
+            frame_alpha,
+        );
+        for (name, value) in input.owner_variables {
+            self.selection_variables
+                .set(self.layout.named_slot(&self.assets, name), *value);
+        }
+        apply_context_variables(
+            &self.layout.engine,
+            &mut self.selection_variables,
+            owner,
+            &context,
+            &tick_input,
+        );
+        PreparedOwner {
+            input: tick::evaluation_input(tick_input, &context),
+            context,
+            frame_alpha,
+        }
     }
 }
 

@@ -90,6 +90,9 @@ fn candidate_parts(
 #[path = "selection_lookup_tests.rs"]
 mod lookup;
 
+#[path = "selection_preparation_tests.rs"]
+mod preparation;
+
 /// Selects actual candidates and checks measured query work against the caller's spent budget.
 fn select(
     runtime: &mut AttachablesRuntime,

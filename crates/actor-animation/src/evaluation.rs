@@ -5,6 +5,8 @@ use {super::*, simulation_clock::TICK_DURATION as ACTOR_TICK_DURATION};
 
 mod input_reads;
 mod observed;
+#[cfg(test)]
+pub(super) mod selection_work;
 mod vm;
 pub(super) use observed::ObservedInputs;
 mod owner_variables;
@@ -322,6 +324,8 @@ impl MolangEffects {
 impl MolangVariables {
     /// Clears scratch expression values while retaining their allocated slots.
     pub(super) fn reset(&mut self, seed: u64) {
+        #[cfg(test)]
+        selection_work::record(|work| work.reset += self.values.len() + self.temps.len());
         self.values.fill(None);
         self.temps.fill(None);
         self.random = seed | 1;
@@ -405,6 +409,8 @@ impl MolangVariables {
 
     fn store(&mut self, place: Place, value: MolangValue) -> Result<(), EvalError> {
         *self.entry(place).ok_or(EvalError::Invalid)? = Some(value);
+        #[cfg(test)]
+        selection_work::record(|work| work.assigned += 1);
         let slot = match place {
             Place::Variable(slot) => slot,
             Place::Temporary(slot) => self.values.len() + slot,
@@ -466,24 +472,32 @@ impl MolangVariables {
     }
     pub(super) fn set_string(&mut self, slot: Option<usize>, value: &str) {
         if let Some(entry) = slot.and_then(|slot| self.values.get_mut(slot)) {
+            #[cfg(test)]
+            selection_work::record(|work| work.assigned += 1);
             *entry = Some(MolangValue::String(Arc::from(value)));
         }
     }
 
     pub(super) fn set_actor_reference(&mut self, slot: Option<usize>, runtime_id: u64) {
         if let Some(entry) = slot.and_then(|slot| self.values.get_mut(slot)) {
+            #[cfg(test)]
+            selection_work::record(|work| work.assigned += 1);
             *entry = Some(MolangValue::ActorReference(runtime_id));
         }
     }
 
     pub(super) fn set(&mut self, slot: Option<usize>, value: f32) {
         if let Some(entry) = slot.and_then(|slot| self.values.get_mut(slot)) {
+            #[cfg(test)]
+            selection_work::record(|work| work.assigned += 1);
             *entry = Some(MolangValue::Number(value));
         }
     }
 
     pub(super) fn clear(&mut self, slot: Option<usize>) {
         if let Some(entry) = slot.and_then(|slot| self.values.get_mut(slot)) {
+            #[cfg(test)]
+            selection_work::record(|work| work.assigned += 1);
             *entry = None;
         }
     }
@@ -509,6 +523,8 @@ impl MolangVariables {
     }
 
     pub(super) fn clear_temporaries(&mut self) {
+        #[cfg(test)]
+        selection_work::record(|work| work.reset += self.temps.len());
         self.temps.fill(None);
     }
 
@@ -659,7 +675,8 @@ impl Evaluator<'_> {
         self.run_observed(expression_index, variables, this, budget, None)
     }
 
-    /// Records the external reads of a scratch evaluation for exact result reuse.
+    /// Records selection reads when given a recorder; its caller supplies clean temporaries and
+    /// restores recorded writes after every result. Ordinary evaluations clear their own temps.
     pub(super) fn run_observed(
         &self,
         expression_index: usize,
