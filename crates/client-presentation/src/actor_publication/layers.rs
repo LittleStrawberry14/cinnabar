@@ -113,10 +113,20 @@ pub(super) fn attach(
                 } else {
                     remote_input(stream, runtime_id)
                 };
-                input.armor[1].as_ref().is_some_and(|item| {
-                    equipment
-                        .as_deref()
-                        .is_some_and(|equipment| equipment.is_elytra(&item.identifier))
+                equipment.as_deref_mut().is_some_and(|equipment| {
+                    let rig = stream.authority().actor_rig(runtime_id);
+                    let animation = stream.authority().actor(runtime_id).zip(rig.as_ref());
+                    equipment.is_wearing_elytra(
+                        &input,
+                        animation.map(|(owner, rig)| {
+                            crate::presentation::equipment::EquipmentAnimation {
+                                owner,
+                                rig,
+                                frame_alpha: partial_tick,
+                                delta_seconds,
+                            }
+                        }),
+                    )
                 })
             },
         );

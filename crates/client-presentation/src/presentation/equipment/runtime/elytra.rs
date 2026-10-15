@@ -1,7 +1,5 @@
 //! Worn wings use the pack's controller, movement queries and body attachment.
 
-use actor_animation::AttachableAnimationInput;
-
 use super::*;
 
 /// Vanilla's `elytra` material derives `entity_alphatest`: alpha-tested and double-sided.
@@ -23,22 +21,13 @@ impl EquipmentRuntime {
         &mut self,
         body: &ActorRigSubmission,
         item: &WornItem,
+        source: pack::BindingSource,
         equipment: &ActorEquipmentInput,
         animation: EquipmentAnimation<'_>,
         layers: &mut Vec<EquipmentPresentation>,
     ) {
         let variables = [("variable.is_enchanted", f32::from(item.has_glint()))];
-        let input = equipment.attachable_input(AttachableAnimationInput {
-            worn: true,
-            worn_slot: ArmorSlot::Chestplate as u8,
-            frame_alpha: animation.frame_alpha,
-            delta_seconds: Some(animation.delta_seconds),
-            owner_variables: &variables,
-            ..Default::default()
-        });
-        let Some(source) = self.selected_binding_source(item, animation, input) else {
-            return;
-        };
+        let input = animation.worn_input(equipment, ArmorSlot::Chestplate, &variables);
         let pack::BindingSource {
             ref catalog,
             from_pack,

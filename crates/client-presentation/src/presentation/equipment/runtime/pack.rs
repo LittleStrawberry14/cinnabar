@@ -37,15 +37,22 @@ fn is_pack_body_key(key: u32) -> bool {
 }
 
 impl EquipmentRuntime {
-    /// Selects a definition whose item condition admits this owner before falling back to startup.
+    /// Selects worn equipment for its owner, admitting only ordinary definitions without one.
     pub(super) fn worn_binding_source(
         &mut self,
         item: &WornItem,
         equipment: &ActorEquipmentInput,
-        animation: EquipmentAnimation<'_>,
+        animation: Option<EquipmentAnimation<'_>>,
         slot: ArmorSlot,
     ) -> Option<BindingSource> {
-        self.selected_binding_source(item, animation, animation.worn_input(equipment, slot, &[]))
+        match animation {
+            Some(animation) => self.selected_binding_source(
+                item,
+                animation,
+                animation.worn_input(equipment, slot, &[]),
+            ),
+            None => self.unowned_binding_source(item),
+        }
     }
 
     /// Selects held variants with the same owner timing and hand context as animation.

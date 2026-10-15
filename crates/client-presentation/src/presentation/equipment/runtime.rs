@@ -535,9 +535,17 @@ impl EquipmentRuntime {
                     );
                     continue;
                 }
-                if slot == ArmorSlot::Chestplate && self.is_elytra(&item.identifier) {
+                let Some(source) = self.worn_binding_source(item, input, animation, slot) else {
+                    self.note_missing_layer(item, Some(slot), bones.head);
+                    continue;
+                };
+                let category = self.effective_category(
+                    &item.identifier,
+                    source.catalog.bindings()[source.index].category,
+                );
+                if slot == ArmorSlot::Chestplate && category == EquipmentCategory::Elytra {
                     if let Some(animation) = animation {
-                        self.push_elytra(body, item, input, animation, layers);
+                        self.push_elytra(body, item, source, input, animation, layers);
                     }
                     continue;
                 }
@@ -548,6 +556,7 @@ impl EquipmentRuntime {
                     geometry,
                     (slot, layer),
                     item,
+                    source,
                     (input, animation, profile),
                     layers,
                 );
@@ -586,13 +595,23 @@ impl EquipmentRuntime {
         entry.clone().map(|bones| (geometry, bones))
     }
 
-    /// Identifies wing equipment through its resolved attachable rather than its item name.
-    pub fn is_elytra(&self, identifier: &str) -> bool {
-        self.binding_source(identifier).is_some_and(|(catalog, _)| {
-            catalog
-                .binding(identifier)
-                .is_some_and(|binding| binding.category == EquipmentCategory::Elytra)
-        })
+    /// Whether the admitted chest definition is wings in the same context used for its draw.
+    pub(crate) fn is_wearing_elytra(
+        &mut self,
+        equipment: &ActorEquipmentInput,
+        animation: Option<EquipmentAnimation<'_>>,
+    ) -> bool {
+        equipment.armor[ArmorSlot::Chestplate as usize]
+            .as_ref()
+            .and_then(|item| {
+                let source =
+                    self.worn_binding_source(item, equipment, animation, ArmorSlot::Chestplate)?;
+                Some(self.effective_category(
+                    &item.identifier,
+                    source.catalog.bindings()[source.index].category,
+                ))
+            })
+            == Some(EquipmentCategory::Elytra)
     }
 
     fn has_armor_binding(&self, identifier: &str) -> bool {

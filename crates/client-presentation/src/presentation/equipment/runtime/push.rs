@@ -225,6 +225,7 @@ impl EquipmentRuntime {
         body_geometry: u32,
         (slot, layer): (ArmorSlot, u8),
         item: &WornItem,
+        source: pack::BindingSource,
         (equipment, animation, profile): (
             &ActorEquipmentInput,
             Option<EquipmentAnimation<'_>>,
@@ -232,13 +233,6 @@ impl EquipmentRuntime {
         ),
         layers: &mut Vec<EquipmentPresentation>,
     ) {
-        let source = match animation {
-            Some(animation) => self.worn_binding_source(item, equipment, animation, slot),
-            None => self.unowned_binding_source(item),
-        };
-        let Some(source) = source else {
-            return;
-        };
         let pack::BindingSource {
             ref catalog,
             from_pack,

@@ -3,8 +3,11 @@ use super::*;
 use assets::{RuntimeAssets, RuntimeEntityAssets};
 use protocol::{ActorEvent, ActorKind, ActorSpawnEvent, WorldBootstrap, WorldEvent};
 
-/// Compiles an original body, cape and optional sneaking-dependent visibility controller.
-fn fixture(controlled: bool) -> Arc<RuntimeEntityAssets> {
+#[path = "worn_category_tests.rs"]
+mod worn_categories;
+
+/// Supplies original body/cape sources and an optional visibility controller for layer fixtures.
+fn fixture_files(controlled: bool) -> Vec<(Box<str>, Vec<u8>)> {
     let geometry = serde_json::json!({
         "format_version":"1.12.0", "minecraft:geometry":[
             {"description":{"identifier":"geometry.fixture","texture_width":64,"texture_height":32},
@@ -28,7 +31,7 @@ fn fixture(controlled: bool) -> Arc<RuntimeEntityAssets> {
     image::RgbaImage::from_pixel(64, 32, image::Rgba([180, 80, 20, 255]))
         .write_to(&mut png, image::ImageFormat::Png)
         .unwrap();
-    let files = vec![
+    vec![
         ("textures/fixture.png".into(), png.into_inner()),
         ("entity/player.json".into(), br#"{"format_version":"1.10.0","minecraft:client_entity":{"description":{
             "identifier":"minecraft:player","materials":{"default":"entity_alphatest"},
@@ -38,8 +41,12 @@ fn fixture(controlled: bool) -> Arc<RuntimeEntityAssets> {
         ("render_controllers/fixture.json".into(), serde_json::to_vec(&serde_json::json!({
             "format_version":"1.8.0", "render_controllers":{"controller.render.fixture":controller}
         })).unwrap()),
-    ];
-    let pack = pack_entity_compiler::compile_actor_pack(files)
+    ]
+}
+
+/// Compiles an original body, cape and optional sneaking-dependent visibility controller.
+fn fixture(controlled: bool) -> Arc<RuntimeEntityAssets> {
+    let pack = pack_entity_compiler::compile_actor_pack(fixture_files(controlled))
         .unwrap()
         .unwrap();
     Arc::new(RuntimeEntityAssets::from_compiled(pack.entities).unwrap())
