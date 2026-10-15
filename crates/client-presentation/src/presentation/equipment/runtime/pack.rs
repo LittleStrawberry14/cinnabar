@@ -45,11 +45,11 @@ impl EquipmentRuntime {
         let mut operations_left = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
         if let Some(pack) = self.pack.as_mut()
             && let Some(catalog) = pack.catalog.as_ref()
-            && let Some(index) = select_owner_binding(
+            && let Some(index) = pack.attachables.select_equipment_binding(
                 catalog,
-                &mut pack.attachables,
                 &item.identifier,
-                animation,
+                animation.owner,
+                animation.rig,
                 input,
                 &mut operations_left,
                 |binding| {
@@ -62,11 +62,11 @@ impl EquipmentRuntime {
             return Some((Arc::clone(catalog), true, index));
         }
         let catalog = self.catalog.as_ref()?;
-        let index = select_owner_binding(
+        let index = self.attachables.select_equipment_binding(
             catalog,
-            &mut self.attachables,
             &item.identifier,
-            animation,
+            animation.owner,
+            animation.rig,
             input,
             &mut operations_left,
             |binding| {
@@ -306,37 +306,4 @@ impl EquipmentRuntime {
         pack.armor_geometry.insert(identifier.into(), entry.clone());
         entry
     }
-}
-
-/// Chooses a matching definition without cloning its resource tables on each frame.
-fn select_owner_binding(
-    catalog: &RuntimeEquipmentCatalog,
-    runtime: &mut actor_animation::AttachablesRuntime,
-    identifier: &str,
-    animation: EquipmentAnimation<'_>,
-    input: actor_animation::AttachableAnimationInput<'_>,
-    operations_left: &mut usize,
-    static_geometry: impl Fn(&assets::EquipmentBinding) -> bool,
-) -> Option<usize> {
-    let start = catalog
-        .bindings()
-        .partition_point(|binding| binding.identifier.as_ref() < identifier);
-    let candidates = catalog.bindings_for(identifier).iter().enumerate().rev();
-    // Authored item mappings override the ordinary item definition when they match.
-    candidates
-        .clone()
-        .filter(|(_, binding)| binding.attachable.is_some())
-        .chain(candidates.filter(|(_, binding)| binding.attachable.is_none()))
-        .find_map(|(offset, binding)| {
-            let matches = runtime
-                .matches_owner(
-                    binding.attachable_identifier(),
-                    animation.owner,
-                    animation.rig,
-                    input,
-                    operations_left,
-                )
-                .unwrap_or(binding.attachable.is_none());
-            (matches && static_geometry(binding)).then_some(start + offset)
-        })
 }

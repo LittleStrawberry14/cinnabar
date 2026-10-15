@@ -33,6 +33,41 @@ impl SelectionCache {
 }
 
 impl AttachablesRuntime {
+    /// Tries owner-admitted item mappings before the ordinary definition within one budget.
+    /// `drawable` rejects resources the caller cannot render without changing owner evaluation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn select_equipment_binding(
+        &mut self,
+        catalog: &assets::RuntimeEquipmentCatalog,
+        identifier: &str,
+        owner: &dyn AnimatedActor,
+        rig: &ActorRigSnapshot<'_>,
+        input: AttachableAnimationInput<'_>,
+        operations_left: &mut usize,
+        drawable: impl Fn(&assets::EquipmentBinding) -> bool,
+    ) -> Option<usize> {
+        let start = catalog
+            .bindings()
+            .partition_point(|binding| binding.identifier.as_ref() < identifier);
+        let candidates = catalog.bindings_for(identifier).iter().enumerate().rev();
+        candidates
+            .clone()
+            .filter(|(_, binding)| binding.attachable.is_some())
+            .chain(candidates.filter(|(_, binding)| binding.attachable.is_none()))
+            .find_map(|(offset, binding)| {
+                let matches = self
+                    .matches_owner(
+                        binding.attachable_identifier(),
+                        owner,
+                        rig,
+                        input,
+                        operations_left,
+                    )
+                    .unwrap_or(binding.attachable.is_none());
+                (matches && drawable(binding)).then_some(start + offset)
+            })
+    }
+
     /// Tests an owner condition within the caller's shared operation budget; absent rigs stay unresolved.
     pub fn matches_owner(
         &mut self,

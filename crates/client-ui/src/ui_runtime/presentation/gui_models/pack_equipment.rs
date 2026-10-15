@@ -168,6 +168,8 @@ fn place<'a>(
 #[cfg(test)]
 mod material_tests;
 #[cfg(test)]
+mod owner_tests;
+#[cfg(test)]
 mod stack_tests;
 #[cfg(test)]
 mod tests;
