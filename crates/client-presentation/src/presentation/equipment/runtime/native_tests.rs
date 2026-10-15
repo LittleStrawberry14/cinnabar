@@ -10,6 +10,9 @@ use render_model::equipment::{attach_to_bone, held_sprite_display};
 #[path = "native_geometry_tests.rs"]
 mod geometry;
 
+#[path = "native_variant_tests.rs"]
+mod variants;
+
 /// Reads the selected equipment image's first pixel from its retained artwork page.
 fn selected_pixel(
     pages: &render_model::ActorArtworkPages,
