@@ -79,6 +79,25 @@ fn armour_owner_conditions_keep_player_chestplates_and_leggings() {
 }
 
 #[test]
+fn armour_with_an_unsupported_owner_condition_keeps_the_startup_definition() {
+    let item = "minecraft:iron_chestplate";
+    let (mut runtime, base_pages) = startup_runtime(owner_armour_pack(item, false));
+    let body = player_body(&mut runtime);
+    let mut files = owner_armour_pack(item, true);
+    let mut definition: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
+    definition["minecraft:attachable"]["description"]["item"][item] =
+        "query.owner_identifier ==".into();
+    files[0].1 = serde_json::to_vec(&definition).unwrap();
+    let (entities, catalog) = pack_catalog(files);
+    let (pages, locations) =
+        base_pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+    runtime.set_pack_layer(Some((entities, Some(catalog), locations)));
+    let drawn = layers(&mut runtime, &body, &owner(), &worn_armour(item, 1), 1);
+    assert_eq!(drawn.len(), 1);
+    assert_eq!(selected_pixel(&pages, &drawn[0]), PLAIN);
+}
+
+#[test]
 fn armour_stand_chestplates_and_leggings_keep_their_authored_bones() {
     for (item, slot) in [
         ("minecraft:iron_chestplate", 1),

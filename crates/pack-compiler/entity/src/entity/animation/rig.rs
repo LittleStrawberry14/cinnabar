@@ -355,7 +355,17 @@ pub(super) fn compile_rigs(
             .and_then(Value::as_object)
             .and_then(|items| items.values().next())
             .and_then(Value::as_str)
-            .map(|condition| molang.compile(condition))
+            .map(|condition| {
+                molang.compile(condition).or_else(|_| {
+                    outcomes.push(CompileReferenceOutcome::OptionalStaticFallback {
+                        source: entity.source_index,
+                        symbol: entity_symbol as u32,
+                        reason: FallbackReason::UnsupportedOptionalExpression,
+                    });
+                    // An unreadable restriction must not admit this definition for every owner.
+                    molang.compile("0")
+                })
+            })
             .transpose()?;
         rigs.push(PendingRig {
             placement_frame: if entity.kind == EntityAssetKind::Entity {
