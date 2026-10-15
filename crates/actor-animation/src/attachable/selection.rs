@@ -124,7 +124,7 @@ impl AttachablesRuntime {
             actor: owner,
             input: &tick_input,
             context: &context,
-            anim_tick: rig.completed_tick,
+            anim_tick: rig.animation_variables.anim_tick(),
             anim_time: None,
             swell_amount: None,
             presentation_alpha: Some(frame_alpha),

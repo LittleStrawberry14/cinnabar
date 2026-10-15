@@ -248,6 +248,7 @@ pub(super) fn evaluate_render(
     let assets = evaluator.assets;
     let render = assets.render_data();
     let mut output = Vec::new();
+    let mut unresolved_artwork = false;
     let multitexture = assets::native_actor_uses_multitexture(assets, rig.binding);
     let actor_color = assets
         .rig_bindings()
@@ -264,6 +265,10 @@ pub(super) fn evaluate_render(
                 .run(condition as usize, variables, 0.0, budget)?
                 .truthy()
         {
+            continue;
+        }
+        if layer.slot_count == 0 {
+            unresolved_artwork = true;
             continue;
         }
         let choices = render
@@ -402,7 +407,11 @@ pub(super) fn evaluate_render(
             });
         }
     }
-    Ok(output)
+    if output.is_empty() && unresolved_artwork {
+        Err(EvalError::Invalid)
+    } else {
+        Ok(output)
+    }
 }
 
 #[cfg(test)]

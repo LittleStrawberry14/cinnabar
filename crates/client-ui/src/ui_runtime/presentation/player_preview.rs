@@ -138,8 +138,13 @@ impl UiPresentationRuntime {
         });
         self.set_preview_gear(
             armor.each_ref().map(|worn| {
-                worn.as_ref()
-                    .map(|(id, stack, _)| (&**id, runtime.stack_facts(stack).custom_color))
+                worn.as_ref().map(|(id, stack, item)| {
+                    (
+                        &**id,
+                        runtime.stack_facts(stack).custom_color,
+                        item.enchanted,
+                    )
+                })
             }),
             held.as_ref().map(|(id, stack, _)| (&**id, stack.metadata)),
             owner,
@@ -168,13 +173,17 @@ impl UiPresentationRuntime {
         armor: [Option<(&str, Option<u32>)>; 4],
         held: Option<(&str, u32)>,
     ) {
-        self.set_preview_gear(armor, held, None);
+        self.set_preview_gear(
+            armor.map(|item| item.map(|(id, dye)| (id, dye, false))),
+            held,
+            None,
+        );
     }
 
     /// Shares owner selection, artwork fallback and atlas placement for every preview caller.
     fn set_preview_gear(
         &mut self,
-        armor: [Option<(&str, Option<u32>)>; 4],
+        armor: [Option<(&str, Option<u32>, bool)>; 4],
         held: Option<(&str, u32)>,
         owner: Option<PreviewEquipmentOwner<'_>>,
     ) {
@@ -182,11 +191,12 @@ impl UiPresentationRuntime {
         let base = self.equipment_catalog.clone();
         let mut budgets = [actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK; 4];
         let resolved: [_; 4] = std::array::from_fn(|slot| {
-            let (identifier, dye) = armor[slot]?;
+            let (identifier, dye, enchanted) = armor[slot]?;
             let binding = self.preview_equipment_selection.binding(
                 base.as_deref(),
                 pack.as_deref(),
                 identifier,
+                enchanted,
                 owner,
                 slot,
                 &mut budgets[slot],
@@ -207,11 +217,12 @@ impl UiPresentationRuntime {
                 })
                 && self.gui_models.pack_equipment.region(slot).is_none()
             {
-                let (identifier, dye) = armor[slot]?;
+                let (identifier, dye, enchanted) = armor[slot]?;
                 let binding = self.preview_equipment_selection.binding(
                     base.as_deref(),
                     None,
                     identifier,
+                    enchanted,
                     owner,
                     slot,
                     &mut budgets[slot],

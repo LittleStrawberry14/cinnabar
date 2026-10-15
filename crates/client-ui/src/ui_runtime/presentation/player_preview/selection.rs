@@ -1,6 +1,7 @@
 //! Worn preview selection uses the local actor's attachable query context.
 use super::*;
 use actor_animation::AttachablesRuntime;
+use std::borrow::Cow;
 
 struct SelectionAssets {
     source: Arc<assets::RuntimeEntityAssets>,
@@ -16,15 +17,36 @@ pub(in crate::ui_runtime::presentation) struct EquipmentSelection {
 
 impl EquipmentSelection {
     /// Selects session artwork before startup, sharing the caller's budget across both layers.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn binding<'a>(
         &mut self,
         base: Option<&'a RuntimeEquipmentCatalog>,
         pack: Option<&'a RuntimeEquipmentCatalog>,
         identifier: &str,
+        enchanted: bool,
         owner: Option<PreviewEquipmentOwner<'_>>,
         slot: usize,
         budget: &mut usize,
     ) -> Option<&'a assets::EquipmentBinding> {
+        let enchantment = [(
+            assets::entity::EngineVariable::IsEnchanted.name(),
+            f32::from(enchanted),
+        )];
+        let variables = if let Some(owner) = owner
+            && !owner.input.owner_variables.is_empty()
+        {
+            Cow::Owned(
+                owner
+                    .input
+                    .owner_variables
+                    .iter()
+                    .copied()
+                    .chain(enchantment)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            Cow::Borrowed(enchantment.as_slice())
+        };
         let drawable = |binding: &assets::EquipmentBinding| {
             pack.and_then(|catalog| catalog.texture(&binding.texture.identifier))
                 .or_else(|| base?.texture(&binding.texture.identifier))
@@ -42,6 +64,7 @@ impl EquipmentSelection {
                     actor_animation::AttachableAnimationInput {
                         worn: true,
                         worn_slot: slot as u8,
+                        owner_variables: &variables,
                         ..owner.input
                     },
                     budget,
@@ -106,10 +129,10 @@ impl UiPresentationRuntime {
         sync(&mut self.preview_equipment_selection.pack, pack);
     }
 
-    /// Dresses a preview using its player's authoritative attachable inputs.
+    /// Dresses a preview using its player's inputs and each slot's stack enchantment flag.
     pub fn set_player_preview_gear_with_owner(
         &mut self,
-        armor: [Option<(&str, Option<u32>)>; 4],
+        armor: [Option<(&str, Option<u32>, bool)>; 4],
         held: Option<(&str, u32)>,
         owner: PreviewEquipmentOwner<'_>,
     ) {

@@ -1,6 +1,72 @@
 //! Owner selection and partially placeable worn models retain their admitted draw.
 use super::*;
 
+#[test]
+fn worn_selection_keeps_startup_artwork_when_controller_textures_are_unresolved() {
+    let (mut runtime, pages) = startup_runtime(coat_pack("v.coat=0;"));
+    let body = player_body(&mut runtime);
+    let mut files = coat_pack("v.coat=1;");
+    files.retain(|(path, _)| !path.starts_with("textures/"));
+    let (entities, catalog) = pack_catalog(files);
+    assert!(!entities.geometries().is_empty());
+    assert!(catalog.textures().is_empty());
+    runtime.set_pack_layer(Some((entities, Some(catalog), Default::default())));
+    let drawn = layers(&mut runtime, &body, &owner(), &helmet(), 1);
+    assert_eq!(
+        drawn.len(),
+        1,
+        "unresolved layers retain the startup artwork"
+    );
+    assert_eq!(selected_pixel(&pages, &drawn[0]), PLAIN);
+}
+
+#[test]
+fn worn_selection_respects_a_valid_disabled_controller_and_hidden_bones() {
+    for (condition, active, missing) in [
+        ("0", false, false),
+        ("0", false, true),
+        ("q.owner_identifier ==", false, true),
+        ("1", true, false),
+    ] {
+        let (mut runtime, base_pages) = startup_runtime(coat_pack("v.coat=0;"));
+        let body = player_body(&mut runtime);
+        let mut files = coat_pack("v.coat=1;");
+        let mut definition: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
+        definition["minecraft:attachable"]["description"]["render_controllers"] =
+            serde_json::json!([{"controller.render.test_coat": condition}]);
+        files[0].1 = serde_json::to_vec(&definition).unwrap();
+        let mut controller: serde_json::Value = serde_json::from_slice(&files[2].1).unwrap();
+        controller["render_controllers"]["controller.render.test_coat"]["part_visibility"] =
+            serde_json::json!([{"*":"0"}]);
+        files[2].1 = serde_json::to_vec(&controller).unwrap();
+        if missing {
+            files.retain(|(path, _)| !path.starts_with("textures/"));
+        }
+        let (entities, catalog) = pack_catalog(files);
+        let (pages, locations) =
+            base_pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+        runtime.set_pack_layer(Some((entities, Some(catalog), locations)));
+        let drawn = layers(&mut runtime, &body, &owner(), &helmet(), 1);
+        if active {
+            assert_eq!(drawn.len(), 1);
+            assert_eq!(selected_pixel(&pages, &drawn[0]), PAINTED);
+            assert!(
+                drawn[0]
+                    .submission
+                    .input
+                    .current_bones
+                    .iter()
+                    .all(|bone| bone.translation_scale[3] == 0.0)
+            );
+        } else {
+            assert!(
+                drawn.is_empty(),
+                "an inactive controller must not reveal startup armour"
+            );
+        }
+    }
+}
+
 /// Gives a mapped helmet independent artwork and an owner predicate.
 fn mapped_pack(predicate: &str) -> Vec<(Box<str>, Vec<u8>)> {
     let mut files = coat_pack("v.coat=1;");

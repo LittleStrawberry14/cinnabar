@@ -69,8 +69,8 @@ fn catalog(definitions: &[Definition<'_>]) -> assets::SessionEntityPack {
 }
 
 /// Admits a local player through actor authority and resolves its real compiled rig.
-fn owner(entities: Arc<assets::RuntimeEntityAssets>) -> client_world::WorldAuthority {
-    let mut world = client_world::WorldAuthority::new(
+fn owner(entities: Arc<assets::RuntimeEntityAssets>) -> chunk_pipeline::WorldStream {
+    let mut world = chunk_pipeline::WorldStream::new_with_asset_sets(
         protocol::WorldBootstrap {
             local_player_runtime_id: 1,
             local_player_unique_id: 1,
@@ -81,12 +81,13 @@ fn owner(entities: Arc<assets::RuntimeEntityAssets>) -> client_world::WorldAutho
             block_network_ids_are_hashes: false,
         },
         Arc::new(assets::RuntimeAssets::diagnostic()),
-        Some(entities),
+        entities,
         [0.0; 3],
         None,
     );
     world
-        .apply_ordered_event(
+        .submit(
+            1,
             protocol::WorldEvent::Actor(protocol::ActorEvent::Spawn(protocol::ActorSpawnEvent {
                 dimension: 0,
                 unique_id: 1,
@@ -107,7 +108,6 @@ fn owner(entities: Arc<assets::RuntimeEntityAssets>) -> client_world::WorldAutho
                 properties: Arc::from([]),
                 links: Arc::from([]),
             })),
-            Some(1),
         )
         .unwrap();
     world
@@ -131,11 +131,11 @@ fn check_preview(pack: assets::SessionEntityPack, expected: [u8; 4], dyed: bool,
         ..Default::default()
     };
     presentation.set_player_preview_gear_with_owner(
-        [None, Some((ITEM, Some(DYE))), None, None],
+        [None, Some((ITEM, Some(DYE), false)), None, None],
         None,
         PreviewEquipmentOwner {
-            actor: world.actor(1).unwrap(),
-            rig: world.actor_rig(1).unwrap(),
+            actor: world.authority().actor(1).unwrap(),
+            rig: world.authority().actor_rig(1).unwrap(),
             input,
         },
     );
@@ -256,6 +256,91 @@ fn player_preview_rejects_malformed_and_exhausted_owner_predicates() {
             STARTUP,
             true,
             "armour-preview-invalid",
+        );
+    }
+}
+
+#[test]
+fn worn_selection_in_previews_uses_stack_enchantments_independently_of_visual_glint() {
+    let base = catalog(&[Definition {
+        name: ITEM,
+        condition: None,
+        color: STARTUP,
+        dyed: true,
+    }]);
+    let pack = catalog(&[Definition {
+        name: "fixture:enchanted",
+        condition: Some("v.is_enchanted && c.item_slot == 'torso'"),
+        color: PLAYER,
+        dyed: false,
+    }]);
+    let world = owner(Arc::clone(&base.assets));
+    let mut presentation = material_tests::presentation(base.equipment.as_ref().unwrap());
+    presentation.set_preview_equipment_assets(Some(base.assets), Some(pack.assets));
+    presentation.set_preview_pack_equipment(pack.equipment);
+    let runtime = crate::ui_runtime::UiRuntime::new(1);
+    let mut player = player_state::PlayerState::new(1);
+    for (enchanted, intrinsic) in [
+        (false, false),
+        (true, false),
+        (false, true),
+        (true, true),
+        (false, false),
+    ] {
+        let extra_data: Arc<[u8]> = if enchanted {
+            Arc::from([
+                255, 255, 1, 10, 0, 0, 9, 4, 0, b'e', b'n', b'c', b'h', 10, 0, 0, 0, 0, 0,
+            ])
+        } else {
+            Arc::from([])
+        };
+        let stack = protocol::NetworkItemStack {
+            network_id: 1,
+            count: 1,
+            extra_data,
+            ..Default::default()
+        };
+        assert_eq!(runtime.stack_facts(&stack).has_enchantment_list, enchanted);
+        player
+            .inventory
+            .ledger_mut()
+            .apply(&protocol::InventoryEvent::Content(
+                protocol::InventoryContentEvent {
+                    container: protocol::ContainerIdentity::window(protocol::ARMOR_WINDOW_ID),
+                    slots: Arc::from([protocol::NetworkItemStack::default(), stack]),
+                    storage_item: Default::default(),
+                },
+            ));
+        presentation.dress_player_preview(
+            &player,
+            &runtime,
+            Some(&world),
+            Default::default(),
+            |stack| {
+                Some(client_world::CanonicalItemStack {
+                    identifier: Some(ITEM.into()),
+                    identity: assets::ItemStackIdentity::empty(),
+                    visual: assets::ItemVisualRoute::Missing,
+                    enchanted: runtime.stack_facts(stack).has_enchantment_list,
+                    glint: assets::item::glint::ItemGlint::Session { enabled: intrinsic },
+                    use_animation: assets::item_use::ItemUseAnimation::None,
+                    grip: assets::item::grip::ItemGrip::Unresolved,
+                    charged_projectile: None,
+                    charged_projectile_role: assets::item_use::ItemProjectileRole::None,
+                    damage: None,
+                    durability: assets::item::durability::ItemDurability::NotDamageable,
+                })
+            },
+        );
+        let selected = presentation.player_preview_gear.armor[1].as_ref().unwrap();
+        assert_eq!(
+            &selected.rgba[..4],
+            if enchanted { &PLAYER } else { &STARTUP }
+        );
+        assert_eq!(selected.tint.is_none(), enchanted);
+        assert_eq!(
+            presentation.player_preview_gear.armor_glint[1],
+            enchanted || intrinsic
         );
     }
 }

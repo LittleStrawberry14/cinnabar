@@ -1,6 +1,59 @@
 //! Owner predicate caching preserves input changes and a bounded selection budget.
 use super::*;
 
+#[test]
+fn worn_selection_uses_the_owner_animation_epoch_and_refreshes_cached_time() {
+    let mut compiled = owner_reference_tests::compiled_fixture(true);
+    compiled.rig_bindings[0].item_condition = Some(0);
+    compiled.molang_symbols[1].identifier = "query.anim_time".into();
+    compiled.molang_ops = [
+        assets::MolangOp::LoadQuery(1),
+        assets::MolangOp::Push(crate::test_support::scalar(1.0)),
+        assets::MolangOp::Less,
+    ]
+    .into();
+    compiled.molang_expressions[0].op_count = 3;
+    let mut runtime = AttachablesRuntime::new(Arc::new(
+        RuntimeEntityAssets::from_compiled(compiled).unwrap(),
+    ));
+    let owner = crate::tests::actor_with_metadata(HashMap::new());
+    let variables = crate::evaluation::MolangVariables::default();
+    let mut rig = tests::owner_rig();
+    for (completed, lifetime, animation, alpha, expected) in [
+        (1000, 0, 0, 0.0, true),
+        (1005, 5, 5, 0.0, true),
+        (1019, 19, 19, 0.5, true),
+        (1020, 20, 20, 0.0, false),
+        (2000, 1000, 0, 0.0, true),
+        (2020, 1020, 20, 0.0, false),
+    ] {
+        rig.completed_tick = completed;
+        rig.animation_variables =
+            ActorAnimationVariables::new(None, &variables, lifetime, animation);
+        let input = AttachableAnimationInput {
+            worn: true,
+            frame_alpha: alpha,
+            ..Default::default()
+        };
+        let mut budget = MAX_MOLANG_OPS_PER_ACTOR_TICK;
+        assert_eq!(
+            runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
+            Some(expected),
+            "completed {completed}, elapsed animation {animation}"
+        );
+        let remaining = budget;
+        rig.completed_tick += 1;
+        assert_eq!(
+            runtime.matches_owner("minecraft:test_item", &owner, &rig, input, &mut budget),
+            Some(expected)
+        );
+        assert_eq!(
+            budget, remaining,
+            "an unchanged relative clock reuses its result"
+        );
+    }
+}
+
 /// Makes the owner-reference fixture's expression select the attachable itself.
 fn selection_fixture() -> Arc<RuntimeEntityAssets> {
     let mut compiled = owner_reference_tests::compiled_fixture(true);

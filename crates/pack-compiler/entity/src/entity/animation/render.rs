@@ -254,7 +254,13 @@ pub(super) fn compile_render(
                     candidate_count: count as u16,
                 });
             }
-            if slots.len() == first_slot {
+            // Retain unresolved references so activation still controls artwork fallback.
+            if slots.len() == first_slot
+                && definition
+                    .get("textures")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+            {
                 continue;
             }
             let first_geometry = layer_geometries.len();
