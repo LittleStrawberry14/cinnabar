@@ -28,7 +28,7 @@ pub(super) struct LayerCaches<'a> {
     pub skin_rigs: &'a mut SkinRigCache,
 }
 
-/// Attaches equipment and capes before body controllers mask their own geometry.
+/// Attaches equipment to unmasked poses, then masks the body before composing capes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn attach(
     batch: &mut ActorPresentationBatch,
@@ -69,6 +69,23 @@ pub(super) fn attach(
             (partial_tick, delta_seconds, glint_settings),
         );
     }
+    // Equipment inherits animation poses before body-only visibility masks are applied.
+    if let Some(render_frame) = render_frame.as_mut() {
+        crate::presentation::entity_layers::apply_render_layers_cached(
+            batch,
+            |runtime_id| {
+                if runtime_id == local_runtime_id
+                    && let Some(pose) = local_emote_pose
+                {
+                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
+                } else {
+                    render_frame.layers(runtime_id)
+                }
+            },
+            artwork,
+            layer_poses,
+        );
+    }
     if let (Some(stream), Some((cape, preparation))) = (stream, cape_state.rig(entity_assets)) {
         if !scene.contains_geometry(cape.id) {
             let _ = scene.insert_geometry(cape.geometry.clone());
@@ -105,23 +122,6 @@ pub(super) fn attach(
         );
     }
 
-    // Equipment inherits animation poses before body-only visibility masks are applied.
-    if let Some(render_frame) = render_frame.as_mut() {
-        crate::presentation::entity_layers::apply_render_layers_cached(
-            batch,
-            |runtime_id| {
-                if runtime_id == local_runtime_id
-                    && let Some(pose) = local_emote_pose
-                {
-                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
-                } else {
-                    render_frame.layers(runtime_id)
-                }
-            },
-            artwork,
-            layer_poses,
-        );
-    }
     if let Some(stream) = stream
         && let Some(pages) = skin_layers.apply(
             batch,

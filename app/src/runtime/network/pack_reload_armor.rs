@@ -277,6 +277,7 @@ fn equipped(dye_rgb: Option<u32>, enchanted: bool) -> ActorEquipmentInput {
                 kind: HeldKind::Other,
                 dye_rgb,
                 enchanted,
+                glint: Default::default(),
             }),
             None,
             None,
