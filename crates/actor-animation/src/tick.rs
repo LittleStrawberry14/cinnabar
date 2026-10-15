@@ -497,16 +497,7 @@ pub(super) fn evaluate_state(
             variables.set(layout.named_slot(assets, name), value);
         }
     }
-    if let Some(attachable) = context.attachable {
-        variables.set_actor_reference(engine.context_owning_entity, actor.runtime_id());
-        variables.set(
-            engine.context_first_person,
-            f32::from(attachable.first_person),
-        );
-        variables.set(engine.context_paperdoll, f32::from(attachable.is_paperdoll));
-        variables.set_string(engine.context_item_slot, attachable.item_slot());
-        variables.set(engine.attack_time, observed.attack_time);
-    }
+    attachable::apply_context_variables(engine, &mut variables, actor, context, &observed);
     variables.clear_temporaries();
     variables.clear(engine.first_person_item_rotation_factor);
     let samples_motion = state.motion_sampling.as_ref().is_some_and(|sampling| {

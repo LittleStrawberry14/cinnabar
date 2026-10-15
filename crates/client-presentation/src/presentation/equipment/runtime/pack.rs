@@ -329,11 +329,12 @@ fn select_owner_binding(
     let start = catalog
         .bindings()
         .partition_point(|binding| binding.identifier.as_ref() < identifier);
-    catalog
-        .bindings_for(identifier)
-        .iter()
-        .enumerate()
-        .rev()
+    let candidates = catalog.bindings_for(identifier).iter().enumerate().rev();
+    // Authored item mappings override the ordinary item definition when they match.
+    candidates
+        .clone()
+        .filter(|(_, binding)| binding.attachable.is_some())
+        .chain(candidates.filter(|(_, binding)| binding.attachable.is_none()))
         .find_map(|(offset, binding)| {
             runtime
                 .matches_owner(

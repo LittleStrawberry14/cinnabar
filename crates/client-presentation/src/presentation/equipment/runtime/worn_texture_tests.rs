@@ -21,7 +21,7 @@ fn owner_armour_pack(item: &str, stand_only: bool) -> Vec<(Box<str>, Vec<u8>)> {
     let mut definition: serde_json::Value = serde_json::from_slice(&files[0].1).unwrap();
     let description = &mut definition["minecraft:attachable"]["description"];
     description["identifier"] = if stand_only {
-        "test:stand_armour"
+        "fixture:stand_armour"
     } else {
         item
     }
@@ -33,8 +33,13 @@ fn owner_armour_pack(item: &str, stand_only: bool) -> Vec<(Box<str>, Vec<u8>)> {
             ""
         };
         description["item"] = serde_json::json!({(item): format!("query.owner_identifier == 'minecraft:armor_stand' && context.item_slot == '{native_slot}'")});
+        description["geometry"]["default"] = "geometry.test.stand_armour".into();
         let mut geometry: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
+        geometry["minecraft:geometry"][0]["description"]["identifier"] =
+            "geometry.test.stand_armour".into();
         geometry["minecraft:geometry"][0]["bones"][0]["name"] = "stand_shell".into();
+        files[0].0 = "attachables/stand_armour.json".into();
+        files[1].0 = "models/entity/stand_armour.json".into();
         files[1].1 = serde_json::to_vec(&geometry).unwrap();
         for path in description["textures"]
             .as_object_mut()
@@ -123,7 +128,13 @@ fn armour_stand_chestplates_and_leggings_keep_their_authored_bones() {
         ("minecraft:iron_chestplate", 1),
         ("minecraft:iron_leggings", 2),
     ] {
-        let (mut runtime, pages) = pack_runtime(owner_armour_pack(item, true));
+        let mut files = owner_armour_pack(item, false);
+        files.extend(
+            owner_armour_pack(item, true)
+                .into_iter()
+                .filter(|(path, _)| !path.starts_with("render_controllers/")),
+        );
+        let (mut runtime, pages) = pack_runtime(files);
         let body = player_body(&mut runtime);
         let mut stand = owner();
         stand.kind = protocol::ActorKind::Entity {

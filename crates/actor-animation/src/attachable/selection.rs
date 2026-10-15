@@ -47,6 +47,13 @@ impl AttachablesRuntime {
             self.selection_variables
                 .set(self.layout.named_slot(&self.assets, name), *value);
         }
+        apply_context_variables(
+            &self.layout.engine,
+            &mut self.selection_variables,
+            owner,
+            &context,
+            &tick_input,
+        );
         let mut budget = EvalBudget {
             actor_left: *operations_left,
             world_left: operations_left,

@@ -87,6 +87,26 @@ impl AttachableQueryContext {
     }
 }
 
+/// Sets equipment-only context values after inheriting the owner's script variables.
+pub(super) fn apply_context_variables(
+    engine: &EngineSlots,
+    variables: &mut MolangVariables,
+    actor: &dyn AnimatedActor,
+    context: &ActorTickContext,
+    input: &ActorTickInput,
+) {
+    if let Some(attachable) = context.attachable {
+        variables.set_actor_reference(engine.context_owning_entity, actor.runtime_id());
+        variables.set(
+            engine.context_first_person,
+            f32::from(attachable.first_person),
+        );
+        variables.set(engine.context_paperdoll, f32::from(attachable.is_paperdoll));
+        variables.set_string(engine.context_item_slot, attachable.item_slot());
+        variables.set(engine.attack_time, input.attack_time);
+    }
+}
+
 /// Evaluated geometry and layers in the item's own model frame, before the owner bone.
 #[derive(Clone, Copy, Debug)]
 pub struct AttachableRigSnapshot<'a> {
