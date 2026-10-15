@@ -1169,8 +1169,8 @@ acceptance gate.
   Attachable timing is independent of owner tick batching, and elytra scripts
   receive the actual render delta.
 - Incomplete: matching body bones still use the owner's pose without the attachable's
-  own animation channels. Worn bone-binding expressions, multiple armour material groups, trim artwork, and modern
-  controller materials remain incomplete. Native humanoid models absent from the
+  own animation channels. Worn bone-binding expressions, multiple armour material
+  groups, trim artwork, and modern controller materials remain incomplete. Native humanoid models absent from the
   resource pack still use the existing static player-model fallback.
 
 ## Tip text slot

@@ -1,9 +1,6 @@
 //! Body-controller visibility must stay independent of worn equipment.
 use super::*;
-use crate::presentation::{
-    actors::ActorPresentationBatch,
-    equipment::{ActorEquipmentInput, HeldKind, WornItem},
-};
+use crate::presentation::equipment::{ActorEquipmentInput, HeldKind, WornItem};
 use assets::{RuntimeAssets, RuntimeEntityAssets, RuntimeEquipmentCatalog, RuntimeIconCatalog};
 use protocol::{ActorEvent, ActorKind, ActorSpawnEvent, WorldBootstrap, WorldEvent};
 
@@ -90,9 +87,16 @@ fn hiding_a_player_torso_keeps_its_chestplate_visible() {
             })),
         )
         .unwrap();
+    stream.prepare_actor_appearance_fixture();
     stream.advance_actor_interpolation_ticks(1);
     let authority = stream.authority();
     let rig = authority.actor_rig(2).unwrap();
+    assert!(
+        rig.pose_evaluated,
+        "the fixture must sample its body controller"
+    );
+    assert_eq!(rig.render.len(), 1);
+    assert_eq!(rig.render[0].hidden_bones.as_ref(), &[0]);
     let body = crate::presentation::actors::actor_rig_presentation(
         &rig,
         authority.actor(2).unwrap(),
@@ -100,11 +104,9 @@ fn hiding_a_player_torso_keeps_its_chestplate_visible() {
         1.0,
     )
     .unwrap();
-    let mut batch = ActorPresentationBatch {
-        submissions: vec![body.submission],
-        skin_layers: vec![render_api::SkinRgba8::new(vec![255; 64 * 64 * 4].into())],
-        artwork: Default::default(),
-    };
+    let mut batch =
+        crate::presentation::actors::select_actor_presentations(2, true, Some(body), []);
+    assert_eq!(batch.submissions[0].texture_layer, 0);
     let icons = Arc::new(
         RuntimeIconCatalog::decode(&assets::encode_icon_catalog([1; 32], &[], &[]).unwrap())
             .unwrap(),

@@ -77,18 +77,11 @@ impl EquipmentRuntime {
         )
         .or_else(|| {
             // Retain the static model fallback for native geometry absent from pack sources.
-            catalog
-                .bindings_for(&item.identifier)
-                .iter()
-                .any(|binding| {
-                    binding.attachable.is_none()
-                        && binding.geometry.resolution == EntityDependencyResolution::External
-                })
-                .then(|| {
-                    catalog.bindings().partition_point(|binding| {
-                        binding.identifier.as_ref() <= item.identifier.as_ref()
-                    }) - 1
-                })
+            catalog.bindings().iter().rposition(|binding| {
+                binding.identifier.as_ref() == item.identifier.as_ref()
+                    && binding.attachable.is_none()
+                    && binding.geometry.resolution == EntityDependencyResolution::External
+            })
         })?;
         Some((Arc::clone(catalog), false, index))
     }

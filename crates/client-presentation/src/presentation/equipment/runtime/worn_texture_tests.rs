@@ -36,6 +36,18 @@ fn owner_armour_pack(item: &str, stand_only: bool) -> Vec<(Box<str>, Vec<u8>)> {
         let mut geometry: serde_json::Value = serde_json::from_slice(&files[1].1).unwrap();
         geometry["minecraft:geometry"][0]["bones"][0]["name"] = "stand_shell".into();
         files[1].1 = serde_json::to_vec(&geometry).unwrap();
+        for path in description["textures"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
+            *path = path.as_str().unwrap().replace("/coat_", "/stand_").into();
+        }
+        for (path, _) in &mut files {
+            if path.starts_with("textures/models/coat_") {
+                *path = path.replace("/coat_", "/stand_").into();
+            }
+        }
         files[3].1 = texture(PAINTED);
     }
     files[0].1 = serde_json::to_vec(&definition).unwrap();
@@ -73,6 +85,14 @@ fn armour_owner_conditions_keep_player_chestplates_and_leggings() {
                 selected_pixel(&pages, &drawn[0]),
                 PLAIN,
                 "{item} local={local}"
+            );
+            assert!(
+                drawn[0]
+                    .submission
+                    .input
+                    .current_bones
+                    .iter()
+                    .any(|bone| { bone.translation_scale[3] > 0.0 })
             );
         }
     }
