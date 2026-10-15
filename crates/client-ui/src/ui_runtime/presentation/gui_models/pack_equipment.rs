@@ -46,7 +46,7 @@ impl UiPresentationRuntime {
         } {
             return;
         }
-        self.gui_models.selected_held = [None, None];
+        self.gui_models.clear_selected_hands();
         let placed = !self.gui_models.pack_equipment.pages.is_empty();
         self.gui_models.pack_equipment = PackEquipment {
             source: catalog,

@@ -105,6 +105,11 @@ pub(super) struct GuiModels {
 }
 
 impl GuiModels {
+    /// Clears selected hand models when their equipment catalog changes.
+    pub(super) fn clear_selected_hands(&mut self) {
+        self.selected_held = [None, None];
+    }
+
     /// Drops optional block meshes and restores required pages. Returns whether anything was dropped;
     /// callers reinstall fire frames after a discard.
     fn discard_optional_models(&mut self, first: usize) -> bool {
@@ -313,7 +318,7 @@ impl UiPresentationRuntime {
         self.gui_models.required_pages = required_pages;
         self.gui_models.textures = textures;
         self.gui_models.held = held;
-        self.gui_models.selected_held = [None, None];
+        self.gui_models.clear_selected_hands();
         self.gui_models.hand_pivots = held::player_hands(entities);
         self.gui_models.fire.pages_start = None;
         self.install_gui_fire()?;

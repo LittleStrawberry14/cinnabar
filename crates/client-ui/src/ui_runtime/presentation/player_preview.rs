@@ -77,7 +77,7 @@ impl UiPresentationRuntime {
 
     /// Where worn armor textures come from; without it the model wears none.
     pub fn set_equipment_catalog(&mut self, catalog: Option<Arc<RuntimeEquipmentCatalog>>) {
-        self.gui_models.selected_held = [None, None];
+        self.gui_models.clear_selected_hands();
         self.equipment_catalog = catalog;
     }
 
