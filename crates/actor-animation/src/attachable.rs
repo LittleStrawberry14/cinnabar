@@ -2,6 +2,7 @@
 use super::*;
 
 mod preview;
+mod selection;
 pub(super) mod static_draw;
 use preview::Preview;
 type AttachableKey = (ActorLifetimeId, bool, bool, bool, u8);
@@ -153,14 +154,20 @@ pub struct AttachablesRuntime {
     evaluations: u64,
     previewing: bool,
     previewed: Vec<AttachableKey>,
+    selection_variables: evaluation::MolangVariables,
+    selection_stack: Vec<evaluation::MolangValue>,
     #[cfg(test)]
     commits: u64,
 }
 
 impl AttachablesRuntime {
     pub fn new(assets: Arc<RuntimeEntityAssets>) -> Self {
+        let layout = VariableLayout::new(&assets);
+        let selection_variables = layout.fresh(1);
         Self {
-            layout: VariableLayout::new(&assets),
+            layout,
+            selection_variables,
+            selection_stack: Vec::new(),
             assets,
             states: BTreeMap::new(),
             evaluations: 0,
@@ -310,41 +317,7 @@ impl AttachablesRuntime {
         } else {
             0.0
         };
-        let query_context = AttachableQueryContext {
-            first_person: input.first_person,
-            off_hand: input.off_hand,
-            worn: input.worn,
-            worn_slot: input.worn_slot,
-            is_paperdoll: input.is_paperdoll,
-            frame_alpha,
-            delta_seconds: input
-                .delta_seconds
-                .filter(|delta| delta.is_finite() && *delta >= 0.0),
-            animation_frame: input.animation_frame,
-            use_elapsed_ticks: input.use_elapsed_ticks,
-            max_use_ticks: input.max_use_ticks,
-            owner_life_tick: owner_rig.animation_variables.life_tick(),
-        };
-        let (main_hand_kinetic, main_hand_swing_seconds) =
-            owner_rig.animation_variables.item_timings();
-        let owner_context = owner_rig.animation_variables.owner_context();
-        let mut context = ActorTickContext {
-            // Attachables use render time, independently of the owner's tick batching.
-            animation_elapsed_ticks: None,
-            main_hand_kinetic,
-            main_hand_swing_seconds,
-            main_hand_is_spear: owner_rig.animation_variables.is_spear(),
-            is_local_first_person: input.first_person,
-            is_local_player: input.is_local_player
-                || input.first_person
-                || owner_context.is_some_and(|owner| owner.is_local_player),
-            hand_charged: input.hand_charged,
-            main_hand_max_use_ticks: input.max_use_ticks,
-            attachable: Some(query_context),
-            main_hand: input.owner_main_hand.map(Arc::from),
-            off_hand: input.owner_off_hand.map(Arc::from),
-            ..owner_context.cloned().unwrap_or_default()
-        };
+        let mut context = selection::owner_context(owner_rig, input);
         if !input.worn && input.off_hand {
             context
                 .off_hand

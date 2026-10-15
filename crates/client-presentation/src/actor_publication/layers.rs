@@ -28,7 +28,7 @@ pub(super) struct LayerCaches<'a> {
     pub skin_rigs: &'a mut SkinRigCache,
 }
 
-/// Applies player controllers before equipment and capes, then entity controllers and skin layers.
+/// Attaches equipment and capes before body controllers mask their own geometry.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn attach(
     batch: &mut ActorPresentationBatch,
@@ -60,29 +60,6 @@ pub(super) fn attach(
         skin_rigs,
     } = caches;
     let (partial_tick, delta_seconds, glint_settings) = frame;
-    if let (Some(stream), Some(render_frame)) = (stream, render_frame.as_mut()) {
-        crate::presentation::entity_layers::apply_render_layers_cached(
-            batch,
-            |runtime_id| {
-                if !stream
-                    .authority()
-                    .actor(runtime_id)
-                    .is_some_and(|actor| matches!(actor.kind, protocol::ActorKind::Player { .. }))
-                {
-                    return None;
-                }
-                if runtime_id == local_runtime_id
-                    && let Some(pose) = local_emote_pose
-                {
-                    Some(std::borrow::Cow::Borrowed(pose.render.as_slice()))
-                } else {
-                    render_frame.layers(runtime_id)
-                }
-            },
-            artwork,
-            layer_poses,
-        );
-    }
     if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream) {
         equipment_layers::attach(
             batch,
@@ -128,18 +105,11 @@ pub(super) fn attach(
         );
     }
 
-    // Entity equipment rides the original rig even when a controller draws another model.
+    // Equipment inherits animation poses before body-only visibility masks are applied.
     if let Some(render_frame) = render_frame.as_mut() {
         crate::presentation::entity_layers::apply_render_layers_cached(
             batch,
             |runtime_id| {
-                if stream.is_some_and(|stream| {
-                    stream.authority().actor(runtime_id).is_some_and(|actor| {
-                        matches!(actor.kind, protocol::ActorKind::Player { .. })
-                    })
-                }) {
-                    return None;
-                }
                 if runtime_id == local_runtime_id
                     && let Some(pose) = local_emote_pose
                 {

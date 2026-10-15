@@ -254,6 +254,9 @@ pub struct EntityRigBinding {
     pub fallback: EntityRigFallback,
     pub initialize: Option<u32>,
     pub pre_animation: Option<u32>,
+    /// Item-to-attachable condition, evaluated with the equipment owner as query context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_condition: Option<u32>,
     pub scale: EntityGeometryScalar,
     /// `scale`, `scaleX`, `scaleY` and `scaleZ` expressions when any is authored as Molang or
     /// per axis; `scale` then holds only the constant fallback.

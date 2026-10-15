@@ -267,6 +267,7 @@ fn compiled_entity_assets(fallback: EntityRigFallback) -> CompiledEntityAssets {
             fallback,
             initialize: None,
             pre_animation: None,
+            item_condition: None,
             scale: assets::EntityGeometryScalar::new(1.0).unwrap(),
             scale_expressions: None,
         }]

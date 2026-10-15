@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod armour_tests;
 mod bodies;
 mod commit;
 mod geometry;

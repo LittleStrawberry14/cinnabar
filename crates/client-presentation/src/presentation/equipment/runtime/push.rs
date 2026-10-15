@@ -230,54 +230,107 @@ impl EquipmentRuntime {
         ),
         layers: &mut Vec<EquipmentPresentation>,
     ) {
-        let Some((catalog, from_pack)) = self.binding_source(&item.identifier) else {
+        let source = match animation {
+            Some(animation) => self.worn_binding_source(item, equipment, animation, slot),
+            None => self
+                .binding_source(&item.identifier)
+                .and_then(|(catalog, from_pack)| {
+                    let index = catalog
+                        .bindings()
+                        .partition_point(|binding| {
+                            binding.identifier.as_ref() <= item.identifier.as_ref()
+                        })
+                        .checked_sub(1)?;
+                    Some((catalog, from_pack, index))
+                }),
+        };
+        let Some((catalog, from_pack, index)) = source else {
             return;
         };
-        let Some(binding) = catalog.binding(&item.identifier) else {
-            return;
-        };
+        let binding = &catalog.bindings()[index];
         // A custom item's `minecraft:wearable` slot names where its attachable is worn.
         let category = self.effective_category(&item.identifier, binding.category);
         if category != (EquipmentCategory::Armor { slot }) {
             return;
         }
-        let selected = animation
-            .and_then(|animation| self.worn_render(item, slot, equipment, animation, from_pack));
+        let selected = match animation.map(|animation| {
+            self.worn_render(
+                item,
+                slot,
+                equipment,
+                animation,
+                from_pack,
+                binding.attachable_identifier(),
+                body,
+                bones,
+            )
+        }) {
+            Some(Ok(None)) => return,
+            Some(Ok(selected)) => selected,
+            _ => None,
+        };
         let texture = selected
             .as_ref()
-            .map(|(texture, _)| texture.as_ref())
+            .map(|selected| selected.texture.as_ref())
             .unwrap_or(&binding.texture.identifier);
         let Some((_, _, location)) =
             self.draw_artwork(&item.identifier, texture, (Arc::clone(&catalog), from_pack))
         else {
             return;
         };
-        let Some(geometry) = self.armor_geometry_for(&binding.geometry.identifier, from_pack)
-        else {
+        let geometry_identifier = selected
+            .as_ref()
+            .map_or(binding.geometry.identifier.as_ref(), |selected| {
+                selected.geometry.as_ref()
+            });
+        let Some(geometry) = self.armor_geometry_for(geometry_identifier, from_pack) else {
             return;
         };
+        if geometry_identifier != binding.geometry.identifier.as_ref()
+            && self.selected_geometries.insert(geometry.rig)
+        {
+            let assets = if from_pack {
+                &self.pack.as_ref().unwrap().assets
+            } else {
+                &self.assets
+            };
+            if let Some(index) = find_geometry_index(assets, geometry_identifier)
+                && let Some(mesh) =
+                    render_model::equipment_geometry(assets, index as usize, geometry.rig)
+            {
+                self.pending.push(mesh);
+            }
+        }
         let map = Arc::clone(
             self.armor_maps
                 .entry((
                     body_geometry,
                     if from_pack {
-                        format!(
-                            "{}{}",
-                            pack::ARMOR_CACHE_PREFIX,
-                            binding.geometry.identifier
-                        )
-                        .into()
+                        format!("{}{}", pack::ARMOR_CACHE_PREFIX, geometry_identifier).into()
                     } else {
-                        binding.geometry.identifier.clone()
+                        geometry_identifier.into()
                     },
                 ))
                 .or_insert_with(|| bone_map(&geometry.names, &bones.names).into()),
         );
         let tint = binding.color_mask_rgb(item.dye_rgb).map_or(0, pack_tint);
-        let (previous, current) = (
+        let (mut previous, mut current) = (
             remap_pose(&map, &body.input.previous_bones),
             remap_pose(&map, &body.input.current_bones),
         );
+        if let Some(selected) = &selected {
+            for poses in [&mut previous, &mut current] {
+                for (index, pose) in poses.iter_mut().enumerate() {
+                    if selected.layer.hidden_bones.contains(&(index as u32)) {
+                        *pose = hidden_bone();
+                    } else if map[index].is_none()
+                        && let Some(authored) = selected.pose.get(index)
+                    {
+                        *pose = *authored;
+                    }
+                }
+            }
+        }
         let poses = self.poses.share(body, layer, [&previous, &current]);
         let mut presentation = layer_presentation(body, layer, geometry.rig, poses, location, tint);
         let color_mask = profile == render_api::CombatVisuals::Legacy112
@@ -297,8 +350,9 @@ impl EquipmentRuntime {
         }
         if profile == render_api::CombatVisuals::Legacy112
             && from_pack
-            && let Some((_, selected)) = selected
+            && let Some(selected) = selected
         {
+            let selected = selected.layer;
             presentation.submission.material = render_model::ActorMaterial {
                 color_mask,
                 kind: selected.material,
@@ -324,6 +378,7 @@ impl EquipmentRuntime {
     }
 
     /// Returns selected worn artwork and shading; the binding supplies missing state.
+    #[allow(clippy::too_many_arguments)]
     fn worn_render(
         &mut self,
         item: &WornItem,
@@ -331,7 +386,10 @@ impl EquipmentRuntime {
         equipment: &ActorEquipmentInput,
         animation: EquipmentAnimation<'_>,
         from_pack: bool,
-    ) -> Option<(Box<str>, actor_animation::RenderTextureLayer)> {
+        attachable_identifier: &str,
+        body: &ActorRigSubmission,
+        bones: &BodyBones,
+    ) -> Result<Option<types::WornRender>, ()> {
         let elapsed = animation
             .owner
             .is_using_item()
@@ -359,23 +417,76 @@ impl EquipmentRuntime {
             ..Default::default()
         });
         let (assets, runtime) = if from_pack {
-            let pack = self.pack.as_mut()?;
+            let pack = self.pack.as_mut().ok_or(())?;
             (&pack.assets, &mut pack.attachables)
         } else {
             (&self.assets, &mut self.attachables)
         };
-        let evaluated =
-            runtime.evaluate(&item.identifier, animation.owner, animation.rig, input)?;
-        let layer = evaluated
+        let evaluated = runtime
+            .evaluate(attachable_identifier, animation.owner, animation.rig, input)
+            .ok_or(())?;
+        let Some(layer) = evaluated
             .render
             .iter()
-            .find(|layer| layer.texture_slot == 0)?;
-        let path = &assets.sources().get(layer.source as usize)?.path;
+            .find(|layer| layer.texture_slot == 0)
+        else {
+            return Ok(None);
+        };
+        let geometry_index = layer.geometry.unwrap_or(evaluated.geometry);
+        let geometry = assets
+            .geometries()
+            .get(geometry_index as usize)
+            .ok_or(())?
+            .identifier
+            .clone();
+        let local = if layer.pose.is_empty() {
+            evaluated.pose
+        } else {
+            &layer.pose
+        };
+        let pose = local
+            .iter()
+            .enumerate()
+            .map(|(index, local)| {
+                if layer.hidden_bones.contains(&(index as u32))
+                    || (geometry_index == evaluated.geometry
+                        && evaluated.bone_names.get(index).is_some_and(|name| {
+                            bones
+                                .names
+                                .iter()
+                                .any(|owner| owner.eq_ignore_ascii_case(name))
+                        }))
+                {
+                    return Some(hidden_bone());
+                }
+                let root = evaluated.bone_parent(geometry_index, index)?;
+                if root == actor_animation::AttachableBoneParent::BindingExpression {
+                    return None;
+                }
+                let parent = modern::parent_for_root(
+                    &body.input.previous_bones,
+                    &body.input.current_bones,
+                    bones,
+                    input,
+                    root,
+                    evaluated.axis_scale.map(|axis| axis * evaluated.scale),
+                )?;
+                modern::compose_parent(parent, *local)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or(())?;
+        let path = &assets.sources().get(layer.source as usize).ok_or(())?.path;
         let texture = path
             .strip_suffix(".png")
-            .or_else(|| path.strip_suffix(".tga"))?
+            .or_else(|| path.strip_suffix(".tga"))
+            .ok_or(())?
             .into();
-        Some((texture, layer.clone()))
+        Ok(Some(types::WornRender {
+            texture,
+            geometry,
+            layer: layer.clone(),
+            pose,
+        }))
     }
 
     /// A worn head riding the body's head bone.

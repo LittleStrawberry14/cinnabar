@@ -607,6 +607,7 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
             fallback: EntityRigFallback::GeometryOnly,
             initialize: None,
             pre_animation: None,
+            item_condition: None,
             scale: assets::EntityGeometryScalar::new(1.0).unwrap(),
             scale_expressions: None,
         }]

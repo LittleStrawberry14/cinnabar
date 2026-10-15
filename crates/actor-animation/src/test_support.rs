@@ -168,6 +168,7 @@ pub fn compiled_fixture() -> CompiledEntityAssets {
             fallback: EntityRigFallback::Skip,
             initialize: None,
             pre_animation: Some(0),
+            item_condition: None,
             scale: scalar(1.0),
             scale_expressions: None,
         }]

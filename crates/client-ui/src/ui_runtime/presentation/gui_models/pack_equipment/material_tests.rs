@@ -26,6 +26,7 @@ fn chestplate(
     };
     EquipmentBinding {
         identifier: identifier.into(),
+        attachable: None,
         category: EquipmentCategory::Armor {
             slot: ArmorSlot::Chestplate,
         },

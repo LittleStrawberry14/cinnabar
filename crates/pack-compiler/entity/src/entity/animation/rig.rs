@@ -37,6 +37,7 @@ struct PendingRig {
     fallback: EntityRigFallback,
     initialize: Option<u32>,
     pre_animation: Option<u32>,
+    item_condition: Option<u32>,
     scale: EntityGeometryScalar,
     scale_expressions: Option<[u32; 4]>,
 }
@@ -110,6 +111,7 @@ impl PendingRigPayload {
                 fallback: rig.fallback,
                 initialize: rig.initialize,
                 pre_animation: rig.pre_animation,
+                item_condition: rig.item_condition,
                 scale: rig.scale,
                 scale_expressions: rig.scale_expressions,
             });
@@ -348,6 +350,13 @@ pub(super) fn compile_rigs(
             });
         }
         let rig_index = rigs.len() as u32;
+        let item_condition = description
+            .get("item")
+            .and_then(Value::as_object)
+            .and_then(|items| items.values().next())
+            .and_then(Value::as_str)
+            .map(|condition| molang.compile(condition))
+            .transpose()?;
         rigs.push(PendingRig {
             placement_frame: if entity.kind == EntityAssetKind::Entity {
                 assets::placement::builtin_placement_frame(&entity.identifier)
@@ -364,6 +373,7 @@ pub(super) fn compile_rigs(
             },
             initialize: scripts.initialize,
             pre_animation: scripts.pre_animation,
+            item_condition,
             scale: scripts.scale,
             scale_expressions: scripts.scale_expressions,
         });

@@ -70,11 +70,15 @@ pub(super) fn validate_rig_payload(compiled: &CompiledEntityAssets) -> Result<()
             u32::from(binding.geometry_count),
             compiled.rig_geometries.len(),
         ) || binding.geometry_count == 0
-            || [binding.initialize, binding.pre_animation]
-                .into_iter()
-                .flatten()
-                .chain(binding.scale_expressions.into_iter().flatten())
-                .any(|index| index as usize >= compiled.molang_expressions.len())
+            || [
+                binding.initialize,
+                binding.pre_animation,
+                binding.item_condition,
+            ]
+            .into_iter()
+            .flatten()
+            .chain(binding.scale_expressions.into_iter().flatten())
+            .any(|index| index as usize >= compiled.molang_expressions.len())
             || !binding.scale.get().is_finite()
             || binding.scale.get() <= 0.0
         {

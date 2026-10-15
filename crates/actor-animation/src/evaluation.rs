@@ -306,6 +306,13 @@ impl MolangEffects {
 }
 
 impl MolangVariables {
+    /// Clears scratch expression values while retaining their allocated slots.
+    pub(super) fn reset(&mut self, seed: u64) {
+        self.values.fill(None);
+        self.temps.fill(None);
+        self.random = seed | 1;
+        self.random_draws = 0;
+    }
     /// Nested recording preserves the enclosing authored-write bitmap.
     pub(super) fn begin_effects(&mut self) -> EffectsCapture {
         let capture = EffectsCapture {

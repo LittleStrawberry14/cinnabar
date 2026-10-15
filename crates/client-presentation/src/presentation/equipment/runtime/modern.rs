@@ -175,7 +175,8 @@ impl EquipmentRuntime {
     }
 }
 
-fn parent_for_root(
+/// Resolves the sampled owner frame inherited by an authored attachable root.
+pub(super) fn parent_for_root(
     previous: &[RenderBoneTransform],
     current: &[RenderBoneTransform],
     bones: &BodyBones,

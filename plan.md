@@ -1155,6 +1155,11 @@ acceptance gate.
 
 ## Worn server-pack armour textures
 
+- Item bindings retain owner-specific attachables and evaluate their item conditions
+  against the wearer. A stand-only chestplate or pair of leggings leaves players
+  using their own definition. Custom armour bones retain their authored pose, and
+  controller-selected geometry and visibility reach the worn draw. Skin visibility
+  masks are applied after equipment attachment so hiding a torso does not hide its armour.
 - Worn armour from server packs runs its attachable scripts with the wearer as
   `context.owning_entity` and draws the texture its render controller selects,
   such as owner-driven team variants. Each worn slot keeps its own retained state
@@ -1163,9 +1168,10 @@ acceptance gate.
   remain available to owner queries when the body pose is static.
   Attachable timing is independent of owner tick batching, and elytra scripts
   receive the actual render delta.
-- Incomplete: worn armour still uses the binding's default geometry on remapped
-  body bones. Attachable animations and controller-selected geometry or
-  materials are not applied, and vanilla armour keeps its static binding.
+- Incomplete: matching body bones still use the owner's pose without the attachable's
+  own animation channels. Worn bone-binding expressions, multiple armour material groups, trim artwork, and modern
+  controller materials remain incomplete. Native humanoid models absent from the
+  resource pack still use the existing static player-model fallback.
 
 ## Tip text slot
 

@@ -29,6 +29,67 @@ fn is_pack_body_key(key: u32) -> bool {
 }
 
 impl EquipmentRuntime {
+    /// Selects a definition whose item condition admits this owner before falling back to startup.
+    pub(super) fn worn_binding_source(
+        &mut self,
+        item: &WornItem,
+        equipment: &ActorEquipmentInput,
+        animation: EquipmentAnimation<'_>,
+        slot: ArmorSlot,
+    ) -> Option<(Arc<RuntimeEquipmentCatalog>, bool, usize)> {
+        let variables = [("variable.is_enchanted", f32::from(item.enchanted))];
+        let input = equipment.attachable_input(actor_animation::AttachableAnimationInput {
+            worn: true,
+            worn_slot: slot as u8,
+            frame_alpha: animation.frame_alpha,
+            delta_seconds: Some(animation.delta_seconds),
+            owner_variables: &variables,
+            ..Default::default()
+        });
+        if let Some(pack) = self.pack.as_mut()
+            && let Some(catalog) = pack.catalog.as_ref()
+            && let Some(index) = select_owner_binding(
+                catalog,
+                &mut pack.attachables,
+                &item.identifier,
+                animation,
+                input,
+                |binding| {
+                    find_geometry_index(&pack.assets, &binding.geometry.identifier)
+                        .or_else(|| find_geometry_index(&self.assets, &binding.geometry.identifier))
+                        .is_some()
+                },
+            )
+        {
+            return Some((Arc::clone(catalog), true, index));
+        }
+        let catalog = self.catalog.as_ref()?;
+        let index = select_owner_binding(
+            catalog,
+            &mut self.attachables,
+            &item.identifier,
+            animation,
+            input,
+            |binding| find_geometry_index(&self.assets, &binding.geometry.identifier).is_some(),
+        )
+        .or_else(|| {
+            // Retain the static model fallback for native geometry absent from pack sources.
+            catalog
+                .bindings_for(&item.identifier)
+                .iter()
+                .any(|binding| {
+                    binding.attachable.is_none()
+                        && binding.geometry.resolution == EntityDependencyResolution::External
+                })
+                .then(|| {
+                    catalog.bindings().partition_point(|binding| {
+                        binding.identifier.as_ref() <= item.identifier.as_ref()
+                    }) - 1
+                })
+        })?;
+        Some((Arc::clone(catalog), false, index))
+    }
+
     /// Rasters of the pack's attachable textures, in catalog order.
     pub fn pack_rasters(catalog: &RuntimeEquipmentCatalog) -> Vec<EquipmentRaster> {
         catalog
@@ -257,4 +318,34 @@ impl EquipmentRuntime {
         pack.armor_geometry.insert(identifier.into(), entry.clone());
         entry
     }
+}
+
+/// Chooses a matching definition without cloning its resource tables on each frame.
+fn select_owner_binding(
+    catalog: &RuntimeEquipmentCatalog,
+    runtime: &mut actor_animation::AttachablesRuntime,
+    identifier: &str,
+    animation: EquipmentAnimation<'_>,
+    input: actor_animation::AttachableAnimationInput<'_>,
+    static_geometry: impl Fn(&assets::EquipmentBinding) -> bool,
+) -> Option<usize> {
+    let start = catalog
+        .bindings()
+        .partition_point(|binding| binding.identifier.as_ref() < identifier);
+    catalog
+        .bindings_for(identifier)
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(offset, binding)| {
+            runtime
+                .matches_owner(
+                    binding.attachable_identifier(),
+                    animation.owner,
+                    animation.rig,
+                    input,
+                )
+                .unwrap_or_else(|| binding.attachable.is_none() && static_geometry(binding))
+                .then_some(start + offset)
+        })
 }

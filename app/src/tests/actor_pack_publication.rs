@@ -212,6 +212,7 @@ fn fixture_equipment() -> Arc<assets::RuntimeEquipmentCatalog> {
         assets::RuntimeEquipmentCatalog::from_parts(
             [1; 32],
             vec![assets::EquipmentBinding {
+                attachable: None,
                 identifier: "test:held".into(),
                 category: assets::EquipmentCategory::Held,
                 geometry: reference(EQUIPMENT_GEOMETRY),

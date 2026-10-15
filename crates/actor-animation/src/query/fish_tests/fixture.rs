@@ -116,6 +116,7 @@ pub(super) fn assets(identifier: &str) -> Arc<RuntimeEntityAssets> {
             fallback: EntityRigFallback::Skip,
             initialize: None,
             pre_animation: None,
+            item_condition: None,
             scale: scalar(1.0),
             scale_expressions: None,
         }]

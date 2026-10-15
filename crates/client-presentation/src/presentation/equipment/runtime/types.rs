@@ -148,3 +148,11 @@ pub(in crate::presentation::equipment) struct ArmorGeometry {
     pub(super) pivots: Vec<[f32; 3]>,
     pub(super) binding_expressions: Vec<bool>,
 }
+
+/// A controller's armour draw, including poses for bones absent from the owner's model.
+pub(super) struct WornRender {
+    pub texture: Box<str>,
+    pub geometry: Box<str>,
+    pub layer: actor_animation::RenderTextureLayer,
+    pub pose: Vec<render_model::RenderBoneTransform>,
+}
