@@ -2,11 +2,6 @@
 
 use super::*;
 
-#[cfg(test)]
-thread_local! {
-    pub(super) static TEXTURE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// Separates armor mappings sourced from a replaceable pack.
 pub(super) const ARMOR_CACHE_PREFIX: &str = "\u{1}pack:";
 
@@ -27,8 +22,6 @@ pub(super) fn placed_textures(
         .enumerate()
         .zip(locations)
         .filter_map(|((texture_index, texture), location)| {
-            #[cfg(test)]
-            TEXTURE_VISITS.with(|visits| visits.set(visits.get() + 1));
             Some((
                 texture.identifier.clone(),
                 TextureArtwork {

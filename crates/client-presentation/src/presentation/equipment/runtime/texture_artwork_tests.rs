@@ -47,26 +47,33 @@ fn assert_draw_work(
     location: ActorArtworkLocation,
     source: (Arc<RuntimeEquipmentCatalog>, bool),
 ) {
-    let path = catalog.textures()[index].identifier.as_ref();
-    pack::TEXTURE_VISITS.with(|visits| visits.set(0));
-    let (_, allocations) = test_alloc::count(|| {
-        for _ in 0..128 {
-            let (resolved, selected, placed) = std::hint::black_box(runtime.draw_artwork(
-                "fixture:equipment",
-                path,
-                (Arc::clone(&source.0), source.1),
-            ))
-            .unwrap();
-            assert!(Arc::ptr_eq(&resolved, catalog));
-            assert_eq!(selected, index);
-            assert_eq!(placed, location);
-        }
+    let (path, catalog_accesses) = assets::equipment::count_texture_slice_accesses(|| {
+        catalog.textures()[index].identifier.as_ref()
     });
+    assert_eq!(
+        catalog_accesses, 1,
+        "texture slice access must be observable"
+    );
+    let ((_, allocations), catalog_accesses) =
+        assets::equipment::count_texture_slice_accesses(|| {
+            test_alloc::count(|| {
+                for _ in 0..128 {
+                    let (resolved, selected, placed) = std::hint::black_box(runtime.draw_artwork(
+                        "fixture:equipment",
+                        path,
+                        (Arc::clone(&source.0), source.1),
+                    ))
+                    .unwrap();
+                    assert!(Arc::ptr_eq(&resolved, catalog));
+                    assert_eq!(selected, index);
+                    assert_eq!(placed, location);
+                }
+            })
+        });
     assert_eq!(allocations, 0, "artwork lookup must not allocate per draw");
     assert_eq!(
-        pack::TEXTURE_VISITS.with(std::cell::Cell::get),
-        0,
-        "artwork lookup must not scan catalog textures per draw"
+        catalog_accesses, 0,
+        "artwork lookup must not access the catalog texture slice per draw"
     );
 }
 
