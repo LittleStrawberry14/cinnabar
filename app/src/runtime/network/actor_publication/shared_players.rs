@@ -102,7 +102,6 @@ pub(super) fn exchange(
             .collect();
         state.refreshed = Some(now);
     }
-    let cosmetics = if stream.is_some() { cosmetics } else { &[] };
     let playback = stream.and(ui).and_then(|ui| ui.emotes().playback());
     let key = playback.map(|clip| (clip.emote, clip.revision));
     if changed
