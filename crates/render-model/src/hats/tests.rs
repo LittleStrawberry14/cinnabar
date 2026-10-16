@@ -11,7 +11,7 @@ fn head(rotation: Quat) -> RenderBoneTransform {
 
 #[test]
 fn original_model_has_a_flexible_continuous_surface_and_valid_art() {
-    let model = rig(Hat::BunnyEars);
+    let model = rig(fixture::bunny());
     assert!(model.flex.iter().filter(|weight| **weight > 0.0).count() >= 16);
     assert!(model.texture.is_valid());
     assert_eq!(model.pixels.len(), crate::STANDARD_SKIN_SIDE.pow(2) * 4);
@@ -42,7 +42,7 @@ fn original_model_has_a_flexible_continuous_surface_and_valid_art() {
 
 #[test]
 fn forward_wind_folds_only_the_upper_half_behind_the_head_at_every_orientation() {
-    let model = rig(Hat::BunnyEars);
+    let model = rig(fixture::bunny());
     for rotation in [
         Quat::IDENTITY,
         Quat::from_rotation_y(1.3),
@@ -75,26 +75,26 @@ fn forward_speed_ignores_strafing_and_vertical_motion_and_tracks_look_yaw() {
 
 #[test]
 fn wind_scales_with_forward_speed_eases_back_and_is_frame_rate_independent() {
-    let walk = EarWind::default().advance(3.0, 1.0);
-    let run = EarWind::default().advance(6.0, 1.0);
+    let walk = EarWind::default().advance(fixture::bunny(), 3.0, 1.0);
+    let run = EarWind::default().advance(fixture::bunny(), 6.0, 1.0);
     assert!(run > walk && run <= 65.0_f32.to_radians());
     let mut slow = EarWind::default();
     let mut fast = EarWind::default();
     for _ in 0..30 {
-        slow.advance(5.0, 1.0 / 30.0);
+        slow.advance(fixture::bunny(), 5.0, 1.0 / 30.0);
     }
     for _ in 0..120 {
-        fast.advance(5.0, 1.0 / 120.0);
+        fast.advance(fixture::bunny(), 5.0, 1.0 / 120.0);
     }
     assert!((slow.bend - fast.bend).abs() < 1e-4);
     let before = fast.bend;
-    let after = fast.advance(-3.0, 0.1);
+    let after = fast.advance(fixture::bunny(), -3.0, 0.1);
     assert!(after > 0.0 && after < before);
     for _ in 0..120 {
-        fast.advance(0.0, 1.0 / 30.0);
+        fast.advance(fixture::bunny(), 0.0, 1.0 / 30.0);
     }
     assert_eq!(fast.bend, 0.0);
-    assert_eq!(fast.advance(f32::NAN, f32::INFINITY), 0.0);
+    assert_eq!(fast.advance(fixture::bunny(), f32::NAN, f32::INFINITY), 0.0);
 }
 
 #[test]
@@ -102,19 +102,19 @@ fn settled_headwear_reuses_its_pose_and_retains_head_scale() {
     let mut cache = HatPoseCache::default();
     let mut head = head(Quat::IDENTITY);
     head.translation_scale[3] = 0.5;
-    let first = cache.pose(Hat::BunnyEars, head, 0.0);
-    let second = cache.pose(Hat::BunnyEars, head, 0.0);
+    let first = cache.pose(fixture::bunny(), head, 0.0);
+    let second = cache.pose(fixture::bunny(), head, 0.0);
     assert!(Arc::ptr_eq(&first, &second));
     for bone in &*first {
         assert_eq!(bone.translation_scale[3], 0.5);
     }
-    let changed = cache.pose(Hat::BunnyEars, head, 0.5);
+    let changed = cache.pose(fixture::bunny(), head, 0.5);
     assert!(!Arc::ptr_eq(&first, &changed));
 }
 
 #[test]
 fn shared_surface_edges_stay_welded_and_joint_angles_form_a_curve() {
-    let model = rig(Hat::BunnyEars);
+    let model = rig(fixture::bunny());
     for bend in [0.0, 0.5, 1.0] {
         let pose = model.pose(head(Quat::IDENTITY), bend);
         let mut shared = std::collections::HashMap::<[u32; 3], Vec3>::new();
@@ -150,14 +150,18 @@ fn shared_surface_edges_stay_welded_and_joint_angles_form_a_curve() {
 
 #[test]
 fn blockbench_project_and_runtime_export_share_the_same_surface_and_joint_pivots() {
-    for &hat in Hat::ALL {
-        let source = model::source(hat);
-        let project: serde_json::Value = serde_json::from_str(source.project).unwrap();
-        let exported: serde_json::Value = serde_json::from_str(source.geometry).unwrap();
-        assert_eq!(
-            project["model_identifier"],
-            format!("geometry.cinnabar.{}", hat.id())
-        );
+    for (project, geometry) in [
+        (
+            include_str!("bunny_ears.bbmodel"),
+            include_str!("bunny_ears.geo.json"),
+        ),
+        (
+            include_str!("crown.bbmodel"),
+            include_str!("crown.geo.json"),
+        ),
+    ] {
+        let project: serde_json::Value = serde_json::from_str(project).unwrap();
+        let exported: serde_json::Value = serde_json::from_str(geometry).unwrap();
         let geometry = &exported["minecraft:geometry"][0];
         assert_eq!(
             project["model_identifier"],
@@ -242,28 +246,52 @@ fn blockbench_project_and_runtime_export_share_the_same_surface_and_joint_pivots
 }
 
 #[test]
-fn crown_has_its_own_art_and_keeps_its_shape_in_wind() {
-    let crown = rig(Hat::Crown);
-    let ears = rig(Hat::BunnyEars);
-    assert_ne!(crown.geometry.id, ears.geometry.id);
-    assert!(crown.texture.is_valid());
-    let rest = crown.pose(head(Quat::IDENTITY), 0.0);
-    assert_eq!(rest, crown.pose(head(Quat::IDENTITY), 1.0));
-    let bottom = crown
-        .rest_vertices
-        .iter()
-        .map(|v| v.position[1])
-        .fold(f32::INFINITY, f32::min);
-    assert!(
-        (bottom - 2.0).abs() < 1e-5,
-        "crown rests on the top of the head"
+fn admits_new_identifiers_slots_offsets_and_render_flags_without_code_changes() {
+    let first = fixture::bunny();
+    let mut descriptor = first.descriptor().clone();
+    descriptor.id = "fixture:offset".into();
+    descriptor.slot = "face".into();
+    descriptor.offset = [0.25, 0.0, 0.0];
+    descriptor.render_flags.double_sided = true;
+    let item = admit(
+        descriptor,
+        include_bytes!("bunny_ears.geo.json"),
+        include_bytes!("bunny_ears.png"),
+        include_bytes!("fixture/animation.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        rig(item).geometry.vertices.len(),
+        rig(first).geometry.vertices.len() * 2
     );
+    let posed = rig(item).pose(head(Quat::IDENTITY), 0.0);
+    assert!((posed[0].translation_scale[0] - 0.25).abs() < 1e-5);
+    assert_eq!(Item::from_id(item.id()), Some(item));
+}
+
+#[test]
+fn corrupt_assets_and_unknown_slots_never_admit_a_renderable_handle() {
+    let mut descriptor = fixture::bunny().descriptor().clone();
+    descriptor.id = "fixture:corrupt".into();
     assert!(
-        crown
-            .rest_vertices
-            .iter()
-            .all(|vertex| { vertex.position[0].abs() <= 0.25 && vertex.position[2].abs() <= 0.25 }),
-        "the complete crown, including jewels, fits the head width and depth"
+        admit(
+            descriptor.clone(),
+            b"bad",
+            include_bytes!("bunny_ears.png"),
+            &[]
+        )
+        .is_none()
     );
-    assert!(crown.rest_vertices.iter().any(|v| v.position[1] > 2.0));
+    descriptor.slot = "future:slot".into();
+    assert!(!cosmetics::supported(&descriptor));
+    assert!(Item::from_id("fixture:corrupt").is_none());
+    let slots = [
+        ("head".into(), Some(fixture::bunny().id().into())),
+        ("back".into(), Some("future:unknown".into())),
+    ]
+    .into();
+    assert_eq!(
+        cosmetics::resolve(&slots, |_| false),
+        vec![fixture::bunny()]
+    );
 }

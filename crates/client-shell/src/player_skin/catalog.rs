@@ -11,6 +11,10 @@ const MAX_PNG_BYTES: u64 = resource_pack::MAX_PACK_TEXTURE_BYTES;
 const MAX_IMPORTED_ITEMS: usize = launcher::skin_import::MAX_IMPORTED_SKINS;
 const MAX_PREFERENCES_BYTES: u64 = 1024 * 1024;
 
+#[path = "catalog/cosmetics.rs"]
+mod cosmetic_catalog;
+#[cfg(not(any(test, feature = "test-support")))]
+pub(crate) use cosmetic_catalog::refresh as refresh_cosmetics;
 mod capes;
 mod custom;
 pub use custom::import;
@@ -31,7 +35,7 @@ struct Preferences {
     #[serde(default)]
     selected_cape: Option<String>,
     #[serde(default)]
-    selected_hat: Option<String>,
+    selected_cosmetics: cosmetics::Slots,
     #[serde(default)]
     capes: Vec<ImportedCape>,
 }
@@ -73,6 +77,7 @@ struct Starter {
 }
 
 pub fn load(layout: &InstallLayout, fallback: &LocalPlayerSkin) -> DressingRoomView {
+    cosmetic_catalog::load(layout);
     let preferences = read_bounded(&layout.skin_selection_file(), MAX_PREFERENCES_BYTES)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok())
@@ -191,10 +196,7 @@ pub fn load(layout: &InstallLayout, fallback: &LocalPlayerSkin) -> DressingRoomV
         selected,
         capes: capes.into(),
         selected_cape,
-        selected_hat: preferences
-            .selected_hat
-            .as_deref()
-            .and_then(render_api::Hat::from_id),
+        selected_cosmetics: preferences.selected_cosmetics,
         ..Default::default()
     }
 }
@@ -278,7 +280,7 @@ fn save(layout: &InstallLayout, view: &DressingRoomView) -> Result<(), String> {
             })
             .collect(),
         selected_cape: view.selected_cape().map(|entry| entry.id.clone()),
-        selected_hat: view.selected_hat.map(|hat| hat.id().to_owned()),
+        selected_cosmetics: view.selected_cosmetics.clone(),
         capes: view
             .capes
             .iter()
@@ -474,15 +476,29 @@ fn standard_skin(
 mod tests;
 
 /// Saves a local cosmetic atomically; a failed write restores the equipped choice.
-pub fn select_hat(
+pub fn select_cosmetic(
     layout: &InstallLayout,
     view: &mut DressingRoomView,
-    hat: Option<render_api::Hat>,
+    hat: Option<cosmetics::Item>,
 ) -> Result<(), String> {
-    let previous = view.selected_hat;
-    view.selected_hat = hat;
+    let previous = view.selected_cosmetics.clone();
+    if let Some(item) = hat {
+        if !item.descriptor().free {
+            return Err("This item is not owned.".to_owned());
+        }
+        let slot = item.descriptor().slot.clone();
+        let selected = view
+            .selected_cosmetics
+            .get(&slot)
+            .and_then(|value| value.as_deref())
+            == Some(item.id());
+        view.selected_cosmetics
+            .insert(slot, (!selected).then(|| item.id().to_owned()));
+    } else {
+        view.selected_cosmetics.clear();
+    }
     if let Err(error) = save(layout, view) {
-        view.selected_hat = previous;
+        view.selected_cosmetics = previous;
         return Err(error);
     }
     Ok(())

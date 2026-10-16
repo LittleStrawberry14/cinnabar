@@ -146,7 +146,7 @@ impl UiPresentationRuntime {
             oversized: self.oversized_ui_textures(),
             skins,
             capes,
-            hats: render_api::Hat::ALL.to_vec(),
+            hats: cosmetics::Item::all(),
         });
         self.menu_artwork_loader.gallery = request;
     }

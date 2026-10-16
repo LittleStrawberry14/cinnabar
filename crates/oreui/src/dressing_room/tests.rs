@@ -547,12 +547,15 @@ fn editor_errors_remain_visible_inside_the_modal_without_covering_controls() {
 }
 
 #[test]
-fn hats_offer_equip_remove_and_tabs_without_skin_management_actions() {
+fn cosmetics_offer_equip_remove_and_tabs_without_skin_management_actions() {
     for width in [360.0, 1280.0] {
         let mut view = view(STARTER_SKIN_NAMES.len());
         let wardrobe = Arc::make_mut(&mut view.dressing_room);
-        wardrobe.section = DressingRoomSection::Hats;
-        wardrobe.selected_hat = Some(render_api::Hat::BunnyEars);
+        wardrobe.section = DressingRoomSection::Cosmetics;
+        wardrobe.selected_cosmetics.insert(
+            "head".into(),
+            Some(render_model::hats::fixture::bunny().id().into()),
+        );
         let offsets = if width < 600.0 {
             HashMap::from([("dressing_room_hats".into(), 320.0)])
         } else {
@@ -563,12 +566,12 @@ fn hats_offer_equip_remove_and_tabs_without_skin_management_actions() {
         });
         assert!(
             hits.iter()
-                .any(|(action, _)| *action == command(Action::SelectHat(None)))
+                .any(|(action, _)| *action == command(Action::SelectCosmetic(None)))
         );
-        assert!(
-            hits.iter().any(|(action, _)| *action
-                == command(Action::SelectHat(Some(render_api::Hat::BunnyEars))))
-        );
+        assert!(hits.iter().any(|(action, _)| *action
+            == command(Action::SelectCosmetic(Some(
+                render_model::hats::fixture::bunny()
+            )))));
         assert!(
             hits.iter()
                 .any(|(action, _)| *action

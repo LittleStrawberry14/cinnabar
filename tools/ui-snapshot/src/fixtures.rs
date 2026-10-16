@@ -52,6 +52,13 @@ const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 pub const STATES: &[State] = &[
     #[cfg(feature = "test-support")]
     State {
+        name: "dressing-room-cosmetics",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: wardrobe,
+    },
+    #[cfg(feature = "test-support")]
+    State {
         name: "craft-overlap-ready",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -554,5 +561,19 @@ fn settings_keyboard_layout(observed: bool) -> Fixture {
     if observed {
         settings.set_key_label(0x14, "a");
     }
+    Fixture::Menu(Box::new(view))
+}
+
+/// Shows an anonymous wardrobe with the first original cosmetic equipped.
+#[cfg(feature = "test-support")]
+fn wardrobe() -> Fixture {
+    let mut view = MenuView::new(true, "Player".into());
+    view.screen = MenuScreen::DressingRoom;
+    let item = render_model::hats::fixture::bunny();
+    Arc::make_mut(&mut view.dressing_room).section =
+        launcher::dressing_room::DressingRoomSection::Cosmetics;
+    Arc::make_mut(&mut view.dressing_room)
+        .selected_cosmetics
+        .insert(item.descriptor().slot.clone(), Some(item.id().into()));
     Fixture::Menu(Box::new(view))
 }

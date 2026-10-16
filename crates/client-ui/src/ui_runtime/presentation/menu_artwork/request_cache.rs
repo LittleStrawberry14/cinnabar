@@ -7,6 +7,7 @@ use launcher::menu::{MenuScreen, MenuView};
 pub(super) struct GalleryRequest {
     skins: Arc<[DressingRoomSkin]>,
     capes: Arc<[DressingRoomCape]>,
+    cosmetics: Vec<cosmetics::Item>,
     section: DressingRoomSection,
     selected: Option<usize>,
     selected_cape: Option<usize>,
@@ -20,6 +21,7 @@ impl GalleryRequest {
         (view.screen == MenuScreen::DressingRoom).then(|| Self {
             skins: view.dressing_room.skins.clone(),
             capes: view.dressing_room.capes.clone(),
+            cosmetics: cosmetics::Item::all(),
             section: view.dressing_room.section,
             selected: view.dressing_room.selected,
             selected_cape: view.dressing_room.selected_cape,
@@ -33,6 +35,7 @@ impl GalleryRequest {
         view.screen == MenuScreen::DressingRoom
             && Arc::ptr_eq(&self.skins, &view.dressing_room.skins)
             && Arc::ptr_eq(&self.capes, &view.dressing_room.capes)
+            && self.cosmetics == cosmetics::Item::all()
             && self.section == view.dressing_room.section
             && self.selected == view.dressing_room.selected
             && self.selected_cape == view.dressing_room.selected_cape

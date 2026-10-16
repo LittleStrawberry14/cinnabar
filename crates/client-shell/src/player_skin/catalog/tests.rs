@@ -666,26 +666,34 @@ fn legacy_png_preferences_restore_without_engine_metadata() {
 }
 
 #[test]
-fn hats_persist_independently_of_the_selected_skin_and_can_be_removed() {
+fn cosmetics_persist_independently_of_the_selected_skin_and_can_be_removed() {
     let layout = layout();
     native_fixture(&layout);
     let fallback = LocalPlayerSkin::generated_default("fixture");
     let mut view = load(&layout, &fallback);
     let original = view.active_skin();
-    select_hat(&layout, &mut view, Some(render_api::Hat::BunnyEars)).unwrap();
+    select_cosmetic(
+        &layout,
+        &mut view,
+        Some(render_model::hats::fixture::bunny()),
+    )
+    .unwrap();
     assert_eq!(
         view.active_skin(),
         original,
         "headwear does not alter the skin payload"
     );
     let mut reloaded = load(&layout, &fallback);
-    assert_eq!(reloaded.selected_hat, Some(render_api::Hat::BunnyEars));
+    assert_eq!(
+        cosmetics::resolve(&reloaded.selected_cosmetics, |_| false),
+        vec![render_model::hats::fixture::bunny()]
+    );
     select(&layout, &mut reloaded, 1).unwrap();
     assert_eq!(
-        load(&layout, &fallback).selected_hat,
-        Some(render_api::Hat::BunnyEars)
+        cosmetics::resolve(&load(&layout, &fallback).selected_cosmetics, |_| false),
+        vec![render_model::hats::fixture::bunny()]
     );
-    select_hat(&layout, &mut reloaded, None).unwrap();
-    assert_eq!(load(&layout, &fallback).selected_hat, None);
+    select_cosmetic(&layout, &mut reloaded, None).unwrap();
+    assert!(load(&layout, &fallback).selected_cosmetics.is_empty());
     fs::remove_dir_all(layout.user_data_root).unwrap();
 }

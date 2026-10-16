@@ -1,23 +1,20 @@
-## Hats wardrobe
+## Catalog cosmetics
 
-The wardrobe offers removable original bunny ears and a rigid jeweled gold crown independently of skins and capes.
-The crown rests on top of the head and uses short, broad stepped points.
-Its full silhouette, including jewels, fits within the head width and depth.
-Continuous ear meshes use a chain of small upper-half bends and ease upright when stopping;
-head transforms and the wind angle are shared by world and HUD presentation.
-The stepped pixel silhouettes attach directly to the head without a band; the gallery
-uses compact square preview tiles. The editable Blockbench project exports to the
-runtime geometry JSON, with conformance tests.
-Shared surface rings prevent visible joint gaps at rest or in motion.
-This is client-owned cosmetic behavior. The Linux wardrobe and in-world standing and forward-motion states were visually
-checked with software Vulkan. Hardware performance qualification remains incomplete.
+The wardrobe uses a fetched, ETag-cached catalog with namespaced item IDs and independent
+head, back, face, body, pet and aura slots. Geometry, textures and optional joint motion
+are loaded from bounded, SHA-256-checked assets. The first catalog item is the original
+bunny ears; editable artwork and export conformance tests remain available.
+Each attachment follows its declared bone and offset. World and HUD share local motion.
+Unknown, unsupported and unowned items render nothing.
 
-Nearby authenticated Cinnabar accounts exchange equipped hats on the same bounded
-subscription connection as custom emotes. Head attachments resolve only to current actor
-lifetimes, share one texture per cosmetic per frame, and retain independent ear wind.
-Unknown selections are ignored; unequip, world departure, visibility opt-out and lease
-expiry retire remote hats. Sharing requires deployment of the corresponding API extension;
-live authenticated multi-account acceptance and hardware qualification remain incomplete.
+Authenticated nearby players exchange revisioned session loadouts independently of leased
+emotes. The highest account revision wins across sockets. Disconnect, visibility opt-out
+and nearby departure withdraw the shared selection. The API validates slot placement and
+ownership before publication; all current catalog items are free.
+
+Deploy the API and original R2 assets before the client. Payments, additional catalog items,
+moderation, live authenticated multi-account acceptance and hardware qualification remain
+incomplete. No Bedrock parity or performance gate advances.
 
 ## Fence gate targeting
 

@@ -73,7 +73,7 @@ pub(super) struct ArtworkSet {
     pub(super) oversized: ui_engine::atlas::OversizedTextures,
     pub(super) skins: Vec<SkinArtwork>,
     pub(super) capes: Vec<CapeArtwork>,
-    pub(super) hats: Vec<render_api::Hat>,
+    pub(super) hats: Vec<cosmetics::Item>,
 }
 
 impl ArtworkSet {
@@ -287,14 +287,14 @@ enum Source {
     Bytes(String, Arc<[u8]>),
     Skin(SkinArtwork),
     Cape(CapeArtwork),
-    Hat(render_api::Hat, bool),
+    Item(cosmetics::Item, bool),
 }
 
 impl Source {
     /// Includes replacement pack bytes so a reload cannot reuse an older image.
     fn key(&self) -> DecodeKey {
         match self {
-            Self::Hat(hat, thumbnail) => (
+            Self::Item(hat, thumbnail) => (
                 if *thumbnail {
                     hat.thumbnail_key()
                 } else {
@@ -335,7 +335,7 @@ impl DecodeCache {
             .iter()
             .map(|source| {
                 let art = match source {
-                    Source::Hat(hat, thumbnail) => {
+                    Source::Item(hat, thumbnail) => {
                         super::player_preview::hats::decode(*hat, *thumbnail)
                     }
                     Source::Skin(skin) => skin.decode(),
@@ -410,7 +410,7 @@ fn sources(set: &ArtworkSet) -> Vec<Source> {
     all.extend(
         set.hats
             .iter()
-            .flat_map(|hat| [Source::Hat(*hat, false), Source::Hat(*hat, true)])
+            .flat_map(|hat| [Source::Item(*hat, false), Source::Item(*hat, true)])
             .take(remaining),
     );
     let remaining = MAX_ARTWORKS - all.len();

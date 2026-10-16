@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "cinnabar:bunny_ears",
+      "slot": "head",
+      "display_name": "Bunny ears",
+      "tags": [
+        "original",
+        "free"
+      ],
+      "free": true,
+      "assets": {
+        "geometry": {
+          "url": "/v1/cosmetics/assets/c89adbd00dc984832657394c8fe931eb3779e4d0f5651920f625c8be06e500c0",
+          "sha256": "c89adbd00dc984832657394c8fe931eb3779e4d0f5651920f625c8be06e500c0",
+          "bytes": 57675
+        },
+        "texture": {
+          "url": "/v1/cosmetics/assets/18f8e6360ebebd791296f147a3d278563e640982e6bf0090edab211581cac797",
+          "sha256": "18f8e6360ebebd791296f147a3d278563e640982e6bf0090edab211581cac797",
+          "bytes": 163
+        },
+        "animation": {
+          "url": "/v1/cosmetics/assets/32b25a78ddf62f6fb5ad5d31416e2fc3a0be57916c5f7ccb697f7a6558543214",
+          "sha256": "32b25a78ddf62f6fb5ad5d31416e2fc3a0be57916c5f7ccb697f7a6558543214",
+          "bytes": 1131
+        }
+      },
+      "geometry_id": "geometry.cinnabar.bunny_ears",
+      "attachment_bone": "head",
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "render_flags": {
+        "double_sided": false
+      }
+    }
+  ]
+}
