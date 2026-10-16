@@ -271,7 +271,7 @@ impl UiPresentationRuntime {
                     continue;
                 }
                 // Normalize alpha-tested faces using their material mode. Fractional blended
-                // faces retain the thumbnail's composited front and rear contributions.
+                // faces retain the thumbnail's composited texels.
                 let Some(sprite) = gui_cube_sheet(world, block_visual, sprite) else {
                     continue;
                 };
@@ -329,8 +329,8 @@ impl UiPresentationRuntime {
         self.gui_models.cape = render_model::cape::CapeRig::resolve(entities);
         self.gui_models.fire.pages_start = None;
         self.install_gui_fire()?;
-        for hat in render_api::Hat::ALL {
-            render_model::hats::rig(*hat);
+        for hat in cosmetics::Item::all() {
+            render_model::hats::rig(hat);
         }
         self.gui_models.enabled = true;
         self.place_pack_armor();
@@ -658,11 +658,16 @@ impl UiPresentationRuntime {
             self.gui_fire_frame(),
             cape,
         );
-        if let Some(hat) = self.menu_preview_model.hat
-            && let Some(icon) = self.menu_artwork_icon(&hat.texture_key())
-        {
+        for &hat in &self.menu_preview_model.cosmetics {
+            let Some(icon) = self.menu_artwork_icon(&hat.texture_key()) else {
+                continue;
+            };
             let vertices = if self.player_preview_view == player_preview::PreviewView::Hud {
-                self.gui_models.live_player.hat_vertices.as_slice()
+                self.gui_models
+                    .live_player
+                    .hat_vertices
+                    .get(&hat)
+                    .map_or(&[][..], Vec::as_slice)
             } else {
                 &render_model::hats::rig(hat).rest_vertices
             };

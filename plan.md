@@ -1,23 +1,26 @@
-## Hats wardrobe
+## Catalog cosmetics
 
-The wardrobe offers removable original bunny ears and a rigid jeweled gold crown independently of skins and capes.
-The crown rests on top of the head and uses short, broad stepped points.
-Its full silhouette, including jewels, fits within the head width and depth.
-Continuous ear meshes use a chain of small upper-half bends and ease upright when stopping;
-head transforms and the wind angle are shared by world and HUD presentation.
-The stepped pixel silhouettes attach directly to the head without a band; the gallery
-uses compact square preview tiles. The editable Blockbench project exports to the
-runtime geometry JSON, with conformance tests.
-Shared surface rings prevent visible joint gaps at rest or in motion.
-This is client-owned cosmetic behavior. The Linux wardrobe and in-world standing and forward-motion states were visually
-checked with software Vulkan. Hardware performance qualification remains incomplete.
+The wardrobe uses a fetched, ETag-cached catalog with namespaced item IDs and independent
+head, back, face, body, pet and aura slots. Geometry, textures and optional joint motion
+are loaded from bounded, SHA-256-checked assets. The catalog includes original bunny
+ears, the crown and rigid red devil horns; editable artwork and export conformance
+tests remain available.
+Each attachment follows its declared bone and offset. World and HUD share local motion.
+Unknown, unsupported and unowned items render nothing.
 
-Nearby authenticated Cinnabar accounts exchange equipped hats on the same bounded
-subscription connection as custom emotes. Head attachments resolve only to current actor
-lifetimes, share one texture per cosmetic per frame, and retain independent ear wind.
-Unknown selections are ignored; unequip, world departure, visibility opt-out and lease
-expiry retire remote hats. Sharing requires deployment of the corresponding API extension;
-live authenticated multi-account acceptance and hardware qualification remain incomplete.
+Saved hat choices migrate into the head slot. Gallery requests include visible thumbnails
+and prioritize equipped textures. Cosmetic motion retains the hand rasters, and unchanged
+gallery requests compare the catalog generation without cloning its items. Attachments use
+their declared preview bone and a separate range of render layers.
+
+Authenticated nearby players exchange revisioned session loadouts independently of leased
+emotes. The highest account revision wins across sockets. Disconnect, visibility opt-out
+and nearby departure withdraw the shared selection. The API validates slot placement and
+ownership before publication; all current catalog items are free.
+
+Deploy the API and original R2 assets before the client. Payments, additional catalog items,
+moderation, live authenticated multi-account acceptance and hardware qualification remain
+incomplete. No Bedrock parity or performance gate advances.
 
 ## Fence gate targeting
 
@@ -349,11 +352,18 @@ verification. No parity gate closes here.
 
 ## Launcher updates
 
+Windows runtime executables carry `asInvoker` manifests and refuse elevated game, core and
+crash-monitor startup or relaunch. Setup does not launch the game, and MSI Restart Manager
+relaunch is disabled. The machine-wide install identity and custom install folders remain supported.
+
 One client per install owns update checks, Beta/Nightly/Stable channel selection, explicit Restart and
 update / Later actions, and a separate default-off install-on-quit preference. Signed manifests
 carry monotonic build numbers, and digest-named partial downloads resume with HTTP ranges.
 An offline Rust helper waits for the old process, applies the verified native package, and
 restores failed macOS/Linux starts. Read-only installs offer the manual download action.
+Windows uses this helper even without direct write rights: Windows Installer handles any
+administrator authorization after shutdown, and the helper owns the client relaunch.
+Manual Windows downloads open their folder so they cannot start an installer over a running client.
 Each launch checks once startup completes; the fallback poll runs every six hours, and a Cinnabar
 API release notice for the selected channel checks immediately.
 
@@ -363,8 +373,9 @@ publication number, then SemVer prerelease precedence. An unavailable or invalid
 leaves nightly usable. Cached offers and retained stages use the same order to prevent automatic
 downgrades when the winning publishing channel changes. Beta remains the default channel.
 
-Incomplete: CI must compile and run the written regression tests on all platforms. The package
-workflow publishes each channel's signed manifest. The `CINNABAR_UPDATE_SIGNING_KEY` secret in
+Incomplete: CI must compile and run the written regression tests on all platforms. A real Windows
+check must confirm permission consent, installation and one relaunch. The package workflow
+publishes each channel's signed manifest. The `CINNABAR_UPDATE_SIGNING_KEY` secret in
 the protected `release` environment and the `UPDATE_TRUSTED_KEYS` repository variable are
 configured. The first signed publication remains pending.
 The launcher owner must review the notice screenshots before merge.
@@ -3262,9 +3273,10 @@ remain visible; native behavior for that resource limit is unverified. Full pack
 and multi-bone preview parity remains open.
 2026-10-07 non-cube block items (slabs, stairs, walls, fences) also draw as GUI geometry at
 display resolution instead of a 32x32 thumbnail (icon carrier v3 names each thumbnail's world
-state). Cut-out cubes (glass, leaves) draw all six alpha-tested faces, including rear faces
-visible through holes. Non-blended face alpha uses the thumbnail threshold; fractional blended
-faces (stained glass) retain their composed thumbnail. Chests (a cube of their inventory tiles)
+state). Cut-out cube previews (glass, leaves) draw their camera-facing surfaces, so rear
+faces do not show through front texel holes. Their thumbnails use the same face selection.
+Non-blended face alpha uses the thumbnail threshold; fractional blended faces (stained glass)
+retain their composed thumbnail. Chests (a cube of their inventory tiles)
 and blend-flagged art that is only opaque or cut out (anvils) draw as GUI geometry too. Overlapping
 meshes keep their thumbnail when faded. Optional sources follow required atlas pages and fall
 back to thumbnails when the atlas is full. Incomplete: layered translucent cube GUI geometry is
@@ -3905,6 +3917,11 @@ dispatch and a fresh live check remain outstanding. New chat/loading regressions
 are authored but unrun at the user's request. Native
 `#item_name_text_offset` controller binding remains
 incomplete; this correction preserves the approved built-in pack geometry.
+
+Sulfur-cube body and shell material aliases retain their cutout and blended states.
+The pinned adult and baby shell rasters preserve fractional opacity through actor
+carrier admission. Incomplete: absorbed-block scale and attachment placement remain
+unverified; restoring the shell does not close the full sulfur-cube rendering gate.
 
 2026-10-05 custom actor lens materials: the Murder Mystery lens overrides its body's
 wildcard material with `slime_outer`. The compiler previously ignored bone-specific
@@ -8975,8 +8992,9 @@ Attacks at actors, air or blocks send the item-directed transaction with aim and
 allowing the server to apply damage and Lunge movement. Component, admission,
 catalog/reset and real-carrier animation regressions pass. Matched live captures
 show the jab, charged hold and default-Java third-person arm; server-confirmed
-Lunge moves the fixed client without movement input. The complete matched-version
-native comparison remains incomplete. See
+Lunge moves the fixed client without movement input. Hotbar shading now follows
+admitted attack-category cooldowns, including other displayed stacks in the same
+category. The complete matched-version native comparison remains incomplete. See
 [spear actions](docs/reference/spear-actions.md).
 
 ## Third-person held attachables
