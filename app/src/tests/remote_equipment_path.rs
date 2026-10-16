@@ -144,15 +144,13 @@ impl Session {
     /// Commits decoded packets in server FIFO order without hand-constructing appearance state.
     fn submit(&mut self, events: impl IntoIterator<Item = WorldEvent>) {
         let mut client = self.world.resource_mut::<ClientWorld>();
+        let stream = client.stream.as_mut().unwrap();
         for event in events {
             self.sequence += 1;
-            client
-                .stream
-                .as_mut()
-                .unwrap()
-                .submit(self.sequence, event)
-                .unwrap();
+            stream.submit(self.sequence, event).unwrap();
         }
+        // The roster screen consumes these notifications separately from actor publication.
+        let _ = stream.take_committed_controls();
     }
 
     /// Sends the roster and spawn independently, including distinct list and spawn unique IDs.
@@ -523,6 +521,7 @@ fn offscreen_crowd_leaves_capacity_for_equipped_remote_players() {
             let mut client = session.world.resource_mut::<ClientWorld>();
             let stream = client.stream.as_mut().unwrap();
             stream.prepare_actor_appearance_fixture();
+            stream.advance_actor_interpolation_frame(0);
             stream.authority().render_players().len() == render_model::MAX_RENDERED_PLAYERS + 3
         },
     );
