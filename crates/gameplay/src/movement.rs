@@ -1,6 +1,6 @@
 use simulation_clock::PhysicsTick;
 use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 #[cfg(test)]
 use protocol::PlayerInputMode;
@@ -96,6 +96,8 @@ pub enum MovementSource {
 
 #[derive(Debug, Clone, PartialEq)]
 struct QueuedPhysicsSample {
+    /// Elapsed application time of the frame that sampled this tick.
+    sampled_at: Option<Duration>,
     session_generation: u64,
     snapshot: PlayerAuthInputSnapshot,
     displacement: [f32; 3],
@@ -162,6 +164,9 @@ pub struct MovementTicker {
     epoch_publisher: watch::Sender<PositionAuthorityGeneration>,
     mining_epoch_publisher: watch::Sender<u64>,
     held_release: Option<outbox::HeldRelease>,
+    /// A sent release keeps its launch until the following movement reaches the socket.
+    admitted_riptide: Option<physics::RiptideRequest>,
+    written_riptide_tick: Option<u64>,
     next_tick_flags: PlayerInputFlags,
     next_tick_rotation: Option<(f32, f32)>,
     emote_ticks: u32,
@@ -212,6 +217,8 @@ impl MovementTicker {
             epoch_publisher,
             mining_epoch_publisher,
             held_release: None,
+            admitted_riptide: None,
+            written_riptide_tick: None,
             next_tick_flags: PlayerInputFlags::NONE,
             next_tick_rotation: None,
             emote_ticks: 0,
@@ -228,6 +235,8 @@ impl MovementTicker {
     ) {
         self.position_authority_changed();
         self.held_release = None;
+        self.admitted_riptide = None;
+        self.written_riptide_tick = None;
         self.session_active = true;
         self.session_generation = session_generation;
         self.next_tick = initial_server_tick.saturating_add(1);
@@ -254,6 +263,8 @@ impl MovementTicker {
     pub fn deactivate(&mut self) {
         self.position_authority_changed();
         self.held_release = None;
+        self.admitted_riptide = None;
+        self.written_riptide_tick = None;
         self.session_active = false;
         self.outbox.clear();
         self.pending_sends.clear();
@@ -324,9 +335,20 @@ impl MovementTicker {
         self.anchor_tick_end(position);
     }
 
+    /// Queues a fixture sample when no application sampling clock is available.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn enqueue_completed_physics(
         &mut self,
         completed: PhysicsMovementSample,
+    ) -> Result<(), PhysicsAuthorityFault> {
+        self.enqueue_completed_physics_at(completed, None)
+    }
+
+    /// Retains the frame's sampling time with the completed tick through transport retries.
+    fn enqueue_completed_physics_at(
+        &mut self,
+        completed: PhysicsMovementSample,
+        sampled_at: Option<Duration>,
     ) -> Result<(), PhysicsAuthorityFault> {
         if !self.accepting_physics_admissions() {
             return Err(PhysicsAuthorityFault::Unauthorized);
@@ -380,6 +402,7 @@ impl MovementTicker {
             jump_released: snapshot.flags.bits() & PlayerInputFlags::JUMP_RELEASED_RAW.bits() != 0,
         };
         self.outbox.push_back(QueuedPhysicsSample {
+            sampled_at,
             session_generation: self.session_generation,
             snapshot,
             displacement: completed.movement,
@@ -548,48 +571,6 @@ impl MovementTicker {
             })?;
         self.next_admission_id = self.next_admission_id.saturating_sub(1);
         Ok(pending.sample)
-    }
-
-    fn confirm_sent(&mut self, sample: &QueuedPhysicsSample) {
-        if self.sent_history.len() == OUTBOX_CAPACITY {
-            self.sent_history.pop_front();
-        }
-        self.sent_history.push_back(SentPhysicsSample {
-            session_generation: sample.session_generation,
-            tick: sample.snapshot.tick,
-            position: sample.snapshot.position,
-            world_identity: sample.world_identity.clone(),
-        });
-    }
-
-    pub fn acknowledge_physics_send(&mut self, identity: PhysicsSendIdentity) -> bool {
-        if self
-            .pending_sends
-            .front()
-            .is_none_or(|pending| pending.identity != identity)
-        {
-            return false;
-        }
-        if self.tick_evidence.len() == OUTBOX_CAPACITY {
-            self.pending_sends.pop_front();
-            self.fail_physics_authority(&PhysicsAuthorityFault::OutboxOverflow);
-            return false;
-        }
-        let pending = self
-            .pending_sends
-            .pop_front()
-            .expect("matching pending socket acknowledgement was checked");
-        if self.physics_is_authorized()
-            && identity.session_generation.get() == self.session_generation
-            && identity.reanchor_epoch == self.reanchor_epoch
-        {
-            self.confirm_sent(&pending.sample);
-            self.confirm_held_release_facing(identity.tick.get());
-        }
-        self.sent_physics_packet_count = self.sent_physics_packet_count.saturating_add(1);
-        self.tick_evidence.push_back(pending.evidence);
-        self.refresh_outbox_reconciliation();
-        true
     }
 
     pub fn resolve_cancelled_physics_send(

@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
+mod ingress;
+
 use protocol::{BlockUpdateEvent, SyncedBlockUpdateEvent, WorldEvent};
 
 use super::{
@@ -38,7 +40,8 @@ pub enum CommitStep {
 pub enum DecodeCommit {
     /// The completion waits for its ordinary FIFO turn.
     Queued,
-    /// The previously popped block batch must apply before deferred predictions.
+    /// The previously popped block batch must apply before deferred predictions; the caller
+    /// then calls [`OrderedCommitState::announce_applied`].
     BlockUpdates(PreparedWorldEvent),
 }
 
@@ -58,6 +61,10 @@ enum Held {
     Heavy,
     /// Ordered behind earlier terrain without decode admission yet.
     Deferred,
+    /// A retained payload; light packets may already own admission credit.
+    Ingress {
+        light_reserved: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -116,6 +123,9 @@ pub struct OrderedCommitState {
     light: usize,
     heavy: usize,
     deferred: usize,
+    ingress: usize,
+    /// Light slots reserved by payloads still owned by the ingress adapter.
+    ingress_light: usize,
     pending_sub_chunks: Option<PendingSubChunkCommit>,
     /// The block batch awaiting decode, with the last sequence it merged.
     blocking_block_updates: Option<(u64, u64)>,
@@ -125,6 +135,8 @@ pub struct OrderedCommitState {
     earlier: EarlierEvents,
     /// Chunk data a pass without the chunk-data allowance skips, for its lookahead.
     skipped_chunk_data: EarlierEvents,
+    completion_observer: Option<fn(u64)>, // sees each finished sequence; diagnostics only
+    unannounced: Vec<u64>, // released block sequences awaiting their application; while observed
 }
 
 impl OrderedCommitState {
@@ -139,6 +151,8 @@ impl OrderedCommitState {
             light: 0,
             heavy: 0,
             deferred: 0,
+            ingress: 0,
+            ingress_light: 0,
             pending_sub_chunks: None,
             blocking_block_updates: None,
             block_update_range_end: None,
@@ -146,6 +160,22 @@ impl OrderedCommitState {
             last_step_heavy: false,
             earlier: EarlierEvents::default(),
             skipped_chunk_data: EarlierEvents::default(),
+            completion_observer: None,
+            unannounced: Vec::new(),
+        }
+    }
+
+    /// Calls `observer` with each sequence once its whole event has finished, merged block
+    /// ranges and multi-entry sub-chunk batches included.
+    pub fn observe_completions(&mut self, observer: fn(u64)) {
+        self.completion_observer = Some(observer);
+    }
+
+    /// Reports the block range a [`DecodeCommit::BlockUpdates`] released, once its caller has
+    /// applied the decoded mutations.
+    pub fn announce_applied(&mut self) {
+        if let Some(observer) = self.completion_observer {
+            self.unannounced.drain(..).for_each(observer);
         }
     }
 
@@ -154,7 +184,9 @@ impl OrderedCommitState {
     pub fn next_sequence(&self) -> u64 {
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            expected = self.finished_through(expected).saturating_add(1);
+            expected = self
+                .finished_through_before(expected, sequence)
+                .saturating_add(1);
             if sequence != expected || matches!(entry.slot, Slot::Waiting | Slot::Ready(_)) {
                 return expected.min(sequence);
             }
@@ -169,6 +201,17 @@ impl OrderedCommitState {
         match self.finished.range(..=from).next_back() {
             Some((_, &end)) if end >= from => end,
             _ => from.saturating_sub(1),
+        }
+    }
+
+    /// [`Self::finished_through`] where `entry` is the next admitted, unfinished sequence at
+    /// or after `from`. Finished runs never contain an unfinished sequence, so when `from` is
+    /// that entry the run lookup is skipped: contiguous admitted work costs no tree search.
+    fn finished_through_before(&self, from: u64, entry: u64) -> u64 {
+        if from == entry {
+            from.saturating_sub(1)
+        } else {
+            self.finished_through(from)
         }
     }
 
@@ -200,7 +243,7 @@ impl OrderedCommitState {
     fn frontier_where(&self, passes: impl Fn(&Footprint) -> bool) -> u64 {
         let mut committed = self.frontier.saturating_sub(1);
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            committed = self.finished_through(committed.saturating_add(1));
+            committed = self.finished_through_before(committed.saturating_add(1), sequence);
             if sequence != committed.saturating_add(1)
                 || !(self.reads_committed(sequence, entry) || passes(&entry.footprint))
             {
@@ -322,9 +365,10 @@ impl OrderedCommitState {
     /// Every unfinished event holds exactly one bounded admission lane until it finishes.
     fn debug_check_accounting(&self) {
         debug_assert_eq!(self.unfinished, self.entries.len());
+        debug_assert!(self.ingress_light <= self.ingress);
         debug_assert_eq!(
             self.unfinished,
-            self.light + self.heavy + self.deferred,
+            self.light + self.heavy + self.deferred + self.ingress,
             "an unfinished event is uncharged"
         );
     }
@@ -363,6 +407,10 @@ impl OrderedCommitState {
             Held::Light => self.light -= 1,
             Held::Heavy => self.heavy -= 1,
             Held::Deferred => self.deferred -= 1,
+            Held::Ingress { light_reserved } => {
+                self.ingress -= 1;
+                self.ingress_light -= usize::from(light_reserved);
+            }
         }
         self.debug_check_accounting();
     }
@@ -390,7 +438,7 @@ impl OrderedCommitState {
             )
         {
             self.blocking_block_updates = None;
-            self.release_range(sequence, end);
+            self.release_range(sequence, end, false);
             return Ok(DecodeCommit::BlockUpdates(event));
         }
         self.insert_ready(sequence, event)?;
@@ -498,9 +546,9 @@ impl OrderedCommitState {
             .entries
             .next()
             .map_or(PreparedWorldEvent::CommitOnly, |entry| {
-                PreparedWorldEvent::SubChunks {
+                PreparedWorldEvent::SubChunk {
                     dimension: pending.dimension,
-                    entries: vec![entry],
+                    entry,
                     duration: pending.duration,
                 }
             });
@@ -543,7 +591,11 @@ impl OrderedCommitState {
         self.earlier.clear();
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            if sequence != self.finished_through(expected).saturating_add(1) {
+            if sequence
+                != self
+                    .finished_through_before(expected, sequence)
+                    .saturating_add(1)
+            {
                 self.earlier.add_unknown();
             }
             if self.earlier.is_barrier() {
@@ -575,7 +627,11 @@ impl OrderedCommitState {
         let mut first_skipped = None;
         let mut expected = self.frontier;
         for (&sequence, entry) in self.entries.range(self.frontier..) {
-            if sequence != self.finished_through(expected).saturating_add(1) {
+            if sequence
+                != self
+                    .finished_through_before(expected, sequence)
+                    .saturating_add(1)
+            {
                 self.earlier.add_unknown();
             }
             if self.earlier.is_barrier() {
@@ -713,12 +769,13 @@ impl OrderedCommitState {
             self.pending_sub_chunks = None;
         }
         let end = self.block_update_range_end.take().unwrap_or(sequence);
-        self.release_range(sequence, end);
+        self.release_range(sequence, end, true);
         true
     }
 
-    /// Finishes a whole merged event range, then advances the contiguous frontier.
-    fn release_range(&mut self, start: u64, end: u64) {
+    /// Finishes a whole merged event range, then advances the contiguous frontier; `announce`
+    /// reports it to the completion observer now rather than at [`Self::announce_applied`].
+    fn release_range(&mut self, start: u64, end: u64, announce: bool) {
         let mut released = false;
         for sequence in start..=end {
             let Some(entry) = self.entries.remove(&sequence) else {
@@ -726,6 +783,11 @@ impl OrderedCommitState {
             };
             self.unfinished -= 1;
             self.release_held(entry.held);
+            match self.completion_observer {
+                Some(observer) if announce => observer(sequence),
+                Some(_) => self.unannounced.push(sequence),
+                None => {}
+            }
             released = true;
         }
         if !released {
@@ -821,7 +883,20 @@ impl OrderedCommitState {
     /// Light-lane headroom left after retained committed consumers.
     #[must_use]
     pub const fn light_capacity(&self, retained_commits: usize) -> usize {
-        MAX_ADMITTED_WORLD_EVENTS.saturating_sub(self.light.saturating_add(retained_commits))
+        self.light_capacity_with_reservations(retained_commits, self.ingress_light)
+    }
+
+    /// Counts ordinary and reserved light credit against the same consumer bound.
+    const fn light_capacity_with_reservations(
+        &self,
+        retained_commits: usize,
+        reservations: usize,
+    ) -> usize {
+        MAX_ADMITTED_WORLD_EVENTS.saturating_sub(
+            self.light
+                .saturating_add(retained_commits)
+                .saturating_add(reservations),
+        )
     }
 
     /// Heavy decode admission headroom.

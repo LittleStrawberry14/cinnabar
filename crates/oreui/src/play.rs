@@ -98,33 +98,38 @@ fn draw_fitted(
 }
 
 fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<(), PaintError> {
-    // Create buttons, right-aligned, each at most 25.6rem.
+    // Create and import buttons, right-aligned, each at most 25.6rem.
+    let buttons = [
+        (
+            Variant::Primary,
+            "Create new world",
+            LocalWorldAction::BeginCreate,
+        ),
+        (
+            Variant::Secondary,
+            "Create from template",
+            LocalWorldAction::OpenTemplates,
+        ),
+        (Variant::Secondary, "Import world", LocalWorldAction::Import),
+    ];
     let button_height = canvas.r(CREATE_HEIGHT);
     let gap = space(canvas, 2);
-    let button_width = canvas.r(25.6).min((body[2] - body[0] - gap) / 2.0);
-    let second = body[2] - button_width;
-    let first = second - gap - button_width;
-    button(
-        canvas,
-        view,
-        [
-            first,
-            body[1],
-            first + button_width,
-            body[1] + button_height,
-        ],
-        Variant::Primary,
-        "Create new world",
-        Some(MenuAction::LocalWorld(LocalWorldAction::BeginCreate)),
-    )?;
-    button(
-        canvas,
-        view,
-        [second, body[1], body[2], body[1] + button_height],
-        Variant::Secondary,
-        "Create from template",
-        Some(MenuAction::LocalWorld(LocalWorldAction::OpenTemplates)),
-    )?;
+    let count = buttons.len() as f32;
+    let button_width = canvas
+        .r(25.6)
+        .min((body[2] - body[0] - gap * (count - 1.0)) / count);
+    let mut left = body[2] - button_width * count - gap * (count - 1.0);
+    for (variant, label, action) in buttons {
+        button(
+            canvas,
+            view,
+            [left, body[1], left + button_width, body[1] + button_height],
+            variant,
+            label,
+            Some(MenuAction::LocalWorld(action)),
+        )?;
+        left += button_width + gap;
+    }
     let list_top = body[1] + button_height + space(canvas, 1);
     if view.friends.is_empty() && view.local_worlds.is_empty() {
         let card = [body[0], list_top, body[2], list_top + canvas.r(18.0)];
@@ -169,6 +174,7 @@ fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<
             subtitle: format!("{}'s world", friend.gamertag),
             tag: "Friend's world",
             world_type: String::new(),
+            server: String::new(),
             meta: [friend.members.clone(), String::new()],
             action: MenuAction::PlayFriend(index),
             edit: None,
@@ -183,6 +189,7 @@ fn worlds_tab(canvas: &mut Canvas<'_>, view: &MenuView, body: Bounds) -> Result<
                     subtitle: String::new(),
                     tag: game_mode_tag(&world.game_mode),
                     world_type: world.world_type.clone(),
+                    server: world.server.clone(),
                     meta: [world.size.clone(), world.date.clone()],
                     action: MenuAction::PlayLocalWorld(index),
                     edit: Some(MenuAction::LocalWorld(LocalWorldAction::Edit(index))),
@@ -207,6 +214,8 @@ struct WorldEntry {
     tag: &'static str,
     /// A local world's type tag, beside its game mode.
     world_type: String,
+    /// A local world's hosting server tag, after its type.
+    server: String,
     meta: [String; 2],
     action: MenuAction,
     /// The trailing pencil-and-"Edit" action of an owned world.
@@ -268,21 +277,23 @@ fn world_row(
             false,
         )?;
     }
-    let tag_right = tag(
+    let mut tag_right = tag(
         canvas,
         entry.tag,
         [text_left, y + canvas.r(0.4)],
         NEUTRAL80.fill,
         TEXT,
     )?;
-    if !entry.world_type.is_empty() {
-        tag(
-            canvas,
-            &entry.world_type,
-            [tag_right + canvas.r(0.4), y + canvas.r(0.4)],
-            NEUTRAL80.fill,
-            TEXT,
-        )?;
+    for label in [&entry.world_type, &entry.server] {
+        if !label.is_empty() {
+            tag_right = tag(
+                canvas,
+                label,
+                [tag_right + canvas.r(0.4), y + canvas.r(0.4)],
+                NEUTRAL80.fill,
+                TEXT,
+            )?;
+        }
     }
     let meta_right = b[2] - pad - edit_width;
     let mut meta_top = b[1] + pad;

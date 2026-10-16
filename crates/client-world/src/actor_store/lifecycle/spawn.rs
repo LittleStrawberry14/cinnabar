@@ -57,12 +57,12 @@ impl ActorStore {
             &self.custom_actor_facts,
         );
         let fact = self.resolve_entity_fact(&spawn.kind);
-        let mut actor = ActorSnapshot::from_spawn(spawn, sequence, fact);
+        let mut actor = ActorSnapshot::from_spawn(spawn, sequence, fact, &mut self.hitbox_budget);
         actor.interaction_traits = interaction_traits;
         self.bind_actor_seat(&actor);
+        self.effect_members.update(&mut actor);
         self.actors.insert(runtime_id, actor);
         self.queue_rocket_launch_audio(runtime_id);
-        self.effect_members.update(&self.actors[&runtime_id]);
         if self.remote_state_excluded_runtime_id == Some(runtime_id) {
             if self.actors[&runtime_id]
                 .attributes

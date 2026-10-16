@@ -21,6 +21,12 @@ impl WorldStream {
         };
     }
 
+    /// Calls `observer` with each FIFO sequence once its whole event has committed, on the
+    /// committing thread.
+    pub fn observe_commits(&mut self, observer: fn(u64)) {
+        self.order.observe_completions(observer);
+    }
+
     /// Starts the frame's shared ingress, commit and scheduling allocation.
     pub fn begin_frame_work(&mut self) {
         let now = Instant::now();
@@ -244,6 +250,7 @@ fn commit_item_size(step: &CommitStep) -> (&'static str, usize, usize, usize) {
             PreparedWorldEvent::SubChunks { entries, .. } => {
                 ("subchunks", entries.len(), entries.len(), 0)
             }
+            PreparedWorldEvent::SubChunk { .. } => ("subchunks", 1, 1, 0),
             PreparedWorldEvent::BlockUpdates { result, .. }
             | PreparedWorldEvent::SyncedBlockUpdates { result, .. } => (
                 "prepared_block_updates",
@@ -251,7 +258,11 @@ fn commit_item_size(step: &CommitStep) -> (&'static str, usize, usize, usize) {
                 result.as_ref().map_or(0, |batch| batch.mutations.len()),
                 0,
             ),
-            _ => ("control", 0, 0, 0),
+            // Exhaustive so a new event kind must choose its Tracy attribution.
+            PreparedWorldEvent::BlockEntityUpdate { .. }
+            | PreparedWorldEvent::Immediate(_)
+            | PreparedWorldEvent::CommitOnly
+            | PreparedWorldEvent::NormalizationFailure => ("control", 0, 0, 0),
         },
         CommitStep::BlockUpdates { events, .. } => ("block_updates", 0, 0, events.len()),
         CommitStep::SyncedBlockUpdates { packets, .. } => (

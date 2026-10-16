@@ -484,6 +484,24 @@ pub struct BlobCacheResolver {
     fast_transfer_reset_armed: bool,
     next_ready_sequence: u64,
     stats: BlobCacheStats,
+    /// Sum of every `pending_by_hash` set's capacity, updated at each index mutation so
+    /// accounting refreshes do not walk the index.
+    pending_hash_set_capacity: usize,
+    /// Sum of `accounted_bytes` across `pending`, updated with every insert, removal and charge.
+    pending_accounted_bytes: usize,
+    /// Sum of `accounted_bytes` across `ready`, updated with every insert and removal.
+    ready_accounted_bytes: usize,
+    /// Sum of `columns.len()` across `pending` and `ready`, the recovery slots they reserve.
+    retained_column_slots: usize,
+    trace_origins: Option<TraceOrigins>, // kept only while the latency trace runs
+}
+
+/// The core frame and slot that produced each retained item, for the latency trace.
+#[derive(Debug, Default)]
+struct TraceOrigins {
+    current: (u64, u32),
+    by_sequence: HashMap<u64, (u64, u32)>,
+    popped: (u64, u32),
 }
 
 fn ready_value_accounted_bytes(value: &ResolverReady) -> Result<usize, BlobCacheError> {

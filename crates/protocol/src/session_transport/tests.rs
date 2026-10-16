@@ -29,6 +29,15 @@ pub(crate) mod unix {
     }
 
     pub(crate) async fn pair(name: &str, startup: &[Bytes]) -> Pair {
+        tapped_pair(name, startup, None).await
+    }
+
+    /// [`pair`] whose transport reports to `tap`.
+    pub(crate) async fn tapped_pair(
+        name: &str,
+        startup: &[Bytes],
+        tap: Option<Arc<dyn PacketTap>>,
+    ) -> Pair {
         let dir =
             std::env::temp_dir().join(format!("cinnabar-session-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -37,7 +46,7 @@ pub(crate) mod unix {
         let (reader, frames) = bridge::connect_session(&dir).await.unwrap();
         let (peer, _) = listener.accept().await.unwrap();
         Pair {
-            transport: SessionTransport::new(reader, frames, startup),
+            transport: SessionTransport::new(reader, frames, startup).with_tap(tap),
             peer,
             dir,
         }
@@ -212,6 +221,174 @@ pub(crate) mod unix {
         assert_eq!(transport.ahead_bytes, 0);
     }
 
+    /// Each delivered packet names the core batch frame and slot it came from, counting the
+    /// startup packets as frame 0, so trace joins line up with the core's frame numbers.
+    #[tokio::test]
+    async fn delivered_packets_name_their_frame_and_index() {
+        let time = |time| {
+            Packet::new(SetTime {
+                time: wire::ZigZag32(time),
+            })
+        };
+        let Pair {
+            transport, peer, ..
+        } = &mut pair("trace-position", &[packet_bytes(&time(0))]).await;
+        write_frame(peer, &batch_frame(&[time(1), time(2)]).unwrap()).await;
+        write_frame(peer, &batch_frame(&[time(3)]).unwrap()).await;
+
+        let mut positions = Vec::new();
+        for _ in 0..4 {
+            let Inbound::Packet(_) = transport.recv().await.unwrap() else {
+                panic!("only packets were written")
+            };
+            let (_, frame, index) = transport.trace_position();
+            positions.push((frame, index));
+        }
+        assert_eq!(positions, [(0, 0), (1, 0), (1, 1), (2, 0)]);
+    }
+
+    /// Packets deferred and prepended at startup keep the frame and slot they arrived in.
+    #[tokio::test]
+    async fn prepended_packets_keep_their_trace_position() {
+        let time = |time| {
+            Packet::new(SetTime {
+                time: wire::ZigZag32(time),
+            })
+        };
+        let Pair {
+            transport, peer, ..
+        } = &mut pair("trace-prepend", &[]).await;
+        write_frame(peer, &batch_frame(&[time(1), time(2)]).unwrap()).await;
+        write_frame(peer, &batch_frame(&[time(3)]).unwrap()).await;
+
+        let mut deferred = Vec::new();
+        for _ in 0..2 {
+            let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
+                panic!("only packets were written")
+            };
+            deferred.push(raw);
+        }
+        let Inbound::Packet(_) = transport.recv().await.unwrap() else {
+            panic!("only packets were written")
+        };
+        assert_eq!(transport.trace_position().1, 2);
+        transport.prepend(deferred);
+        let mut positions = Vec::new();
+        for _ in 0..2 {
+            transport.recv().await.unwrap();
+            let (_, frame, index) = transport.trace_position();
+            positions.push((frame, index));
+        }
+        assert_eq!(positions, [(1, 0), (1, 1)]);
+    }
+
+    /// A single step cannot consume siblings, and another wait shares the current byte charge.
+    #[tokio::test]
+    async fn read_ahead_steps_stage_one_frame_and_share_the_existing_cap() {
+        let Pair {
+            transport, peer, ..
+        } = &mut pair("read-ahead-step", &[]).await;
+        let first = batch_frame(&[Packet::new(SetTime {
+            time: wire::ZigZag32(1),
+        })])
+        .unwrap();
+        let second = batch_frame(&[Packet::new(SetTime {
+            time: wire::ZigZag32(2),
+        })])
+        .unwrap();
+        write_frame(peer, &first).await;
+        write_frame(peer, &second).await;
+        assert!(poll_fn(|cx| transport.poll_read_ahead_one(usize::MAX, cx)).await);
+        assert_eq!(transport.ahead.len(), 1);
+        assert_eq!(transport.ahead_bytes, first.len());
+        assert!(!poll_fn(|cx| transport.poll_read_ahead_one(first.len(), cx)).await);
+        assert_eq!(
+            transport.ahead.len(),
+            1,
+            "a fresh wait cannot reset the shared charge"
+        );
+        assert!(!poll_fn(|cx| transport.poll_read_ahead_one(first.len() + 1, cx)).await);
+        assert_eq!(transport.ahead.len(), 2);
+        assert_eq!(
+            transport.ahead_bytes,
+            first.len() + second.len(),
+            "whole-frame overshoot stays charged"
+        );
+        for expected in [1, 2] {
+            let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
+                panic!("packet")
+            };
+            let packets::Packet::SetTime(time) = *raw.decode().unwrap().data else {
+                panic!("time")
+            };
+            assert_eq!(time.time.0, expected);
+        }
+        assert_eq!(transport.ahead_bytes, 0);
+    }
+
+    /// Cancelling an incomplete frame keeps prior frames and the terminal in their original order.
+    #[tokio::test]
+    async fn cancelled_partial_read_ahead_preserves_frames_and_the_terminal() {
+        let Pair {
+            transport, peer, ..
+        } = &mut pair("read-ahead-partial", &[]).await;
+        let first = batch_frame(&[Packet::new(SetTime {
+            time: wire::ZigZag32(1),
+        })])
+        .unwrap();
+        let second = batch_frame(&[Packet::new(SetTime {
+            time: wire::ZigZag32(2),
+        })])
+        .unwrap();
+        write_frame(peer, &first).await;
+        assert!(poll_fn(|cx| transport.poll_read_ahead_one(usize::MAX, cx)).await);
+        peer.write_u32(second.len() as u32).await.unwrap();
+        let split = second.len() / 2;
+        peer.write_all(&second[..split]).await.unwrap();
+        {
+            let mut read = std::pin::pin!(transport.read_ahead(usize::MAX));
+            let waker = noop_waker();
+            assert!(
+                read.as_mut()
+                    .poll(&mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+        }
+        assert_eq!(transport.ahead.len(), 1);
+        assert_eq!(transport.ahead_bytes, first.len());
+        peer.write_all(&second[split..]).await.unwrap();
+        let mut terminal = vec![bridge::contract::KIND_DISCONNECT];
+        terminal.extend_from_slice(
+            br#"{"reason":0,"message":"fixture","filtered_message":"","hide_screen":false}"#,
+        );
+        write_frame(peer, &terminal).await;
+        write_frame(peer, &first).await;
+        transport.read_ahead(usize::MAX).await;
+        assert_eq!(
+            transport.ahead.len(),
+            3,
+            "no frame after the terminal is staged"
+        );
+        for expected in [1, 2] {
+            let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
+                panic!("packet")
+            };
+            let packets::Packet::SetTime(time) = *raw.decode().unwrap().data else {
+                panic!("time")
+            };
+            assert_eq!(time.time.0, expected);
+        }
+        assert!(matches!(
+            transport.recv().await.unwrap(),
+            Inbound::Terminal(Terminal::Disconnect(_))
+        ));
+        assert_eq!(transport.ahead_bytes, 0);
+        assert!(matches!(
+            transport.recv().await,
+            Err(SessionError(SessionFailure::ConnectionClosed))
+        ));
+    }
+
     /// A setup message after the handoff is a malformed session, not a packet.
     #[tokio::test]
     async fn setup_messages_after_the_handoff_are_rejected() {
@@ -225,6 +402,157 @@ pub(crate) mod unix {
                 BridgeError::InvalidSessionMessage { .. }
             )))
         ));
+    }
+
+    /// The tap sees each packet once, in order, in both directions; an outcome names only the
+    /// packet the session is processing, and a prepended packet is not recorded again.
+    #[tokio::test]
+    async fn the_tap_records_each_packet_once_and_outcomes_name_the_current_packet() {
+        let time = |time| {
+            Packet::new(SetTime {
+                time: wire::ZigZag32(time),
+            })
+        };
+        let body = |packet: &Packet| packet_bytes(packet).slice(1..).to_vec();
+        let tap = Arc::new(RecordingTap::default());
+        let Pair {
+            transport, peer, ..
+        } = &mut tapped_pair("tap", &[packet_bytes(&time(1))], Some(tap.clone())).await;
+        write_frame(peer, &batch_frame(&[time(2), time(3)]).unwrap()).await;
+
+        next(transport).await;
+        transport.reject_current(PacketOutcome::Skipped);
+        transport.reject_current(PacketOutcome::Failed);
+        let second = next(transport).await;
+        next(transport).await;
+        transport.reject_current(PacketOutcome::Accepted);
+        transport.prepend(vec![second.into_compact()]);
+        next(transport).await;
+        transport.reject_current(PacketOutcome::Failed);
+        transport.send(&[time(4)]).await.unwrap();
+
+        let set_time = PacketId::SetTime as u32;
+        assert_eq!(
+            tap.events(),
+            [
+                TapEvent::Record(PacketDirection::Clientbound, set_time, body(&time(1))),
+                TapEvent::Reject(0, set_time, PacketOutcome::Skipped, body(&time(1))),
+                TapEvent::Record(PacketDirection::Clientbound, set_time, body(&time(2))),
+                TapEvent::Record(PacketDirection::Clientbound, set_time, body(&time(3))),
+                TapEvent::Reject(3, set_time, PacketOutcome::Accepted, body(&time(3))),
+                TapEvent::Reject(2, set_time, PacketOutcome::Failed, body(&time(2))),
+                TapEvent::Record(PacketDirection::Serverbound, set_time, body(&time(4))),
+            ]
+        );
+    }
+
+    /// A detached in-flight packet must not keep unrelated batch siblings through its observer.
+    #[tokio::test]
+    async fn detaching_the_current_packet_releases_its_old_batch_before_settlement() {
+        let time = |value| {
+            Packet::new(SetTime {
+                time: wire::ZigZag32(value),
+            })
+        };
+        let tap = Arc::new(RecordingTap::default());
+        let Pair { transport, .. } = &mut tapped_pair(
+            "compact-current",
+            &[packet_bytes(&time(1)), packet_bytes(&time(2))],
+            Some(tap.clone()),
+        )
+        .await;
+        drop(next(transport).await);
+        let raw = next(transport).await;
+        let backing = raw.body().clone();
+        let raw = raw.into_retention_bounded();
+        transport.compact_current(&raw);
+        assert!(backing.is_unique(), "the observer kept the unrelated batch");
+        let expected = raw.body().to_vec();
+        drop(raw);
+        transport.reject_current(PacketOutcome::Failed);
+        assert!(matches!(tap.events().last(), Some(TapEvent::Reject(
+            _, _, PacketOutcome::Failed, body,
+        )) if body == &expected));
+    }
+
+    async fn next(transport: &mut SessionTransport) -> RawPacket {
+        match transport.recv().await.unwrap() {
+            Inbound::Packet(raw) => raw,
+            Inbound::Terminal(_) => panic!("a packet arrives before any terminal message"),
+        }
+    }
+
+    /// A batch that cannot be split reaches the tap as one failed batch, not as packets.
+    #[tokio::test]
+    async fn an_unsplittable_batch_is_reported_once() {
+        let tap = Arc::new(RecordingTap::default());
+        let Pair {
+            transport, peer, ..
+        } = &mut tapped_pair("tap-batch", &[], Some(tap.clone())).await;
+        // The entry declares five bytes but carries one.
+        write_frame(peer, &[bridge::contract::KIND_BATCH, 5, 1]).await;
+        assert!(transport.recv().await.is_err());
+        assert_eq!(tap.events(), [TapEvent::RejectBatch(2)]);
+    }
+}
+
+/// What a [`RecordingTap`] saw; a record's handle is its index in the event list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TapEvent {
+    Record(PacketDirection, u32, Vec<u8>),
+    Reject(u64, u32, PacketOutcome, Vec<u8>),
+    RejectBatch(usize),
+}
+
+/// Keeps every tap call for inspection.
+#[derive(Default)]
+pub(crate) struct RecordingTap(Mutex<Vec<TapEvent>>);
+
+impl RecordingTap {
+    pub(crate) fn events(&self) -> Vec<TapEvent> {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<TapEvent>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl PacketTap for RecordingTap {
+    fn record(
+        &self,
+        direction: PacketDirection,
+        packet_id: u32,
+        body: PacketBody<'_>,
+    ) -> PacketRecordId {
+        let mut events = self.lock();
+        events.push(TapEvent::Record(
+            direction,
+            packet_id,
+            body.as_slice().to_vec(),
+        ));
+        PacketRecordId(events.len() as u64 - 1)
+    }
+
+    fn reject(
+        &self,
+        record: PacketRecordId,
+        packet_id: u32,
+        outcome: PacketOutcome,
+        body: PacketBody<'_>,
+    ) {
+        self.lock().push(TapEvent::Reject(
+            record.0,
+            packet_id,
+            outcome,
+            body.as_slice().to_vec(),
+        ));
+    }
+
+    fn reject_batch(&self, len: usize) {
+        self.lock().push(TapEvent::RejectBatch(len));
     }
 }
 

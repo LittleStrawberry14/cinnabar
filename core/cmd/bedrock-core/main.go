@@ -17,10 +17,13 @@ import (
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
 	"github.com/hashimthearab/rust-mcbe/core/authflow"
 	"github.com/hashimthearab/rust-mcbe/core/catalog"
+	"github.com/hashimthearab/rust-mcbe/core/cinnabarapi"
 	"github.com/hashimthearab/rust-mcbe/core/control"
 	"github.com/hashimthearab/rust-mcbe/core/internal/corelog"
+	"github.com/hashimthearab/rust-mcbe/core/internal/latencytrace"
 	"github.com/hashimthearab/rust-mcbe/core/internal/lifeline"
 	"github.com/hashimthearab/rust-mcbe/core/internal/locale"
+	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/launcher"
 	"github.com/hashimthearab/rust-mcbe/core/localworld"
 	"github.com/hashimthearab/rust-mcbe/core/packcache"
@@ -59,6 +62,7 @@ func main() {
 		Grace:      shutdownGrace,
 	})
 	exitCode := execute(ctx, args, os.Stdout, os.Stderr, authcache.Source, proxy.Serve)
+	latencytrace.Finish()
 	stop()
 	if exitCode != 0 {
 		os.Exit(exitCode)
@@ -99,6 +103,7 @@ type options struct {
 	resourcePackCacheQuota    uint64
 	resourcePackCacheQuotaSet bool
 	controlStatus             bool
+	cinnabarAPI               bool
 	xboxPresence              bool
 	upstreamClientCache       bool
 	serverTrustFile           string
@@ -136,6 +141,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	flags.Uint64Var(&opts.resourcePackCacheQuota, "resource-pack-cache-quota-bytes", packcache.DefaultQuota, "maximum resource-pack cache bytes (requires -resource-pack-cache-dir)")
 	flags.BoolVar(&opts.controlStatus, "control-status", false, "enable the local read-only Status v1 control endpoint")
 	flags.BoolVar(&opts.xboxPresence, "xbox-presence", false, "own Xbox title presence for the account (requires -control-status)")
+	flags.BoolVar(&opts.cinnabarAPI, "cinnabar-api", false, "connect the account to the Cinnabar API once the control client configures it (requires -control-status)")
 	flags.StringVar(&opts.serverTrustFile, "server-trust-file", "", "ask the control client before joining an unknown http NetherNet server, remembering trusted ones in this file (requires -control-status)")
 	flags.BoolVar(&opts.upstreamClientCache, "upstream-client-cache", false, "advertise client-cache capability upstream; enable only when the connecting client owns a verified blob cache")
 	corelog.LevelFlag(flags, &opts.logLevel)
@@ -145,6 +151,9 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	}
 	if opts.xboxPresence && !opts.controlStatus {
 		return options{}, errors.New("xbox-presence requires -control-status")
+	}
+	if opts.cinnabarAPI && !opts.controlStatus {
+		return options{}, errors.New("cinnabar-api requires -control-status")
 	}
 	if opts.serverTrustFile != "" && !opts.controlStatus {
 		return options{}, errors.New("server-trust-file requires -control-status")
@@ -227,7 +236,7 @@ func runWithResourcePackCacheFactory(
 	installDiagnostics(opts, logger)
 	defer func() {
 		if err != nil {
-			logger.Error("core failed", "error", err)
+			logger.Error("core failed", "error", redact.Error(err))
 		}
 	}()
 	if err != nil {
@@ -248,7 +257,7 @@ func runWithResourcePackCacheFactory(
 			},
 		})
 	}
-	logger.Info("core starting", "endpoint", opts.socketDir, "upstream", opts.upstream)
+	logger.Info("core starting", "endpoint", opts.socketDir, "upstream", redact.Private(opts.upstream))
 	if opts.catalogFile == "" {
 		defer startVerifierPreload(ctx, logger)()
 	}
@@ -370,7 +379,7 @@ func runWithResourcePackCacheFactory(
 			statusStore.ClearTransfer()
 		}}
 		if account != nil {
-			hosting := &friendHosting{account: account, worlds: localWorlds, target: localTarget, log: logger}
+			hosting := &friendHosting{account: account, worlds: localWorlds, log: logger}
 			hostingCtx, stopHosting := context.WithCancel(ctx)
 			hostingDone := make(chan struct{})
 			go func() {
@@ -397,6 +406,13 @@ func runWithResourcePackCacheFactory(
 			presence := service.StartPresence(ctx)
 			defer presence.Close()
 			controlServer.SetPresence(presence.Set)
+		}
+		if opts.cinnabarAPI {
+			api := service.StartCinnabarAPI(ctx, func(release cinnabarapi.Release) {
+				statusStore.ObserveCinnabarRelease(release)
+			})
+			defer api.Close()
+			controlServer.SetCinnabarAPI(api)
 		}
 		controlServer.SetLogger(logger)
 		controlServer.SetServices(launcherControl{service})

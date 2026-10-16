@@ -6,7 +6,7 @@ use json_ui::{Draw, DrawNode, FormRender, HitRegion, LayoutEnv};
 use ui::FONT_DESIGN_PIXEL_TEXELS;
 
 use super::{
-    Art, Canvas, FormEngine, ScreenArt, banner_renderer, host_edit,
+    Art, Canvas, FormEngine, ScreenArt, dependencies, host_edit,
     screen::{PaintError, PaintFrame},
     text_paint::{Measure, label_metrics, label_positioned},
     tooltip,
@@ -65,40 +65,13 @@ fn prepare_with<R: Borrow<FormRender>>(
     };
     let render = render?;
     let laid_render = render.borrow();
+    let base = textures
+        .dependencies
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(&laid_render.nodes, art);
     let mut atlas = textures.set.lock();
-    let laid = || {
-        laid_render
-            .nodes
-            .iter()
-            .chain(art.overlay)
-            .filter(|node| !art.omits(node))
-    };
-    let drawn_renderer = |name: &str| {
-        laid().any(|node| matches!(&node.draw, Draw::Custom { renderer, .. } if renderer == name))
-    };
-    // Only what this screen draws needs to be resident.
-    // Many nodes share a texture; each path resolves once.
-    let mut paths: std::collections::HashSet<&str> = laid()
-        .filter_map(|node| match &node.draw {
-            Draw::Sprite { texture, .. } => Some(texture.as_str()),
-            Draw::Custom { renderer, .. } if renderer == tooltip::RENDERER => {
-                Some(tooltip::BACKGROUND_TEXTURE)
-            }
-            _ => None,
-        })
-        .collect();
-    for renderer in frame.renderers.iter() {
-        renderer.textures(&drawn_renderer, &mut |path| {
-            paths.insert(path);
-        });
-    }
-    for node in laid() {
-        if let Draw::Custom { renderer, data } = &node.draw
-            && renderer == banner_renderer::RENDERER
-        {
-            paths.extend(banner_renderer::texture_paths(data));
-        }
-    }
+    let paths = dependencies::paths(&base, art, frame.renderers);
     let drawn = Textures {
         assets: textures.assets,
         set: textures.set,
@@ -106,7 +79,8 @@ fn prepare_with<R: Borrow<FormRender>>(
         images: art.images,
     }
     .atlas_keys(paths.into_iter());
-    atlas.require(drawn.iter().map(String::as_str));
+    atlas.require(drawn.iter().map(std::ops::Deref::deref));
+    drop(base);
     Some(render)
 }
 
@@ -144,6 +118,9 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
         nodes: &mut *frame.nodes,
         next: &mut *frame.next,
         clip: None,
+        length_scale: 1.0,
+        residual: None,
+        filter: None,
         animator: textures
             .animator
             .lock()
@@ -155,6 +132,7 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
     let overlay_start = render.nodes.len();
     for (index, node) in render.nodes.iter().chain(art.overlay).enumerate() {
         if !art.omits(node) && view.is_none_or(|view| node.shown(view)) {
+            canvas.enter_filter(node)?;
             let start = canvas.nodes.len();
             canvas.paint(node, renderers)?;
             let lifted = index >= overlay_start
@@ -167,6 +145,7 @@ pub(super) fn render_with<R: Borrow<FormRender>>(
             }
         }
     }
+    canvas.close_filter()?;
     let origin = [frame.safe_area.left(), frame.safe_area.top()];
     Ok(Some(EngineFrame {
         hits: render.hits.clone(),

@@ -111,6 +111,7 @@ pub(crate) fn receive_network_events(
             controls::Retirement {
                 player_runtime: &mut player_runtime,
                 client_world: &mut state.client_world,
+                fatal_error: &mut state.fatal_error.0,
                 ui_runtime: &mut state.ui_runtime,
                 resource_pack_admission: &mut resource_pack_admission,
                 pack_reload: pack_reload.as_deref_mut(),
@@ -126,6 +127,7 @@ pub(crate) fn receive_network_events(
     world_ingress::drain(
         &mut network,
         &mut state.client_world,
+        &mut state.fatal_error.0,
         &mut player_runtime,
         &mut state.ui_runtime,
         #[cfg(feature = "acceptance")]
@@ -173,6 +175,7 @@ pub(crate) mod block_entity_art;
 pub(crate) mod reload_environment;
 pub(crate) mod resource_packs;
 pub(crate) mod session;
+pub(crate) mod session_registries;
 pub(crate) use actor_publication::{
     advance_actor_frame, advance_actor_motion, initialize_actor_geometry_budget,
     prepare_actor_render_frame, publish_entity_shadows, publish_local_actor_damage,

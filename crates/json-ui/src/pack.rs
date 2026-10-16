@@ -4,8 +4,9 @@
 //! it names replaces the old value, a `controls` array replaces the children, and
 //! `modifications` edits arrays in place (insert/remove/replace/move/swap by
 //! control name for `controls`, by a `where` field match for other arrays). A
-//! control the base lacks is simply added. Overlay `_global_variables.json`
-//! values override the base's.
+//! control the base lacks is simply added. A different explicit `@base` starts a
+//! new definition, without the previous definition's properties or children.
+//! Overlay `_global_variables.json` values override the base's.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,8 +16,13 @@ use serde_json::{Map, Value};
 use crate::catalog::{Catalog, LoadError, RawControl, child_controls, parse_ui_defs, split_key};
 use crate::json5;
 
-const GLOBALS: &str = "ui/_global_variables.json";
-const UI_DEFS: &str = "ui/_ui_defs.json";
+/// The pack-relative global variable document.
+pub const GLOBAL_VARIABLES_PATH: &str = "ui/_global_variables.json";
+/// The pack-relative definition index.
+pub const UI_DEFS_PATH: &str = "ui/_ui_defs.json";
+
+use GLOBAL_VARIABLES_PATH as GLOBALS;
+use UI_DEFS_PATH as UI_DEFS;
 
 impl Catalog {
     /// Pack-relative definition paths named by a comment-tolerant `ui/_ui_defs.json` index.
@@ -30,6 +36,15 @@ impl Catalog {
     pub fn from_files<'a>(
         files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
     ) -> Result<Self, LoadError> {
+        Self::from_files_with_paths(files, std::iter::empty())
+    }
+
+    /// Load a base catalog with additional paths declared by other layers' indexes.
+    /// Those paths may select files here without repeating them in this layer's index.
+    pub fn from_files_with_paths<'a>(
+        files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+        paths: impl IntoIterator<Item = String>,
+    ) -> Result<Self, LoadError> {
         let files: BTreeMap<&str, &[u8]> = files.into_iter().collect();
         let text = |path: &str| -> Result<String, LoadError> {
             let bytes = files.get(path).ok_or_else(|| LoadError::Shape {
@@ -39,8 +54,19 @@ impl Catalog {
         };
         let mut catalog = Catalog::default();
         catalog.load_globals_text(Path::new(GLOBALS), &text(GLOBALS)?)?;
-        let entries = parse_ui_defs(Path::new(UI_DEFS), &text(UI_DEFS)?)?;
-        catalog.list(entries.iter().cloned());
+        let mut entries: std::collections::BTreeSet<_> =
+            parse_ui_defs(Path::new(UI_DEFS), &text(UI_DEFS)?)?
+                .into_iter()
+                .collect();
+        let paths: Vec<_> = paths.into_iter().collect();
+        entries.extend(
+            paths
+                .iter()
+                .filter(|path| files.contains_key(path.as_str()))
+                .cloned(),
+        );
+        catalog.include_paths(paths);
+        catalog.include_paths(entries.iter().cloned());
         for entry in entries {
             match files.get(entry.as_str()) {
                 Some(bytes) => catalog.load_text(&entry, &pack_json::decode_text(bytes)),
@@ -63,7 +89,7 @@ impl Catalog {
         }
         if let Some(bytes) = files.get(UI_DEFS) {
             match Self::declared_paths(bytes) {
-                Ok(entries) => self.list(entries),
+                Ok(entries) => self.include_paths(entries),
                 Err(error) => self.note(format!("pack {UI_DEFS}: {error}")),
             }
         }
@@ -199,6 +225,7 @@ fn descendant<'a>(control: &'a mut RawControl, path: &str) -> Option<&'a mut Raw
     })
 }
 
+/// Merge a valid overlay body, discarding the old definition when its template changes.
 fn merge_into(
     existing: &mut RawControl,
     base: Option<String>,
@@ -213,8 +240,13 @@ fn merge_into(
             return;
         }
     };
-    if base.is_some() {
-        existing.base = base;
+    if let Some(base) = base {
+        if existing.base.as_ref() != Some(&base) {
+            existing.props.clear();
+            existing.children.clear();
+            existing.has_controls = false;
+        }
+        existing.base = Some(base);
     }
     for (property, value) in body {
         match property.as_str() {

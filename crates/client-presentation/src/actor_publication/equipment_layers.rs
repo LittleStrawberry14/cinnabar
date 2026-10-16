@@ -35,10 +35,13 @@ pub(super) fn attach(
                     .is_some_and(|actor| actor.is_using_item());
                 input.java = Some(crate::presentation::equipment::JavaGrip { blocking: using });
             }
-            let animation = stream
-                .authority()
-                .actor(runtime_id)
-                .zip(stream.authority().actor_rig(runtime_id));
+            let animation = stream.authority().actor(runtime_id).zip(
+                stream.authority().actor_rig(runtime_id).map(|rig| {
+                    poses
+                        .emote(runtime_id)
+                        .map_or(rig, |pose| pose.snapshot(rig))
+                }),
+            );
             let mut styled_body = body.clone();
             if let Some(style) = runtime_skin.and_then(|runtime_skin| style_of(body, runtime_skin))
             {

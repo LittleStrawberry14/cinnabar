@@ -80,13 +80,12 @@ fn partial_subchunk_batch_retains_its_frontier_and_admission() {
     for y in 0..2 {
         let Some(CommitStep::Apply {
             sequence: 7,
-            event: PreparedWorldEvent::SubChunks { entries, .. },
+            event: PreparedWorldEvent::SubChunk { entry, .. },
         }) = state.next_commit()
         else {
             panic!("one original batch entry must apply next");
         };
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].position[1], y);
+        assert_eq!(entry.position[1], y);
         assert_eq!(state.committed_sequence(), 7);
         assert_eq!(state.pending_batch_sequence(), Some(7));
         assert!(state.is_heavy_admitted(7));
@@ -320,4 +319,92 @@ fn worker_decode_preserves_air_unavailable_and_sequence_without_assets() {
         entries[1].result,
         PreparedSubChunkResult::Unavailable(SubChunkUnavailable::YIndexOutOfBounds)
     ));
+}
+
+thread_local! {
+    static COMPLETED: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Records completions on the calling test's thread.
+fn record_completion(sequence: u64) {
+    COMPLETED.with(|completed| completed.borrow_mut().push(sequence));
+}
+
+fn completed() -> Vec<u64> {
+    COMPLETED.with(|completed| completed.borrow().clone())
+}
+
+/// A multi-entry sub-chunk batch completes once, after its last entry.
+#[test]
+fn completion_observer_waits_for_the_whole_sub_chunk_batch() {
+    let mut state = OrderedCommitState::new(7);
+    state.observe_completions(record_completion);
+    queue(
+        &mut state,
+        7,
+        PreparedWorldEvent::SubChunks {
+            dimension: 0,
+            entries: vec![air_slot(0), air_slot(1)],
+            duration: Duration::ZERO,
+        },
+        true,
+    );
+    assert!(matches!(
+        state.next_commit(),
+        Some(CommitStep::BatchStarted)
+    ));
+    for _ in 0..2 {
+        assert!(matches!(
+            state.next_commit(),
+            Some(CommitStep::Apply { sequence: 7, .. })
+        ));
+        state.finish_commit(7);
+        if completed().is_empty() {
+            assert_eq!(state.pending_batch_sequence(), Some(7));
+        }
+    }
+    assert_eq!(completed(), [7]);
+}
+
+/// A worker-decoded block batch completes once its caller applied the decode, not at its commit
+/// step or the decode's arrival.
+#[test]
+fn completion_observer_sees_async_block_batches_once_applied() {
+    let mut state = OrderedCommitState::new(1);
+    state.observe_completions(record_completion);
+    queue(
+        &mut state,
+        1,
+        PreparedWorldEvent::Immediate(WorldEvent::BlockUpdates(vec![BlockUpdateEvent {
+            dimension: 0,
+            position: [0, 0, 0],
+            layer: 0,
+            network_id: 1,
+        }])),
+        true,
+    );
+    assert!(matches!(
+        state.next_commit(),
+        Some(CommitStep::BlockUpdates { sequence: 1, .. })
+    ));
+    state.defer_block_updates(1);
+    state.finish_commit(1);
+    assert!(completed().is_empty());
+    state
+        .complete_decode(
+            1,
+            PreparedWorldEvent::BlockUpdates {
+                result: Ok(PreparedBlockMutations {
+                    mutations: Vec::new(),
+                    relight: Default::default(),
+                    crack_intermediates: Vec::new(),
+                }),
+                duration: Duration::ZERO,
+            },
+        )
+        .unwrap();
+    assert!(completed().is_empty());
+    state.announce_applied();
+    state.announce_applied();
+    assert_eq!(completed(), [1]);
 }

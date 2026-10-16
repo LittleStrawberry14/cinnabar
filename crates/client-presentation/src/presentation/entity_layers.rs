@@ -1,6 +1,8 @@
 //! Render-controller layers of entity bodies: the first replaces the body's default texture
 //! (and model, when its controller picks another), later layers draw after it.
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
+
+use bevy::platform::collections::HashMap;
 
 #[cfg(any(test, feature = "test-support"))]
 use actor_animation::ActorRigSnapshot;
@@ -184,6 +186,7 @@ fn resolve_layer(
             glint: Default::default(),
             kind: layer.material,
             state: layer.material_state,
+            suppress_overlay: false,
             dissolve_multiplier: layer.overlay[3],
             light_color_multiplier: layer.light_color_multiplier,
         },
@@ -263,10 +266,7 @@ fn layer_light(inherited: u32, layer: &ResolvedLayer) -> u32 {
 
 /// Applies the controller's overlay precedence independently of its model and visibility.
 fn layer_overlay(inherited: u32, layer: &ResolvedLayer) -> u32 {
-    if matches!(
-        layer.material.kind,
-        assets::EntityRenderMaterial::DissolveDepth | assets::EntityRenderMaterial::DissolveColor
-    ) {
+    if !layer.material.allows_overlay() {
         0
     } else {
         layer.overlay.unwrap_or(inherited)

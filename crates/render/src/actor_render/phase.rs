@@ -14,7 +14,7 @@ type ActorQueueView = (
 #[derive(SystemParam)]
 pub(super) struct QueueActorParams<'w, 's> {
     pipeline: Res<'w, ActorPipeline>,
-    gpu: Res<'w, ActorGpu>,
+    gpu: ResMut<'w, ActorGpu>,
     phases: ResMut<'w, ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<'w, DrawFunctions<Opaque3d>>,
     transparent_phases: ResMut<'w, ViewSortedRenderPhases<Transparent3d>>,
@@ -30,6 +30,7 @@ pub(super) fn queue_actors(
     mut next_draw_generation: Local<u64>,
 ) {
     params.draw_tracker.clear();
+    params.gpu.queued_draw = None;
     params
         .gpu
         .executed_instances
@@ -139,7 +140,7 @@ pub(super) fn queue_actors(
             return;
         };
         *next_draw_generation = draw_generation;
-        let _ = params.draw_tracker.begin(
+        params.gpu.queued_draw = params.draw_tracker.begin(
             ActorDrawFrame {
                 artwork_identity: params.gpu.artwork_identity,
                 skin_revision: params.gpu.skin_revision,
@@ -184,6 +185,21 @@ pub(super) fn sorted(material: u32) -> bool {
         || material & crate::actor::material::LATE_DISSOLVE_COLOR != 0
 }
 
+impl ActorGpu {
+    /// Captures a queued receipt identity only while every prepared revision and manifest match.
+    /// A mismatch disables acknowledgement; commands must still encode their ordinary draws.
+    pub(super) fn draw_batch(&self, view: u64) -> Option<ActorDrawBatch> {
+        let batch = self.queued_draw.as_ref()?;
+        let draw = batch.frame(view)?;
+        (draw.artwork_identity == self.artwork_identity
+            && draw.skin_revision == self.skin_revision
+            && draw.geometry_revision == self.geometry_revision
+            && draw.frame_generation == self.frame_generation
+            && std::sync::Arc::ptr_eq(&draw.manifest, &self.manifest))
+        .then(|| batch.clone())
+    }
+}
+
 pub(crate) struct DrawActors<const SORTED: bool>;
 
 impl<P: PhaseItem, const SORTED: bool> RenderCommand<P> for DrawActors<SORTED> {
@@ -213,6 +229,9 @@ impl<P: PhaseItem, const SORTED: bool> RenderCommand<P> for DrawActors<SORTED> {
     ) -> RenderCommandResult {
         let (gpu, tracker, witness, pipeline, cache) = params;
         let gpu = gpu.into_inner();
+        if gpu.instance_count == 0 {
+            return RenderCommandResult::Skip;
+        }
         let tracker = tracker.into_inner();
         let pipeline = pipeline.into_inner();
         let cache = cache.into_inner();
@@ -239,7 +258,12 @@ impl<P: PhaseItem, const SORTED: bool> RenderCommand<P> for DrawActors<SORTED> {
         } else {
             None
         };
-        for ordinal in 0..span_indices.map_or(gpu.spans.len(), |indices| indices.len()) {
+        let span_count = span_indices.map_or(gpu.spans.len(), |indices| indices.len());
+        let mut receipts = gpu
+            .draw_batch(view.0.to_bits())
+            .filter(|_| span_count <= render_model::MAX_ACTOR_RENDER_INSTANCES)
+            .map(|batch| (batch, Vec::new()));
+        for ordinal in 0..span_count {
             let index = span_indices.map_or(ordinal, |indices| indices[ordinal]);
             let span = &gpu.spans[index];
             if sorted(span.material) != SORTED {
@@ -273,8 +297,17 @@ impl<P: PhaseItem, const SORTED: bool> RenderCommand<P> for DrawActors<SORTED> {
                 bound_page = Some(span.page);
             }
             pass.draw(0..span.vertex_count, span.first..span.first + span.count);
-            tracker.record_draw(view.0.to_bits(), *span);
+            if let Some((_, spans)) = &mut receipts {
+                if spans.is_empty() {
+                    // Allocate only after an actual draw, bounded by the validated command plan.
+                    spans.reserve_exact(span_count);
+                }
+                spans.push(*span);
+            }
             executed_instances += span.count;
+        }
+        if let Some((batch, spans)) = receipts {
+            tracker.record_batch(&batch, view.0.to_bits(), &spans);
         }
         witness.into_inner().observe_draw(ActorDrawWitness {
             executed: executed_instances != 0,

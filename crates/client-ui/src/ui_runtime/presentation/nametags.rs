@@ -67,6 +67,7 @@ pub struct NametagAnchor {
     pub(super) view_depth: f32,
     /// Camera depth gained by one block of world-Y lift.
     pub(super) camera_forward_y: f32,
+    pub(super) cinnabar_badge: bool,
 }
 
 impl NametagAnchor {
@@ -74,12 +75,19 @@ impl NametagAnchor {
     pub const fn runtime_id(&self) -> u64 {
         self.runtime_id
     }
+
+    /// Applies the shared roster's display decision after existing tag visibility selection.
+    pub fn set_cinnabar_badge(&mut self, visible: bool) {
+        self.cinnabar_badge = visible;
+    }
 }
 
 /// Retains bounded tag lines for the actors selected for presentation.
 #[derive(Default)]
 pub struct NametagTextCache {
     entries: HashMap<(u64, i64), CachedNametagText>,
+    #[cfg(test)]
+    retention_checks: usize,
 }
 
 struct CachedNametagText {
@@ -90,6 +98,21 @@ struct CachedNametagText {
 }
 
 impl NametagTextCache {
+    /// Checks each cached identity once against the selected actor identities.
+    fn retain_selected(&mut self, selected: &HashSet<(u64, i64)>) {
+        #[cfg(test)]
+        {
+            self.retention_checks = 0;
+        }
+        self.entries.retain(|identity, _| {
+            #[cfg(test)]
+            {
+                self.retention_checks += 1;
+            }
+            selected.contains(identity)
+        });
+    }
+
     /// Reuses unchanged text while recomputing visibility, pose and viewer distance.
     fn extract(
         &mut self,
@@ -307,6 +330,7 @@ fn nametag_with_lines(
         text_alpha: if sneaking { DIM_TEXT_ALPHA } else { 1.0 },
         view_depth,
         camera_forward_y: view.camera_forward.y,
+        cinnabar_badge: false,
     })
 }
 
@@ -403,11 +427,11 @@ pub fn project_nametags(
             .then(a.runtime_id.cmp(&b.runtime_id))
     });
     candidates.truncate(MAX_PRESENTED_NAMETAGS);
-    cache.entries.retain(|&(runtime_id, unique_id), _| {
-        candidates
-            .iter()
-            .any(|(actor, _, _)| actor.runtime_id == runtime_id && actor.unique_id == unique_id)
-    });
+    let selected: HashSet<_> = candidates
+        .iter()
+        .map(|(actor, _, _)| (actor.runtime_id, actor.unique_id))
+        .collect();
+    cache.retain_selected(&selected);
     candidates
         .into_iter()
         .filter_map(|(actor, name, _)| {
@@ -433,30 +457,60 @@ pub fn build_nametag_scene<'p>(
             .total_cmp(&a.view_depth)
             .then(a.runtime_id.cmp(&b.runtime_id))
     });
-    let requested_lines = ordered
+    let mut available_records = MAX_NAMETAG_RECORDS;
+    // Any deferred atlas rebuild must finish before this frame captures its first cell UVs.
+    atlas.begin_frame(ordered.iter().flat_map(|anchor| {
+        let records_per_line = NAMETAG_RECORDS_PER_LINE + usize::from(!anchor.depth_tested);
+        let badge_records = usize::from(anchor.cinnabar_badge) * (records_per_line - 1);
+        let count = anchor
+            .lines
+            .len()
+            .min(available_records.saturating_sub(badge_records) / records_per_line);
+        available_records -= count * records_per_line + usize::from(count != 0) * badge_records;
+        anchor.lines.iter().take(count)
+    }));
+    let badge = ordered
         .iter()
-        .map(|anchor| anchor.lines.len())
-        .sum::<usize>()
-        .min(MAX_NAMETAG_LINES);
-    if !atlas.has_room_for(requested_lines) {
-        atlas.reset();
-    }
+        .any(|anchor| anchor.cinnabar_badge)
+        .then(|| atlas.badge())
+        .flatten();
     let side = NAMETAG_ATLAS_SIDE as f32;
     let texels = FONT_DESIGN_PIXEL_TEXELS as f32;
-    let mut records = Vec::new();
+    let mut records = Vec::with_capacity(MAX_NAMETAG_RECORDS - available_records);
     let mut labels = Vec::with_capacity(ordered.len());
+    // One line buffer serves every label.
+    let mut placed = Vec::new();
     for anchor in ordered {
         let records_per_line = NAMETAG_RECORDS_PER_LINE + usize::from(!anchor.depth_tested);
-        let remaining_lines = (MAX_NAMETAG_RECORDS - records.len()) / records_per_line;
-        let placed: Vec<_> = anchor
-            .lines
-            .iter()
-            .take(remaining_lines)
-            .filter_map(|line| atlas.line(line, font, layouts, pages))
-            .collect();
+        let badge = badge.filter(|_| anchor.cinnabar_badge);
+        let badge_records = usize::from(badge.is_some()) * (records_per_line - 1);
+        let remaining_lines =
+            (MAX_NAMETAG_RECORDS - records.len()).saturating_sub(badge_records) / records_per_line;
+        placed.clear();
+        let mut name_placed = false;
+        placed.extend(
+            anchor
+                .lines
+                .iter()
+                .take(remaining_lines)
+                .enumerate()
+                .filter_map(|(index, line)| {
+                    let line = atlas.line(line, font, layouts, pages)?;
+                    name_placed |= index == 0;
+                    Some(line)
+                }),
+        );
         if placed.is_empty() {
             continue;
         }
+        let [ink_top, ink_bottom] = placed[0].ink_y_px;
+        let badge_size = ink_bottom - ink_top;
+        let badge = badge.filter(|_| name_placed && badge_size > 0.0);
+        let extra_width = if badge.is_some() {
+            badge_size + 1.0
+        } else {
+            0.0
+        };
         let common = NametagRecord {
             anchor: anchor.position.to_array(),
             line_lift: EXTRA_LINE_LIFT * placed.len().saturating_sub(1) as f32,
@@ -465,23 +519,41 @@ pub fn build_nametag_scene<'p>(
         };
         let first = records.len();
         records.extend(
-            java_nametag_line_backgrounds(placed.iter().map(|line| line.width_px)).map(|rect| {
-                NametagRecord {
-                    rect,
-                    uv: [0.0, 0.0, -1.0, -1.0],
-                    color: PLATE_COLOR,
-                    ..common
-                }
+            java_nametag_line_backgrounds(
+                placed.iter().enumerate().map(|(index, line)| {
+                    line.width_px + if index == 0 { extra_width } else { 0.0 }
+                }),
+            )
+            .map(|rect| NametagRecord {
+                rect,
+                uv: [0.0, 0.0, -1.0, -1.0],
+                color: PLATE_COLOR,
+                ..common
             }),
         );
         let first_glyph = records.len();
         for (index, line) in placed.iter().enumerate() {
-            let left = nametag_line_left(line.width_px);
+            let left = if index == 0 {
+                nametag_line_left(line.width_px + extra_width) + extra_width
+            } else {
+                nametag_line_left(line.width_px)
+            };
             let [x, y, width, height] = line.cell.map(|value| value as f32);
             let top = NAMETAG_LINE_PITCH_PX * index as f32 + line.top_px;
             records.push(NametagRecord {
                 text: 1,
                 rect: [left, top, left + width / texels, top + height / texels],
+                uv: [x / side, y / side, (x + width) / side, (y + height) / side],
+                color: [1.0, 1.0, 1.0, anchor.text_alpha],
+                ..common
+            });
+        }
+        if let Some(badge) = badge {
+            let left = nametag_line_left(placed[0].width_px + extra_width);
+            let [x, y, width, height] = badge.cell.map(|value| value as f32);
+            records.push(NametagRecord {
+                text: 1,
+                rect: [left, ink_top, left + badge_size, ink_bottom],
                 uv: [x / side, y / side, (x + width) / side, (y + height) / side],
                 color: [1.0, 1.0, 1.0, anchor.text_alpha],
                 ..common
@@ -509,13 +581,13 @@ pub fn build_nametag_scene<'p>(
         labels.push((plane_depth, anchor.runtime_id, first..records.len()));
     }
     labels.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    let records = labels
-        .into_iter()
-        .flat_map(|(_, _, range)| records[range].iter().copied())
-        .collect();
+    let mut ordered_records = Vec::with_capacity(records.len());
+    for (_, _, range) in labels {
+        ordered_records.extend_from_slice(&records[range]);
+    }
     let (atlas, atlas_revision) = atlas.publish();
     NametagScene {
-        records,
+        records: ordered_records,
         atlas,
         atlas_revision,
     }
@@ -595,5 +667,55 @@ pub(super) fn style_scene(
             scene.records.extend(extra);
             scene.records.push(record);
         }
+    }
+}
+
+#[cfg(test)]
+mod selection_work_tests {
+    use super::*;
+
+    #[test]
+    fn retention_checks_each_identity_once_and_preserves_selected_text() {
+        let mut cache = NametagTextCache::default();
+        let lines: Arc<[Arc<str>]> = vec![Arc::from("cached")].into();
+        for runtime_id in 0..MAX_PRESENTED_NAMETAGS as u64 {
+            cache.entries.insert(
+                (runtime_id, runtime_id as i64),
+                CachedNametagText {
+                    name: Arc::from("cached"),
+                    score: None,
+                    scoreboard_revision: None,
+                    lines: Arc::clone(&lines),
+                },
+            );
+        }
+        let selected: HashSet<_> = cache.entries.keys().copied().collect();
+        let mut previous_checks = 0;
+        for identity in cache.entries.keys() {
+            assert!(selected.iter().any(|candidate| {
+                previous_checks += 1;
+                candidate == identity
+            }));
+        }
+        assert_eq!(
+            previous_checks,
+            MAX_PRESENTED_NAMETAGS * (MAX_PRESENTED_NAMETAGS + 1) / 2
+        );
+        cache.retain_selected(&selected);
+        assert_eq!(cache.retention_checks, MAX_PRESENTED_NAMETAGS);
+        assert_eq!(cache.entries.len(), selected.len());
+        assert!(
+            cache
+                .entries
+                .values()
+                .all(|entry| Arc::ptr_eq(&entry.lines, &lines))
+        );
+        // Reusing a runtime ID with a different unique ID must retire the old identity.
+        cache.retain_selected(&HashSet::from([(0, -1), (1, 1)]));
+        assert_eq!(cache.retention_checks, MAX_PRESENTED_NAMETAGS);
+        assert_eq!(cache.entries.keys().copied().collect::<Vec<_>>(), [(1, 1)]);
+        cache.retain_selected(&HashSet::new());
+        assert_eq!(cache.retention_checks, 1);
+        assert!(cache.entries.is_empty());
     }
 }

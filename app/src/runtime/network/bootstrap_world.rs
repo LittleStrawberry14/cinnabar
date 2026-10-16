@@ -34,6 +34,7 @@ pub(super) struct StreamResources<'a> {
 pub(super) fn build(
     input: StreamBootstrap<'_>,
     packs: &PackApplication,
+    registries: super::session_registries::PreparedSessionRegistries,
     current: [f32; 3],
     resources: StreamResources<'_>,
     timings: &mut bootstrap_timing::BootstrapTimings,
@@ -54,7 +55,9 @@ pub(super) fn build(
         display_interval,
     } = resources;
     let hashed_ids = bootstrap.block_network_ids_are_hashes;
-    let registration = collisions.begin_session_blocks(custom_blocks, hashed_ids);
+    let old = std::mem::replace(collisions, registries.collisions);
+    client_runtime::session::release_off_frame(old);
+    let registration = registries.registration;
     let custom_block_ids = registration.custom_ids;
     let id_remap = registration.remap;
     if !registration.supported {
@@ -67,21 +70,8 @@ pub(super) fn build(
             );
         }
     }
-    // Hashed sessions append overlay visuals after the base and index them by hash.
-    let overlay_ids = if hashed_ids {
-        packs.block_overlay.as_ref().map(|compiled| {
-            let first = client_world.runtime_assets.visual_count() as u32;
-            first..first + compiled.overlay.visuals.len() as u32
-        })
-    } else {
-        custom_block_ids.clone()
-    };
     timings.mark(bootstrap_timing::BootstrapPhase::CustomBlocks);
-    let session_assets = resource_packs::session_runtime_assets(
-        &client_world.runtime_assets,
-        overlay_ids.as_ref(),
-        packs.block_overlay.as_ref(),
-    );
+    let session_assets = registries.assets;
     if let Some(mut textures) = chunk_textures {
         resource_packs::install_chunk_textures(&mut textures, &session_assets);
     }
@@ -108,6 +98,9 @@ pub(super) fn build(
             "skipped malformed server block definitions"
         );
     }
+    if bridge::latency_trace::active().is_some() {
+        stream.observe_commits(super::world_ingress::trace_committed);
+    }
     stream.set_server_animation_compiler(server_animation::compile_stop);
     stream.set_world_default_game_mode(world_default_game_mode);
     stream.set_display_interval(display_interval);
@@ -116,7 +109,7 @@ pub(super) fn build(
     stream.set_startup_terrain_announced(terrain_before_spawn);
     stream.set_custom_block_ids(custom_block_ids.unwrap_or_default());
     stream.set_sequential_id_remap(id_remap);
-    stream.set_custom_block_identities(custom_blocks);
+    stream.install_custom_block_identities(registries.identities);
     stream.set_light_diagnostic_custom_blocks(custom_blocks.clone());
     stream.set_pack_entities(packs.entities.as_ref().map(|pack| {
         (
@@ -132,6 +125,7 @@ pub(super) fn build(
         scene.install_prepared_assets(art);
     }
     client_world.pack_entities = packs.entities.clone();
+    client_world.terrain_resource_identity = packs.terrain_identity;
     client_world.prepared_actor_artwork = packs.prepared_actor_artwork.clone();
     client_world.session_items = Some(Arc::new(
         client_presentation::session_assets::SessionItems {

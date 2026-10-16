@@ -76,10 +76,7 @@ impl Evaluator<'_> {
                     if let Some(reads) = reads.as_mut() {
                         reads.variable(symbol, place, variables);
                     }
-                    let value = variables
-                        .entry(place)
-                        .and_then(|entry| entry.clone())
-                        .unwrap_or(MolangValue::Number(0.0));
+                    let value = variables.read(place).unwrap_or(MolangValue::Number(0.0));
                     stack.push(value);
                 }
                 MolangOp::StoreVariable(symbol) => {
@@ -95,7 +92,7 @@ impl Evaluator<'_> {
                     if let Some(reads) = reads.as_mut() {
                         reads.variable(branch.symbol, place, variables);
                     }
-                    if let Some(value) = variables.entry(place).and_then(|entry| entry.clone()) {
+                    if let Some(value) = variables.read(place) {
                         stack.push(value);
                         pc = jump(branch.target)?;
                     }

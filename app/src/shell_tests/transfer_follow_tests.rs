@@ -132,11 +132,13 @@ fn explicit_disconnect_discards_queued_terminal_events_and_closes_the_old_receiv
         .insert_resource(network)
         .insert_resource(ClientBlobCacheOwner::default())
         .insert_resource(ResourcePackAdmissionState::default())
+        .insert_resource(crate::runtime::network::session_registries::tests::collision_resource())
         .insert_resource(UiRuntimeResource(UiRuntime::new(1)))
         .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
             1,
         )))
         .insert_resource(ClientWorld::default())
+        .init_resource::<crate::runtime::shutdown::FatalError>()
         .insert_resource(client_interaction::movement::MovementTicker::default())
         .insert_resource(client_interaction::movement::LocalPhysicsController::default())
         .insert_resource(client_presentation::local_player::LocalPlayerFrameCarrier::default())
@@ -186,11 +188,13 @@ fn app_with_core(root: &Path, script: &str) -> App {
         .insert_resource(NetworkHandle::<PackApplication>::disconnected())
         .insert_resource(ClientBlobCacheOwner::default())
         .insert_resource(ResourcePackAdmissionState::default())
+        .insert_resource(crate::runtime::network::session_registries::tests::collision_resource())
         .insert_resource(UiRuntimeResource(UiRuntime::new(1)))
         .insert_resource(client_state::PlayerRuntime(player_state::PlayerState::new(
             1,
         )))
         .insert_resource(ClientWorld::default())
+        .init_resource::<crate::runtime::shutdown::FatalError>()
         .insert_resource(client_interaction::movement::MovementTicker::default())
         .insert_resource(client_interaction::movement::LocalPhysicsController::default())
         .insert_resource(client_presentation::local_player::LocalPlayerFrameCarrier::default())
@@ -289,7 +293,8 @@ fn a_core_that_exits_early_fails_the_join_promptly() {
                     .world_mut()
                     .resource_mut::<SessionController>()
                     .core_mut()
-                    .exited()
+                    .exit_status()
+                    .is_some()
         },
     );
     test_time::eventually("the connect attempt to finish", || {
@@ -370,9 +375,11 @@ fn failed_automatic_replacement(
         .insert_resource(NetworkHandle::<PackApplication>::disconnected())
         .insert_resource(ClientBlobCacheOwner::default())
         .insert_resource(ResourcePackAdmissionState::default())
+        .insert_resource(crate::runtime::network::session_registries::tests::collision_resource())
         .insert_resource(UiRuntimeResource(runtime))
         .insert_resource(player_runtime.clone())
         .insert_resource(client_world)
+        .init_resource::<crate::runtime::shutdown::FatalError>()
         .insert_resource(client_interaction::movement::MovementTicker::default())
         .insert_resource(client_interaction::movement::LocalPhysicsController::default())
         .insert_resource(client_presentation::local_player::LocalPlayerFrameCarrier::default())

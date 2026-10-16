@@ -19,6 +19,13 @@ use render_scene::FarTerrainScene;
 
 use crate::{runtime::world::ClientWorld, session::SessionController};
 
+#[cfg(test)]
+#[path = "far_terrain/publication_tests.rs"]
+mod publication_tests;
+
+/// Revisions and view inputs that determine one shared terrain publication target.
+type PublicationKey = ((u64, u64, u64, u64, usize, Option<i32>), u64, [i32; 2], i32);
+
 /// The far-terrain cache, the selected tiles and the view they were chosen for.
 #[derive(Resource)]
 pub(crate) struct FarTerrain {
@@ -33,6 +40,10 @@ pub(crate) struct FarTerrain {
     drain_since: Option<Instant>,
     near_radius: NearRadius,
     published: Option<u64>,
+    /// Stream requirements, tile revision and viewport used by the render publication target.
+    publication: Option<PublicationKey>,
+    /// Session/dimension identity and residency indexes used by near publication receipts.
+    source_revision: Option<((u64, u64), u64, u64)>,
     retiring: Vec<Retiring>,
 }
 
@@ -66,8 +77,83 @@ impl FarTerrain {
             drain_since: None,
             near_radius: NearRadius::default(),
             published: None,
+            publication: None,
+            source_revision: None,
             retiring: Vec::new(),
         }
+    }
+
+    /// Rebuilds the CPU selection mask when its radius or acknowledged near columns change.
+    fn update_near(
+        &mut self,
+        stream: &WorldStream,
+        centre: ::world::ChunkKey,
+        radius: i32,
+        horizon: i32,
+    ) -> bool {
+        let (revision, _) = stream.near_drawn_columns();
+        let view = ([centre.x, centre.z], radius, revision);
+        if self.near_view == Some(view) {
+            return false;
+        }
+        self.near = Arc::new(NearMask::around_with_empty(
+            view.0,
+            horizon,
+            radius,
+            stream
+                .near_geometry_columns()
+                .filter(|column| column.dimension == centre.dimension)
+                .map(|column| ColumnPos::new(column.x, column.z)),
+            stream
+                .near_empty_columns()
+                .filter(|column| column.dimension == centre.dimension)
+                .map(|column| ColumnPos::new(column.x, column.z)),
+        ));
+        self.near_view = Some(view);
+        true
+    }
+
+    /// Keeps near receipts bounded and scoped to the stream even while far terrain is disabled.
+    fn publish_source(&mut self, stream: Option<&WorldStream>, scene: &mut FarTerrainScene) {
+        let revision = stream.map(WorldStream::terrain_publication_source);
+        if self.source_revision == revision {
+            return;
+        }
+        if self.source_revision.map(|stamp| stamp.0) != revision.map(|stamp| stamp.0) {
+            scene.publications = stream.map(|_| Default::default());
+            self.publication = None;
+        }
+        if let (Some(stream), Some(publications)) = (stream, &scene.publications) {
+            publications.retain(stream.terrain_publication_sections());
+        }
+        self.source_revision = revision;
+    }
+
+    /// Shares current section requirements without rebuilding an unchanged publication target.
+    fn publish_target(&mut self, stream: &WorldStream, horizon: i32, scene: &mut FarTerrainScene) {
+        self.publish_source(Some(stream), scene);
+        let revision = stream.terrain_publication_revision();
+        let centre = stream.far_terrain_centre();
+        let key = (
+            revision,
+            self.tiles.revision(),
+            [centre.x, centre.z],
+            horizon,
+        );
+        if self.publication == Some(key) && scene.target.is_some() {
+            return;
+        }
+        let mut target = self
+            .publication
+            .filter(|previous| previous.0 == revision && previous.2 == [centre.x, centre.z])
+            .and(scene.target.as_deref())
+            .cloned()
+            .unwrap_or_else(|| stream.terrain_publication_target(horizon));
+        target.centre = centre;
+        target.horizon = horizon;
+        target.empty_far = Arc::new(self.tiles.empty_columns().collect());
+        scene.target = Some(Arc::new(target));
+        self.publication = Some(key);
     }
 
     /// Summarises the stream's resident columns before it is dropped, so this session's
@@ -98,12 +184,67 @@ impl FarTerrain {
         deadline: Option<Instant>,
         budget: &mut SummaryBudget,
     ) {
+        self.drain_retiring_with(
+            now,
+            budget,
+            deadline.is_some(),
+            || deadline.is_some_and(|deadline| Instant::now() >= deadline),
+            |retiring| {
+                if let Some(deadline) = deadline {
+                    FarSummaryInbox::wait_for_any(
+                        retiring.iter().map(|retiring| &retiring.inbox),
+                        deadline,
+                    );
+                }
+            },
+        );
+    }
+
+    /// Gives every retiring inbox a bounded turn before waiting for any inbox to change.
+    /// Clock and wait callbacks keep the same coordination path deterministic in fixtures.
+    fn drain_retiring_with(
+        &mut self,
+        now: Instant,
+        budget: &mut SummaryBudget,
+        waiting: bool,
+        mut expired: impl FnMut() -> bool,
+        mut wait: impl FnMut(&[Retiring]),
+    ) {
+        loop {
+            let expired = expired();
+            self.drain_retiring_round(now, budget, waiting, expired);
+            if !waiting
+                || expired
+                || self
+                    .retiring
+                    .iter()
+                    .all(|retiring| retiring.inbox.is_idle())
+            {
+                break;
+            }
+            wait(&self.retiring);
+        }
+    }
+
+    /// Delivers each session's ready output before another session can wait for its permits.
+    fn drain_retiring_round(
+        &mut self,
+        now: Instant,
+        budget: &mut SummaryBudget,
+        waiting: bool,
+        expired: bool,
+    ) {
         let mut index = 0;
         while index < self.retiring.len() {
             let retiring = &mut self.retiring[index];
-            match deadline {
-                Some(deadline) => retiring.inbox.drain_waiting(&mut self.drained, deadline),
-                None => retiring.inbox.drain_budgeted(&mut self.drained, budget),
+            if expired {
+                retiring.inbox.drain(&mut self.drained);
+            } else if waiting {
+                retiring
+                    .inbox
+                    .drain_budgeted(&mut self.drained, &mut SummaryBudget::default());
+            } else {
+                retiring.inbox.drain_budgeted(&mut self.drained, budget);
             }
             let dimension = retiring.session.dimension();
             for finished in self
@@ -115,7 +256,6 @@ impl FarTerrain {
                 retiring.session.add_probe(pos, &finished.summary);
                 retiring.columns.push_back((pos, finished.summary));
             }
-            let expired = deadline.is_some_and(|deadline| Instant::now() >= deadline);
             if retiring.inbox.is_idle() || expired {
                 let mut columns = Vec::new();
                 while let Some((_, summary)) = retiring.columns.front() {
@@ -130,7 +270,7 @@ impl FarTerrain {
                 } else {
                     index += 1;
                 }
-            } else if deadline.is_none() {
+            } else {
                 index += 1;
             }
         }
@@ -172,10 +312,13 @@ impl NearRadius {
     }
 }
 
+/// Destination, level, dimension, stream/transition generation and terrain resource identity.
+type WorldIdentity<D> = (D, Option<u64>, i32, (u64, u64), [u8; 32]);
+
 /// The world and session the cache was last pointed at, so unchanged frames skip the
 /// identity hash.
 #[derive(Default)]
-pub(crate) struct ActiveWorld(Option<(String, u64, i32, u64)>);
+pub(crate) struct ActiveWorld(Option<WorldIdentity<String>>);
 
 /// Keeps extraction, the cache namespace, the loaded area and the drawn tiles current.
 pub(crate) fn feed_far_terrain(
@@ -207,11 +350,9 @@ pub(crate) fn feed_far_terrain(
         .enabled(u32::from(video.render_distance_chunks), tier);
     // A transfer or rejoin to the same address is a new session and so a fresh visit: the
     // lobby behind it may be another instance under the same identity.
-    let destination = session.as_deref().and_then(|session| {
-        session
-            .destination_identity()
-            .map(|destination| (destination, session.generation()))
-    });
+    let destination = session
+        .as_deref()
+        .and_then(SessionController::destination_identity);
     let now = Instant::now();
     // Turned off, by the setting or by Auto, far terrain stays until near terrain has drawn
     // every column it covered.
@@ -225,17 +366,18 @@ pub(crate) fn feed_far_terrain(
     if !draining {
         far.drain_since = None;
     }
-    let target = world
+    let target: Option<WorldIdentity<&str>> = world
         .stream
         .as_ref()
         .zip(destination)
         .filter(|_| wanted || draining)
-        .map(|(stream, (destination, generation))| {
+        .map(|(stream, destination)| {
             (
                 destination,
                 world.level_identity,
                 stream.current_dimension(),
-                generation,
+                stream.terrain_generation(),
+                world.terrain_resource_identity,
             )
         });
     let enabled = target.is_some();
@@ -248,22 +390,57 @@ pub(crate) fn feed_far_terrain(
     {
         stream.set_far_terrain_enabled(enabled);
     }
-    let current = active
-        .0
-        .as_ref()
-        .map(|(destination, level, dimension, generation)| {
-            (destination.as_str(), *level, *dimension, *generation)
-        });
+    let current: Option<WorldIdentity<&str>> =
+        active
+            .0
+            .as_ref()
+            .map(|(destination, level, dimension, generation, resources)| {
+                (
+                    destination.as_str(),
+                    *level,
+                    *dimension,
+                    *generation,
+                    *resources,
+                )
+            });
     if current != target {
         match target {
-            Some((destination, level, dimension, _)) => {
-                far.cache.begin_visit(destination, level, dimension);
+            Some((destination, level, dimension, _, resources)) => {
+                if let Some(level) = level {
+                    far.cache
+                        .begin_visit_with_resources(destination, level, dimension, resources);
+                } else if destination.starts_with("local:") {
+                    // The launcher supplies a stable local-world ID independently of StartGame.
+                    far.cache
+                        .begin_visit_with_resources(destination, 0, dimension, resources);
+                } else {
+                    far.cache.begin_uncertain_visit_with_resources(
+                        destination,
+                        dimension,
+                        resources,
+                    );
+                }
             }
             None => far.cache.leave_world(),
         }
         far.tiles.clear();
-        active.0 = target.map(|(destination, level, dimension, generation)| {
-            (destination.to_owned(), level, dimension, generation)
+        far.near_view = None;
+        far.published = None;
+        far.publication = None;
+        far.drained.clear();
+        far.unloaded.clear();
+        *scene = FarTerrainScene {
+            publications: scene.publications.clone(),
+            ..Default::default()
+        };
+        active.0 = target.map(|(destination, level, dimension, generation, resources)| {
+            (
+                destination.to_owned(),
+                level,
+                dimension,
+                generation,
+                resources,
+            )
         });
     }
     let mut summary_budget = SummaryBudget::default();
@@ -299,9 +476,13 @@ pub(crate) fn feed_far_terrain(
         stream.set_full_detail_radius(full_detail);
     }
     let Some(stream) = world.stream.as_ref().filter(|_| enabled) else {
+        far.publish_source(world.stream.as_ref(), &mut scene);
         far.cache.poll_budgeted(now, &mut summary_budget);
         if far.published.take().is_some() {
-            *scene = FarTerrainScene::default();
+            *scene = FarTerrainScene {
+                publications: scene.publications.clone(),
+                ..Default::default()
+            };
         }
         return;
     };
@@ -335,28 +516,12 @@ pub(crate) fn feed_far_terrain(
         tier,
     ) as i32;
     // Near terrain owns everything within the full-detail radius, or all it is sent without
-    // one, even before its meshes load; past that far terrain hides under the columns near
-    // terrain draws, such as those handing over to it.
+    // one, even before its meshes load; past that, delivered air or published near geometry
+    // hides far terrain, including columns still handing over to it.
     let near_radius = far
         .near_radius
         .update(draining, full_detail.unwrap_or(loaded));
-    let (drawn_revision, _) = stream.near_drawn_columns();
-    let near_view = ([centre.x, centre.z], near_radius, drawn_revision);
-    let near_changed = far.near_view != Some(near_view);
-    if near_changed {
-        let drawn = stream
-            .near_drawn_columns()
-            .1
-            .filter(|column| column.dimension == centre.dimension)
-            .map(|column| ColumnPos::new(column.x, column.z));
-        far.near = Arc::new(NearMask::around(
-            near_view.0,
-            loaded + reach,
-            near_radius,
-            drawn,
-        ));
-        far.near_view = Some(near_view);
-    }
+    let near_changed = far.update_near(stream, centre, near_radius, loaded + reach);
     far.cache
         .set_memory_budget(summary_budget_bytes(loaded + reach));
     far.cache
@@ -371,29 +536,43 @@ pub(crate) fn feed_far_terrain(
         loaded + reach,
     ));
     far.tiles.update(far.cache.store(), now);
-    // Columns leaving full detail keep their meshes until their far tiles are built.
+    let revision = far.tiles.revision();
+    if near_changed || far.published != Some(revision) {
+        *scene = FarTerrainScene {
+            publications: scene.publications.clone(),
+            tiles: far.tiles.drawn().into(),
+            near: Arc::clone(&far.near),
+            residency: scene.residency.clone(),
+            target: scene.target.clone(),
+        };
+        far.published = Some(revision);
+    }
+    // A CPU-ready tile may still be waiting for its upload or a covering GPU fallback.
     let store = far.cache.store();
     let covered: Vec<_> = stream
         .far_handoffs()
         .filter(|column| {
             let pos = ColumnPos::new(column.x, column.z);
-            store.contains(pos) && far.tiles.ready(pos)
+            store.contains(pos)
+                && far
+                    .tiles
+                    .ready_mesh(pos)
+                    .is_some_and(|mesh| scene.residency.ready(pos, mesh))
         })
         .collect();
-    let revision = far.tiles.revision();
-    if near_changed || far.published != Some(revision) {
-        *scene = FarTerrainScene {
-            tiles: far.tiles.drawn().into(),
-            near: Arc::clone(&far.near),
-        };
-        far.published = Some(revision);
-    }
     if !covered.is_empty()
         && let Some(stream) = world.stream.as_mut()
     {
         for column in covered {
             stream.finish_far_handoff(column);
         }
+        // This CPU mask selects tiles; render publication owns the effective draw mask.
+        if far.update_near(stream, centre, near_radius, loaded + reach) {
+            scene.near = Arc::clone(&far.near);
+        }
+    }
+    if let Some(stream) = world.stream.as_ref() {
+        far.publish_target(stream, loaded + reach, &mut scene);
     }
 }
 
@@ -453,147 +632,13 @@ pub(crate) fn finish_far_terrain_on_exit(
 }
 
 #[cfg(test)]
-mod tests {
-    use bevy::prelude::{App, Last};
-    use far_terrain::{ColumnSummary, SurfaceCell, config::WORLD_PROBE_COLUMNS};
+#[path = "far_terrain/resource_tests.rs"]
+mod resource_tests;
 
-    use super::*;
+#[cfg(test)]
+#[path = "far_terrain/transfer_tests.rs"]
+mod transfer_tests;
 
-    const SERVER: &str = "remote:play.example.net:19132";
-
-    fn flat(height: i16) -> EncodedSummary {
-        let mut summary = ColumnSummary::default();
-        summary.cells_mut().fill(SurfaceCell {
-            height,
-            rgb: [90, 140, 60],
-            water_depth: 0,
-        });
-        summary.encode()
-    }
-
-    fn join(cache: &mut FarTerrainCache, now: Instant) {
-        cache.enter_world(SERVER, 42, 0);
-        for x in 0..WORLD_PROBE_COLUMNS as i32 {
-            cache.admit(0, ColumnPos::new(x, 0), flat(64), now);
-        }
-        cache.sync();
-        cache.poll(now);
-        assert!(cache.namespace().is_some());
-    }
-
-    /// Summaries a retiring session collected reach disk when the app exits that frame.
-    #[test]
-    fn exit_writes_retiring_summaries() {
-        let root = tempfile::tempdir().unwrap();
-        let now = Instant::now();
-        let mut far = FarTerrain::new(Some(root.path().to_owned()));
-        join(&mut far.cache, now);
-        let session = far.cache.retire_session().unwrap();
-        far.retiring.push(Retiring {
-            session,
-            inbox: FarSummaryInbox::default(),
-            columns: VecDeque::from([(ColumnPos::new(300, 0), flat(90))]),
-        });
-        far.cache.leave_world();
-        let mut app = App::new();
-        app.add_message::<AppExit>();
-        app.insert_resource(far)
-            .add_systems(Last, finish_far_terrain_on_exit);
-        app.world_mut().write_message(AppExit::Success);
-        app.update();
-
-        let mut reader =
-            FarTerrainCache::new(FarTerrainConfig::default(), Some(root.path().into()), 0);
-        join(&mut reader, now);
-        reader.set_focus(ColumnPos::new(300, 0), 4);
-        reader.sync();
-        reader.poll(now);
-        let stored = reader.store().encoded(ColumnPos::new(300, 0)).cloned();
-        assert_eq!(stored.map(|summary| summary.hash), Some(flat(90).hash));
-    }
-
-    /// Retirement persistence uses the same column limit and carries the remainder forward.
-    #[test]
-    fn retiring_admission_is_bounded() {
-        use far_terrain::config::SUMMARY_COLUMNS_PER_UPDATE;
-        let now = Instant::now();
-        let mut far = FarTerrain::new(None);
-        join(&mut far.cache, now);
-        let session = far.cache.retire_session().unwrap();
-        let columns = (0..SUMMARY_COLUMNS_PER_UPDATE + 1)
-            .map(|x| (ColumnPos::new(1000 + x as i32, 0), flat(90)))
-            .collect();
-        far.retiring.push(Retiring {
-            session,
-            inbox: FarSummaryInbox::default(),
-            columns,
-        });
-        let before = far.cache.store().len();
-        far.drain_retiring(now, &mut SummaryBudget::default());
-        assert_eq!(far.cache.store().len() - before, SUMMARY_COLUMNS_PER_UPDATE);
-        assert_eq!(far.retiring[0].columns.len(), 1);
-        far.drain_retiring(now, &mut SummaryBudget::default());
-        assert!(far.retiring.is_empty());
-        assert_eq!(
-            far.cache.store().len() - before,
-            SUMMARY_COLUMNS_PER_UPDATE + 1
-        );
-    }
-
-    /// Turning far terrain off mid warm-join keeps the old full-detail area free of far
-    /// terrain on every frame, while near meshes keep arriving ring by ring.
-    #[test]
-    fn disabling_mid_join_keeps_far_terrain_out_of_the_old_radius() {
-        use far_terrain::SummaryStore;
-        let mut store = SummaryStore::new(usize::MAX);
-        for x in -40..40 {
-            for z in -40..40 {
-                let mut summary = ColumnSummary::default();
-                summary.cells_mut().fill(SurfaceCell {
-                    height: 64,
-                    rgb: [90, 140, 60],
-                    water_depth: 0,
-                });
-                store.admit(ColumnPos::new(x, z), &summary);
-            }
-        }
-        let (centre, full_detail, loaded, horizon) = ([0, 0], 8, 16, 32);
-        let mut radius = NearRadius::default();
-        let mut tiles = FarTiles::default();
-        let mut drawn = Vec::new();
-        let now = Instant::now();
-        for frame in 0..40 {
-            // Far terrain is turned off after a few frames, before the near area has meshed.
-            let draining = frame >= 6;
-            let near_radius = radius.update(draining, if draining { loaded } else { full_detail });
-            if frame % 4 == 3 {
-                let ring = frame / 4;
-                drawn.extend(
-                    (-ring..=ring)
-                        .flat_map(|x| (-ring..=ring).map(move |z| ColumnPos::new(x, z)))
-                        .filter(|column| column.x * column.x + column.z * column.z <= ring * ring),
-                );
-            }
-            let mask = NearMask::around(centre, horizon, near_radius, drawn.iter().copied());
-            tiles.set_view(TileView::around(centre, &mask, near_radius, horizon));
-            test_time::eventually("this frame's far tiles build", || {
-                tiles.update(&mut store, now);
-                tiles.ready(ColumnPos::new(20, 0))
-            });
-            for mesh in tiles.drawn() {
-                for column in mesh.key.columns() {
-                    if column.x * column.x + column.z * column.z <= full_detail * full_detail {
-                        assert!(
-                            mask.contains(column),
-                            "far terrain over {column:?} at frame {frame}"
-                        );
-                        assert_eq!(
-                            mesh.key.level, 0,
-                            "coarse tile near the player at frame {frame}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
+#[cfg(test)]
+#[path = "far_terrain/tests.rs"]
+mod tests;

@@ -27,6 +27,7 @@ fn list_add(uuid: [u8; 16], unique_id: i64, skin: PlayerSkin) -> ActorEvent {
             unique_id,
             username: "local".into(),
             verified: true,
+            xuid: "".into(),
             skin,
         }]),
     })
@@ -48,6 +49,7 @@ fn local_feed(x: f32, yaw: f32) -> LocalPlayerFeed {
         on_ground: true,
         flying: false,
         gliding: false,
+        spinning: false,
         fall_fly_ticks: 0,
         yaw,
         head_yaw: yaw,
@@ -68,6 +70,58 @@ fn local_feed(x: f32, yaw: f32) -> LocalPlayerFeed {
         sprinting: false,
         item_use: Default::default(),
     }
+}
+
+#[test]
+fn local_pose_feeds_and_identity_filters_refresh_collision_snapshots() {
+    let mut store = ActorStore::new(1, 0);
+    let mut feed = local_feed(0.0, 0.0);
+    store.sync_local_player(1, 10, &feed);
+    store.apply(
+        1,
+        1,
+        ActorEvent::Metadata(protocol::ActorMetadataUpdateEvent {
+            dimension: 0,
+            runtime_id: 1,
+            metadata: [protocol::ActorMetadata {
+                key: ActorDataKey::FlagsTwo.wire_value(),
+                value: protocol::ActorMetadataValue::FlagsExtended(
+                    1 << (ActorFlag::Collidable.wire_value() - 64),
+                ),
+            }]
+            .into(),
+            properties: [].into(),
+            tick: 0,
+        }),
+    );
+    let excluded = store.movement_collider_snapshot(1, 10);
+    assert!(excluded.is_empty());
+    let original = store.movement_collider_snapshot(2, 20);
+    assert_eq!(original.len(), 1);
+    feed.position[0] = 4.0;
+    feed.teleported = true;
+    store.sync_local_player(1, 10, &feed);
+    let teleported = store.movement_collider_snapshot(2, 20);
+    assert_ne!(original, teleported);
+    assert_eq!(
+        teleported[0],
+        store.get(1).unwrap().movement_collision_bounds().unwrap()
+    );
+    feed.position[0] = 8.0;
+    feed.teleported = false;
+    store.sync_local_player(1, 10, &feed);
+    assert!(Arc::ptr_eq(
+        &teleported,
+        &store.movement_collider_snapshot(2, 20)
+    ));
+    store.advance_interpolation_ticks(1);
+    assert_eq!(
+        store.movement_collider_snapshot(2, 20)[0],
+        store.get(1).unwrap().movement_collision_bounds().unwrap()
+    );
+    assert_ne!(teleported, store.movement_collider_snapshot(2, 20));
+    assert!(store.movement_collider_snapshot(1, 10).is_empty());
+    assert_eq!((original[0].0[0] + original[0].1[0]) * 0.5, 0.0);
 }
 
 #[test]
@@ -564,6 +618,31 @@ fn cape_skin(byte: u8) -> PlayerSkin {
 }
 
 #[test]
+fn skin_fingerprint_memo_matches_rehashing_without_keeping_the_cape_alive() {
+    let mut memo = super::profiles::SkinFingerprintMemo::default();
+    let first = cape_skin(2);
+    let hashed = super::profiles::skin_fingerprint(&first);
+    assert_eq!(memo.fingerprint(&first), hashed);
+    assert_eq!(memo.fingerprint(&first.clone()), hashed);
+    let PlayerSkin::Standard(mut changed) = first.clone() else {
+        unreachable!()
+    };
+    let cape = changed.cape.as_mut().unwrap();
+    cape.rgba8 = vec![3; cape.rgba8.len()].into();
+    let changed = PlayerSkin::Standard(changed);
+    let rehashed = super::profiles::skin_fingerprint(&changed);
+    assert_ne!(rehashed, hashed, "same base raster, different cape bytes");
+    assert_eq!(memo.fingerprint(&changed), rehashed);
+    let PlayerSkin::Standard(standard) = &changed else {
+        unreachable!()
+    };
+    let cape = Arc::downgrade(&standard.cape.as_ref().unwrap().rgba8);
+    drop(changed);
+    assert!(cape.upgrade().is_none());
+    assert_eq!(memo.fingerprint(&first), hashed);
+}
+
+#[test]
 fn unchanged_local_feed_preserves_server_skin_and_cape_update() {
     let mut store = ActorStore::new(1, 0);
     let mut feed = local_feed(0.0, 0.0);
@@ -843,6 +922,19 @@ fn local_glide_prediction_sets_the_gliding_flag_and_its_ticks() {
     let actor = store.get(1).unwrap();
     assert!(!actor.is_gliding());
     assert_eq!(actor.status.fall_fly_ticks, 0);
+}
+
+#[test]
+fn local_spin_prediction_owns_the_body_and_attachable_spin_flag() {
+    let mut store = ActorStore::new(1, 0);
+    store.exclude_remote_state_for(1);
+    let mut feed = local_feed(0.0, 0.0);
+    feed.spinning = true;
+    store.sync_local_player(1, -100, &feed);
+    assert!(store.get(1).unwrap().is_spinning());
+    feed.spinning = false;
+    store.sync_local_player(1, -100, &feed);
+    assert!(!store.get(1).unwrap().is_spinning());
 }
 
 #[test]

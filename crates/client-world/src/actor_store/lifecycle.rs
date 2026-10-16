@@ -96,9 +96,10 @@ impl ActorStore {
             entity_assets: None,
             custom_actor_facts: HashMap::new(),
             actors: HashMap::new(),
+            hitbox_budget: Default::default(),
             effect_members: Default::default(),
-            unique_to_runtime: HashMap::new(),
-            rider_to_ridden: HashMap::new(),
+            unique_to_runtime: FastHashMap::new(),
+            rider_to_ridden: FastHashMap::new(),
             max_actor_links: max_actors.min(MAX_TRACKED_ACTOR_LINKS),
             players: HashMap::new(),
             unlisted_players: HashMap::new(),
@@ -115,6 +116,7 @@ impl ActorStore {
             local_player_spawned: false,
             synthetic_local_uuid: None,
             synthetic_local_skin: None,
+            local_skin_fingerprints: Default::default(),
             synthetic_local_skin_pending: false,
             synthetic_local_revision: 0,
             local_first_person: false,
@@ -135,7 +137,7 @@ impl ActorStore {
             camera_rotation: [0.0; 2],
             camera_position: [0.0; 3],
             animation_view: None,
-            seat_bindings: HashMap::new(),
+            seat_bindings: FastHashMap::new(),
             seat_bases: HashMap::new(),
             property_registry: Default::default(),
             local_knockback: None,
@@ -259,13 +261,14 @@ impl ActorStore {
                 actor.set_current_pose(pose);
                 self.animation.mark_reset(runtime_id);
             }
+            self.effect_members.collidable.update(actor);
             return;
         }
         let mut actor =
             ActorSnapshot::local_player(unique_id, runtime_id, revision, uuid, username, feed);
         actor.player_game_mode = feed.game_mode.map(protocol::GameModeUpdate::Explicit);
         self.unique_to_runtime.insert(unique_id, runtime_id);
-        self.effect_members.update(&actor);
+        self.effect_members.update(&mut actor);
         self.bind_actor_seat(&actor);
         self.actors.insert(runtime_id, actor);
         self.apply_pending_local_health(runtime_id);
@@ -297,6 +300,7 @@ impl ActorStore {
                 self.remove_profile(&stale);
             }
             self.synthetic_local_skin = None;
+            self.local_skin_fingerprints.clear();
             self.synthetic_local_skin_pending = false;
             return (uuid, username);
         }
@@ -305,7 +309,7 @@ impl ActorStore {
         } else {
             feed.uuid
         };
-        let skin_fingerprint = super::profiles::skin_fingerprint(&feed.skin);
+        let skin_fingerprint = self.local_skin_fingerprints.fingerprint(&feed.skin);
         let stale = match self
             .players
             .get(&uuid)
@@ -326,8 +330,10 @@ impl ActorStore {
                     unique_id,
                     username: std::sync::Arc::clone(&feed.username),
                     verified: false,
+                    xuid: "".into(),
                     skin: feed.skin.clone(),
                 },
+                None,
             );
             self.synthetic_local_skin_pending = self
                 .players
@@ -366,6 +372,7 @@ impl ActorStore {
         self.unlisted_players.clear();
         self.synthetic_local_uuid = None;
         self.synthetic_local_skin = None;
+        self.local_skin_fingerprints.clear();
         self.synthetic_local_skin_pending = false;
         self.retained_player_skin_bytes = 0;
         self.animation.clear();
@@ -417,6 +424,7 @@ impl ActorStore {
             self.remove_profile(&uuid);
         }
         self.synthetic_local_skin = None;
+        self.local_skin_fingerprints.clear();
         self.synthetic_local_skin_pending = false;
         self.prune_unlisted_players();
         self.animation.clear();
@@ -478,7 +486,7 @@ impl ActorStore {
                     let previous = self.ignored_movement_components;
                     self.ignored_movement_components = previous.saturating_add(1);
                     if previous == 0 || self.ignored_movement_components / 64 > previous / 64 {
-                        eprintln!(
+                        tracing::warn!(
                             "ignored unsupported actor movement duration (total {})",
                             self.ignored_movement_components
                         );
@@ -535,7 +543,7 @@ impl ActorStore {
                     let previous = self.ignored_movement_components;
                     self.ignored_movement_components = previous.saturating_add(ignored);
                     if previous == 0 || self.ignored_movement_components / 64 > previous / 64 {
-                        eprintln!(
+                        tracing::warn!(
                             "ignored non-finite actor movement components: {}",
                             self.ignored_movement_components
                         );
@@ -577,6 +585,7 @@ impl ActorStore {
                 actor.teleported = movement.teleported;
                 actor.player_mode = movement.player_mode;
                 actor.source_tick = movement.source_tick;
+                self.effect_members.collidable.update(actor);
                 if movement.teleported {
                     self.animation.mark_reset(movement.runtime_id);
                     if let Some(lifetime) = self.lifetime(movement.runtime_id) {
@@ -597,7 +606,7 @@ impl ActorStore {
                         std::mem::discriminant(previous) != std::mem::discriminant(&metadata.value)
                     })
                 });
-                let rejected = actor.apply_metadata(&update.metadata)
+                let rejected = actor.apply_metadata(&update.metadata, &mut self.hitbox_budget)
                     | actor.apply_properties(&update.properties);
                 self.effect_members.update(actor);
                 if incompatible {
@@ -627,6 +636,14 @@ impl ActorStore {
             ActorEvent::Skin { uuid, skin } => self.apply_skin_update(uuid, skin),
             ActorEvent::PlayerList(update) => {
                 let mut capacity_rejected = false;
+                // Several additions share one actor pass; upserts never change the actors.
+                let spawned = update
+                    .entries
+                    .iter()
+                    .filter(|entry| matches!(entry, PlayerListEntry::Add { .. }))
+                    .nth(1)
+                    .is_some()
+                    .then(|| self.spawned_player_unique_ids());
                 for entry in update.entries.iter() {
                     match entry {
                         PlayerListEntry::Add {
@@ -634,6 +651,7 @@ impl ActorStore {
                             unique_id,
                             username,
                             verified,
+                            xuid,
                             skin,
                         } => {
                             let admitted = self.upsert_profile(
@@ -642,8 +660,10 @@ impl ActorStore {
                                     unique_id: *unique_id,
                                     username: username.clone(),
                                     verified: *verified,
+                                    xuid: xuid.clone(),
                                     skin: skin.clone(),
                                 },
+                                spawned.as_ref(),
                             );
                             capacity_rejected |= !admitted;
                             if admitted && self.synthetic_local_uuid == Some(*uuid) {
@@ -656,8 +676,21 @@ impl ActorStore {
                     }
                 }
                 if capacity_rejected {
+                    tracing::debug!(
+                        players = self.players.len(),
+                        "Cinnabar world roster capacity rejected"
+                    );
                     ActorApplyResult::CapacityRejected
                 } else {
+                    tracing::debug!(
+                        players = self.players.len(),
+                        identities = self
+                            .players
+                            .values()
+                            .filter(|profile| !profile.xuid.is_empty())
+                            .count(),
+                        "Cinnabar world roster committed"
+                    );
                     ActorApplyResult::Updated
                 }
             }
@@ -746,7 +779,7 @@ impl ActorStore {
     }
 
     fn apply_link_to(
-        rider_to_ridden: &mut HashMap<i64, i64>,
+        rider_to_ridden: &mut FastHashMap<i64, i64>,
         max_actor_links: usize,
         event: ActorLinkEvent,
     ) -> ActorApplyResult {
@@ -908,7 +941,8 @@ impl ActorStore {
         }
     }
 
-    pub(super) fn lifetime(&self, runtime_id: u64) -> Option<ActorLifetimeId> {
+    /// Resolves the full identity of the actor currently using this runtime ID.
+    pub(crate) fn lifetime(&self, runtime_id: u64) -> Option<ActorLifetimeId> {
         self.actors
             .get(&runtime_id)
             .map(|actor| self.lifetime_for(actor))

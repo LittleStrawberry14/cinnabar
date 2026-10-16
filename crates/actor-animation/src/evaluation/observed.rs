@@ -27,7 +27,7 @@ impl ObservedInputs {
             written: BTreeSet::new(),
             undo: Vec::new(),
             queries: Vec::new(),
-            random: variables.random,
+            random: variables.random_state(),
         }
     }
 
@@ -39,7 +39,7 @@ impl ObservedInputs {
         operations_left: &mut usize,
     ) -> Option<bool> {
         charge(operations_left, 1)?;
-        if self.random != variables.random {
+        if self.random != variables.random_state() {
             return Some(false);
         }
         for (&symbol, expected) in &self.variables {
@@ -47,7 +47,7 @@ impl ObservedInputs {
             let Some(Place::Variable(slot)) = evaluator.layout.place(symbol) else {
                 return Some(false);
             };
-            if variables.values.get(slot) != Some(expected) {
+            if variables.variable(slot).as_ref() != expected.as_ref() {
                 return Some(false);
             }
         }
@@ -75,40 +75,30 @@ impl ObservedInputs {
     pub(super) fn variable(&mut self, symbol: u32, place: Place, variables: &MolangVariables) {
         if let Place::Variable(slot) = place
             && !self.written.contains(&symbol)
-            && let Some(value) = variables.values.get(slot)
         {
             self.variables
                 .entry(symbol)
-                .or_insert_with(|| value.clone());
+                .or_insert_with(|| variables.variable(slot));
         }
     }
 
     /// Records each slot's first pre-write value and excludes later reads from inherited inputs.
     pub(super) fn written(&mut self, symbol: u32, place: Place, variables: &MolangVariables) {
         if self.written.insert(symbol) {
-            let value = match place {
-                Place::Variable(slot) => variables.values.get(slot),
-                Place::Temporary(slot) => variables.temps.get(slot),
-            };
-            if let Some(value) = value {
-                #[cfg(test)]
-                super::selection_work::record(|work| work.saved += 1);
-                self.undo.push((place, value.clone()));
-            }
+            #[cfg(test)]
+            super::selection_work::record(|work| work.saved += 1);
+            self.undo.push((place, variables.read(place)));
         }
     }
 
     /// Restores the selection prefix after success or failure, including clean temps and RNG.
     pub(crate) fn restore(&mut self, variables: &mut MolangVariables) {
         for (place, value) in std::mem::take(&mut self.undo) {
-            if let Some(entry) = variables.entry(place) {
-                #[cfg(test)]
-                super::selection_work::record(|work| work.restored += 1);
-                *entry = value;
-            }
+            #[cfg(test)]
+            super::selection_work::record(|work| work.restored += 1);
+            variables.restore(place, value);
         }
-        variables.random = self.random;
-        variables.random_draws = 0;
+        variables.restore_random(self.random);
     }
 
     /// Records the exact arguments and value of one query along the executed branch.

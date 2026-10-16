@@ -29,11 +29,22 @@ use {
     diagnostics::write_stdout_marker,
 };
 
-/// Drains in FIFO order, rechecking stream capacity after each event and stopping at a barrier.
+/// Records a world event's commit in the latency trace; installed only while tracing.
+pub(super) fn trace_committed(fifo: u64) {
+    if let Some(trace) = bridge::latency_trace::active() {
+        trace.record(
+            bridge::latency_trace::kind::COMMITTED,
+            &[fifo as i64, trace.now()],
+        );
+    }
+}
+
+/// Drains available lanes while the stream preserves dependencies and transfer barriers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain(
     network: &mut NetworkHandle<PackApplication>,
     client_world: &mut ClientWorld,
+    fatal_error: &mut Option<String>,
     player_runtime: &mut ResMut<PlayerRuntime>,
     ui_runtime: &mut ResMut<UiRuntimeResource>,
     #[cfg(feature = "acceptance")] acceptance: &mut ResMut<AcceptanceRun>,
@@ -43,30 +54,26 @@ pub(super) fn drain(
     let mut drain = WorldIngressDrain::new(Instant::now() + WORLD_INGRESS_DRAIN_BUDGET);
     loop {
         let (receiver, pending) = network.world_ingress_mut();
-        let Some(ingress) = drain.next(
+        let ingress = match drain.next(
             receiver,
             pending,
-            |ingress| {
-                client_world
-                    .stream
-                    .as_ref()
-                    .is_none_or(|stream| match ingress {
-                        client_session::WorldIngress::Event(sequenced) => {
-                            stream.can_admit(&sequenced.event)
-                        }
-                        client_session::WorldIngress::LevelChunk { event, .. } => {
-                            // The payload stays in its separate Bytes buffer; only metadata is cloned.
-                            stream.can_admit(&WorldEvent::LevelChunk(event.clone()))
-                        }
-                        client_session::WorldIngress::FastTransferBarrier { .. } => {
-                            stream.light_admission_capacity() > 0
-                        }
-                    })
-            },
-            Instant::now(),
-        ) else {
-            break;
+            client_world.stream.as_mut(),
+            Instant::now,
+        ) {
+            Ok(Some(ingress)) => ingress,
+            Ok(None) => break,
+            Err(error) => {
+                record_fatal_error(fatal_error, format!("world ingress rejected data: {error}"));
+                break;
+            }
         };
+        if let Some(trace) = bridge::latency_trace::active() {
+            let (session, fifo) = ingress.identity();
+            trace.record(
+                bridge::latency_trace::kind::DRAINED,
+                &[session as i64, fifo as i64, trace.now()],
+            );
+        }
         let sequenced = match ingress {
             client_session::WorldIngress::Event(sequenced) => {
                 network.record_readiness_event_consumed(&sequenced.event);
@@ -83,7 +90,7 @@ pub(super) fn drain(
                 let sequence = sequence.get();
                 if session_generation != ui_runtime.session_id() {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         format!(
                             "world ingress crossed a session boundary: expected {}, got {session_generation}",
                             ui_runtime.session_id()
@@ -93,7 +100,7 @@ pub(super) fn drain(
                 }
                 let Some(stream) = client_world.stream.as_mut() else {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         "received LevelChunk before StartGame bootstrap".to_owned(),
                     );
                     continue;
@@ -118,7 +125,7 @@ pub(super) fn drain(
                 stream.dispatch_ingress_decode();
                 if let Err(error) = submitted {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         format!("world FIFO rejected LevelChunk: {error}"),
                     );
                 }
@@ -133,7 +140,7 @@ pub(super) fn drain(
                 let sequence = sequence.get();
                 if session_generation != ui_runtime.session_id() {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         format!(
                             "fast-transfer barrier crossed a session boundary: expected {}, got {session_generation}",
                             ui_runtime.session_id()
@@ -143,14 +150,14 @@ pub(super) fn drain(
                 }
                 let Some(stream) = client_world.stream.as_mut() else {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         "received fast-transfer barrier before StartGame bootstrap".to_owned(),
                     );
                     continue;
                 };
                 if let Err(error) = stream.commit_barrier(sequence) {
                     record_fatal_error(
-                        &mut client_world.fatal_error,
+                        fatal_error,
                         format!("fast-transfer FIFO marker was rejected: {error}"),
                     );
                     continue;
@@ -164,7 +171,7 @@ pub(super) fn drain(
         };
         if sequenced.session_generation.get() != ui_runtime.session_id() {
             record_fatal_error(
-                &mut client_world.fatal_error,
+                fatal_error,
                 format!(
                     "world ingress crossed a session boundary: expected {}, got {}",
                     ui_runtime.session_id(),
@@ -174,15 +181,14 @@ pub(super) fn drain(
             continue;
         }
         let Some(stream) = client_world.stream.as_mut() else {
-            client_world.fatal_error =
-                Some("received world data before StartGame bootstrap".to_owned());
+            *fatal_error = Some("received world data before StartGame bootstrap".to_owned());
             continue;
         };
         let sequenced = match route_player_ingress(player_runtime, ui_runtime, stream, sequenced) {
             Ok(Some(sequenced)) => sequenced,
             Ok(None) => continue,
             Err(error) => {
-                record_fatal_error(&mut client_world.fatal_error, error);
+                record_fatal_error(fatal_error, error);
                 continue;
             }
         };
@@ -207,7 +213,7 @@ pub(super) fn drain(
         let submitted = stream.submit(sequenced.sequence.get(), sequenced.event);
         stream.dispatch_ingress_decode();
         if let Err(error) = submitted {
-            client_world.fatal_error = Some(format!("world FIFO rejected data: {error}"));
+            *fatal_error = Some(format!("world FIFO rejected data: {error}"));
         }
     }
     if let Some(stream) = client_world.stream.as_mut() {

@@ -2,17 +2,26 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod account;
+#[cfg(not(target_arch = "wasm32"))]
+mod cinnabar_api;
+#[cfg(not(target_arch = "wasm32"))]
+pub use cinnabar_api::{
+    CinnabarApiConfig, CinnabarLookup, configure_cinnabar_api, lookup_cinnabar_players,
+    sync_cinnabar_emotes, valid_cinnabar_uuid, valid_cinnabar_xuid,
+};
 /// Shared values and wire enums for the Rust and Go bridge.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod contract;
 pub use contract::{
-    AuthState, Backend, ConnectStage, ConnectTarget, GameMode, Lifecycle, MAX_FRAME_LEN,
-    PackAcquisition, PackApplication, PackDownstreamOutcome, PackOffer, Transport, WorldState,
+    AuthState, Backend, CinnabarRelease, ConnectStage, ConnectTarget, GameMode, Lifecycle,
+    MAX_FRAME_LEN, PackAcquisition, PackApplication, PackDownstreamOutcome, PackOffer, Transport,
+    WorldState,
 };
 #[cfg(not(target_arch = "wasm32"))]
 mod endpoint;
 mod error;
 mod framed;
+pub mod latency_trace;
 #[cfg(not(target_arch = "wasm32"))]
 mod packet_delay;
 #[cfg(not(target_arch = "wasm32"))]
