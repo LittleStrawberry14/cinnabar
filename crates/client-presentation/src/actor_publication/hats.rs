@@ -1,0 +1,172 @@
+//! Catalog attachments follow admitted actors and their current bone poses.
+use super::RemoteHat;
+use crate::presentation::actors::ActorPresentationBatch;
+use cosmetics::Item;
+use render_model::{
+    ACTOR_LAYER_BODY, ActorRigRoute, MAX_RENDERED_PLAYERS,
+    hats::{self, HatPoseCache},
+};
+use std::{collections::HashMap, sync::Arc};
+
+#[derive(Default)]
+struct Attachment {
+    wind: hats::EarWind,
+    bend: f32,
+    poses: [HatPoseCache; 2],
+    seen: u64,
+}
+#[derive(Default)]
+pub(super) struct HatState {
+    attachments: HashMap<(u64, u64, Item), Attachment>,
+    local: Vec<Item>,
+    local_attachments: HashMap<Item, Attachment>,
+    seconds: f32,
+    frame: u64,
+}
+impl HatState {
+    /// Captures local slot selections and caller-owned motion for this frame.
+    pub(super) fn advance(&mut self, items: &[Item], speed: f32, seconds: f32) {
+        self.local.clear();
+        self.local.extend_from_slice(items);
+        self.seconds = seconds;
+        self.frame = self.frame.wrapping_add(1);
+        self.local_attachments
+            .retain(|item, _| items.contains(item));
+        for &item in items {
+            let attachment = self.local_attachments.entry(item).or_default();
+            attachment.bend = attachment.wind.advance(item, speed, seconds);
+        }
+    }
+
+    /// Shares local motion with the HUD even while the world body is hidden.
+    pub(super) fn local_bends(&self) -> Vec<(Item, f32)> {
+        self.local
+            .iter()
+            .filter_map(|item| {
+                self.local_attachments
+                    .get(item)
+                    .map(|attachment| (*item, attachment.bend))
+            })
+            .collect()
+    }
+
+    /// Submits each slot at its catalog bone, sharing immutable geometry and one texture per item.
+    pub(super) fn attach(
+        &mut self,
+        batch: &mut ActorPresentationBatch,
+        stream: Option<&chunk_pipeline::WorldStream>,
+        items: &[RemoteHat],
+        scene: &mut render_scene::ActorRenderScene,
+    ) {
+        let Some(stream) = stream else {
+            self.attachments.clear();
+            return;
+        };
+        let mut textures = HashMap::new();
+        let count = batch.submissions.len();
+        for index in 0..count {
+            let body = batch.submissions[index].clone();
+            let id = body.input.identity.runtime_id;
+            if body.input.identity.layer != ACTOR_LAYER_BODY || body.route == ActorRigRoute::NoDraw
+            {
+                continue;
+            }
+            let Some(actor) = stream.authority().actor(id) else {
+                continue;
+            };
+            let local = id == stream.local_player_runtime_id();
+            let selected: Vec<_> = if local {
+                self.local.clone()
+            } else {
+                items
+                    .iter()
+                    .filter(|item| {
+                        item.runtime_id == id && item.spawn_revision == actor.spawn_revision
+                    })
+                    .map(|item| item.hat)
+                    .collect()
+            };
+            for item in selected {
+                let Some(bone) = stream.authority().actor_rig(id).and_then(|rig| {
+                    rig.bone_names.iter().position(|bone| {
+                        bone.eq_ignore_ascii_case(&item.descriptor().attachment_bone)
+                    })
+                }) else {
+                    continue;
+                };
+                let (Some(previous), Some(current)) = (
+                    body.input.previous_bones.get(bone),
+                    body.input.current_bones.get(bone),
+                ) else {
+                    continue;
+                };
+                let attachment = if local {
+                    self.local_attachments.entry(item).or_default()
+                } else {
+                    let attachment = self
+                        .attachments
+                        .entry((id, actor.spawn_revision, item))
+                        .or_default();
+                    let speed = if actor.interpolation_ticks_remaining > 0 {
+                        hats::forward_speed(actor.velocity, actor.head_yaw)
+                            / simulation_clock::TICKS_PER_SECOND as f32
+                    } else {
+                        0.0
+                    };
+                    attachment.bend = attachment.wind.advance(item, speed, self.seconds);
+                    attachment.seen = self.frame;
+                    attachment
+                };
+                let model = hats::rig(item);
+                let texture_layer = if let Some(layer) = textures.get(&item) {
+                    *layer
+                } else {
+                    if batch.skin_layers.len() >= MAX_RENDERED_PLAYERS {
+                        continue;
+                    }
+                    let layer = batch.skin_layers.len() as u32;
+                    batch.skin_layers.push(model.pixels.clone());
+                    textures.insert(item, layer);
+                    layer
+                };
+                if !scene.contains_geometry(model.geometry.id) {
+                    let _ = scene.insert_geometry(model.geometry.clone());
+                }
+                let mut submission = body.clone();
+                // The catalog slot index keeps layers unique for multiple attachments on one actor.
+                submission.input.identity.layer = hats::ACTOR_LAYER_HAT
+                    + cosmetics::slot_index(&item.descriptor().slot).unwrap_or(0) as u8;
+                submission.input.rig = model.geometry.id;
+                submission.input.current_bones =
+                    attachment.poses[1].pose(item, *current, attachment.bend);
+                submission.input.previous_bones = if previous == current {
+                    Arc::clone(&submission.input.current_bones)
+                } else {
+                    attachment.poses[0].pose(item, *previous, attachment.bend)
+                };
+                submission.texture_layer = texture_layer;
+                submission.tint = 0;
+                batch.submissions.push(submission);
+            }
+        }
+        self.attachments
+            .retain(|_, attachment| attachment.seen == self.frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn local_motion_advances_without_a_visible_body_and_unequip_retires_it() {
+        let item = render_model::hats::fixture::bunny();
+        let rigid = render_model::hats::fixture::rigid();
+        let mut state = HatState::default();
+        state.advance(&[item, rigid], 6.0, 1.0);
+        let bends = state.local_bends();
+        assert!(bends.iter().any(|(key, bend)| *key == item && *bend > 0.5));
+        assert!(bends.contains(&(rigid, 0.0)));
+        state.advance(&[], 0.0, 1.0);
+        assert!(state.local_bends().is_empty());
+    }
+}
