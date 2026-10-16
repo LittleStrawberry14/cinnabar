@@ -3,7 +3,7 @@
 The wardrobe uses a fetched, ETag-cached catalog with namespaced item IDs and independent
 head, back, face, body, pet and aura slots. Geometry, textures and optional joint motion
 are loaded from bounded, SHA-256-checked assets. The first catalog item is the original
-bunny ears; editable artwork and export conformance tests remain available.
+bunny ears, with the original crown retained; editable artwork and export conformance tests remain available.
 Each attachment follows its declared bone and offset. World and HUD share local motion.
 Unknown, unsupported and unowned items render nothing.
 

@@ -36,7 +36,46 @@
       ],
       "render_flags": {
         "double_sided": false
-      }
+      },
+      "license": "https://polyformproject.org/licenses/noncommercial/1.0.0"
+    },
+    {
+      "id": "cinnabar:crown",
+      "slot": "head",
+      "display_name": "Crown",
+      "tags": [
+        "original",
+        "free"
+      ],
+      "free": true,
+      "assets": {
+        "geometry": {
+          "url": "/v1/cosmetics/assets/fd599f4edc99aa6dff7951d508394b2a67cc09b8f022776e9f00257f1c9f9c16",
+          "sha256": "fd599f4edc99aa6dff7951d508394b2a67cc09b8f022776e9f00257f1c9f9c16",
+          "bytes": 80585
+        },
+        "texture": {
+          "url": "/v1/cosmetics/assets/500f6f7a3d966858cbe141e3c785ca113ca153b24f1b27b1ca0d4fe49e7e1de1",
+          "sha256": "500f6f7a3d966858cbe141e3c785ca113ca153b24f1b27b1ca0d4fe49e7e1de1",
+          "bytes": 177
+        },
+        "animation": {
+          "url": "/v1/cosmetics/assets/ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "bytes": 3
+        }
+      },
+      "geometry_id": "geometry.cinnabar.crown",
+      "attachment_bone": "head",
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "render_flags": {
+        "double_sided": false
+      },
+      "license": "https://polyformproject.org/licenses/noncommercial/1.0.0"
     }
   ]
 }

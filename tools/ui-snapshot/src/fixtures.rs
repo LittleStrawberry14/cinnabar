@@ -570,6 +570,7 @@ fn wardrobe() -> Fixture {
     let mut view = MenuView::new(true, "Player".into());
     view.screen = MenuScreen::DressingRoom;
     let item = render_model::hats::fixture::bunny();
+    render_model::hats::fixture::crown();
     Arc::make_mut(&mut view.dressing_room).section =
         launcher::dressing_room::DressingRoomSection::Cosmetics;
     Arc::make_mut(&mut view.dressing_room)

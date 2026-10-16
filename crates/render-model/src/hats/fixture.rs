@@ -35,3 +35,23 @@ pub fn rigid() -> Item {
         .unwrap()
     })
 }
+
+/// Admits the existing original crown through the same catalog path as downloaded items.
+pub fn crown() -> Item {
+    static ITEM: OnceLock<Item> = OnceLock::new();
+    *ITEM.get_or_init(|| {
+        let catalog: Catalog = serde_json::from_str(include_str!("fixture/catalog.json")).unwrap();
+        let item = catalog
+            .items
+            .into_iter()
+            .find(|item| item.id == "cinnabar:crown")
+            .unwrap();
+        super::admit(
+            item,
+            include_bytes!("crown.geo.json"),
+            include_bytes!("crown.png"),
+            b"{}\n",
+        )
+        .unwrap()
+    })
+}
