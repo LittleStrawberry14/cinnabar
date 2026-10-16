@@ -8,7 +8,7 @@ use bevy::{
     prelude::*,
     render::{
         batching::gpu_preprocessing::GpuPreprocessingMode,
-        render_phase::{ViewBinnedRenderPhases, ViewSortedRenderPhases},
+        render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases, ViewSortedRenderPhases},
         view::{ExtractedView, ViewUniforms, prepare_view_uniforms},
     },
 };
@@ -232,12 +232,26 @@ fn execute_draws(world: &mut World) {
             }),
             ..Default::default()
         });
-        world
-            .resource::<ViewBinnedRenderPhases<Opaque3d>>()
-            .get(&retained)
-            .unwrap()
-            .render(&mut pass, world, view)
-            .unwrap();
+        let phases = world.resource::<ViewBinnedRenderPhases<Opaque3d>>();
+        let phase = phases.get(&retained).unwrap();
+        let mut functions = world.resource::<DrawFunctions<Opaque3d>>().write();
+        functions.prepare(world);
+        for ((batch, bin), entries) in &phase.non_mesh_items {
+            for (main_entity, entity) in &entries.entities {
+                let item = Opaque3d::new(
+                    batch.clone(),
+                    bin.clone(),
+                    (*entity, *main_entity),
+                    0..1,
+                    PhaseItemExtraIndex::None,
+                );
+                functions
+                    .get_mut(item.draw_function())
+                    .unwrap()
+                    .draw(world, &mut pass, view, &item)
+                    .unwrap();
+            }
+        }
     });
     queue.submit(commands);
     let gpu = world.resource::<ActorGpu>();
