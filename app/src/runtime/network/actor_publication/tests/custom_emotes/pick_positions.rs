@@ -61,7 +61,7 @@ fn production(app: &mut App) -> (bevy::ecs::schedule::Schedule, World) {
         .remove(Update)
         .unwrap();
     let mut world = fixture();
-    world.remove_resource::<client_interaction::movement::LocalPhysicsController>();
+    world.insert_resource(client_interaction::movement::LocalPhysicsController::default());
     let mut movement = client_interaction::movement::MovementTicker::default();
     *movement = gameplay::test_support::survival_mining::ticker_with_ticks(1);
     world.insert_resource(movement);
@@ -375,7 +375,7 @@ fn remote_actor_motion_uses_completed_local_ticks() {
 fn remote_actor_motion_clamps_unowned_frame_time() {
     let mut app = App::new();
     let (mut schedule, mut world) = production(&mut app);
-    world.remove_resource::<client_interaction::movement::LocalPhysicsController>();
+    world.insert_resource(client_interaction::movement::LocalPhysicsController::default());
     {
         let mut client = world.resource_mut::<ClientWorld>();
         let stream = client.stream.as_mut().unwrap();
