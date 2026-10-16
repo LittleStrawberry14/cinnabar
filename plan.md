@@ -175,6 +175,10 @@ job costs remain unverified. No browser release or parity gate closes here.
 
 ## Far terrain (LOD)
 
+**Disabled, incomplete:** far terrain and the full-detail radius are off, with no Video settings,
+until their streaming bugs are fixed; values older builds saved are ignored. The design below is
+kept for re-enabling.
+
 `far-terrain` summarises each column the server sent: the height of every cell's highest
 visible block, its average texture colour tinted by biome, and any water depth, with water
 blended over its floor. World workers summarise a column when all of its sections have arrived,
@@ -248,7 +252,7 @@ saved on/off reads as On/Auto.
 
 With far terrain on, only columns within the full-detail radius are lit, meshed and uploaded;
 the rest of what the server sends keeps its block data and is drawn by far terrain from its
-summary. The radius is Auto by device tier (24, 32 or 48 chunks) or set under Video › Full-Detail Distance
+summary. The radius is Auto by device tier (24, 32 or 48 chunks) or a full-detail distance
 (16–64), capped at the render distance, so large render distances cost far tiles rather than
 meshes. A column is promoted (relit and remeshed) inside the radius and demoted two chunks past
 it. Both hand-overs are two-phase: a promoted column passes to near terrain only once its
@@ -1324,6 +1328,8 @@ these changes do not close the movement, camera, or actor parity gates.
   spyglass); the swim-speed factor and underwater narrowing remain incomplete.
   Sprint transitions recalculate movement speed from attribute defaults and other
   modifiers, preventing FOV overshoot after attribute resends and sprint restarts.
+  Server Speed effect changes refresh that value while sprint stays held.
+  Local Speed modifier expiry without a server update remains incomplete.
   Gameplay angles provisionally apply the [5, 130] bound after effects, preserving
   authored camera overrides. Incomplete: the exact-version final-angle rule and
   live post-death distortion acceptance are unverified.
@@ -8826,6 +8832,16 @@ native comparison remains incomplete. See
 
 ## Third-person held attachables
 
+Incomplete: held attachables publish one selected layer per hand. Authored
+dissolve depth/color passes use a drawable ordinary-material fallback, retaining
+overlay suppression; coupled multi-pass coverage remains unsupported in both
+first and third person. This does not close a material or held-item parity gate.
+
+Selected tint, overlay, UV animation and lighting modifiers are retained in both
+view submissions. Incomplete: the first-person hand shader does not yet consume
+those fields. Projection regressions verify published values; first-person styled
+rendering remains incomplete and does not close a material parity gate.
+
 Held models evaluate authored scripts and texture meshes against the owner's
 posed bones, including aiming skeleton bows. Third-person bow draws supply the
 owner's use duration, draw frame, and render delta through release. Unchanged
@@ -9651,3 +9667,19 @@ captures and measured renderer work remain outstanding; no speedup is claimed.
 Explicit default collision and selection components retain their bounds before state transformations. Empty pixel boxes remain empty instead of becoming full cubes, asymmetric X bounds follow the block coordinate convention, and collision boxes retain their supported taller Y range. Movement, targeting and outlines keep their independent component bounds in both palette modes.
 
 Incomplete parity: the original report does not identify the affected block definitions. In-world acceptance of the component cases remains open.
+
+## Actor GPU allocation recovery
+
+Actor page and buffer allocations now check out-of-memory errors before publishing
+resources. A failed page replacement retains a compatible previous page; a fresh
+page retries progressively smaller normalized-UV rasters down to 1×1. Failed
+geometry, skin or frame-buffer preparation skips that publication's draw. Unused
+previous pages are released before replacement uploads. The existing actor pixel
+ceiling remains unchanged.
+
+Incomplete parity: retaining current resources on failed replacement and coarse
+fallback through 1×1 are verified recovery behavior. Per-texture mip demand,
+residency and idle demotion remain unimplemented. Windows-specific texture memory
+allowances, initial allocation policy and adapter pressure thresholds remain
+unverified. This recovery change does not close the streaming or hardware frame
+budget acceptance gates.
