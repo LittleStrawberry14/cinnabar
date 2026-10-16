@@ -486,3 +486,37 @@ fn custom_skin_focus_keeps_item_edits_without_classic_arm_choices() {
     assert!(actions.contains(&MenuAction::DressingRoom(Action::BeginRename(selected))));
     assert!(actions.contains(&MenuAction::DressingRoom(Action::BeginDelete(selected))));
 }
+
+#[test]
+fn cosmetic_selection_updates_local_presentation_without_sending_a_skin_change() {
+    use launcher::dressing_room::DressingRoomSection;
+    let mut menu = MenuRuntime::new(false, 2, "fixture".to_owned());
+    let mut local = menu.player_skin.clone();
+    let mut world = None;
+    menu.activate(MenuAction::Navigate(MenuScreen::DressingRoom));
+    wait(&mut menu, &mut local, &mut world);
+    menu.activate(MenuAction::DressingRoom(Action::SetSection(
+        DressingRoomSection::Cosmetics,
+    )));
+    assert!(
+        menu.dressing_room_focus()
+            .contains(&MenuAction::DressingRoom(Action::SelectCosmetic(None)))
+    );
+    assert!(
+        !menu
+            .dressing_room_focus()
+            .contains(&MenuAction::DressingRoom(Action::Import))
+    );
+    let before = local.standard_skin();
+    menu.activate(MenuAction::DressingRoom(Action::SelectCosmetic(Some(
+        render_model::hats::fixture::bunny(),
+    ))));
+    wait(&mut menu, &mut local, &mut world);
+    assert_eq!(local.cosmetics, vec![render_model::hats::fixture::bunny()]);
+    assert_eq!(menu.player_skin.cosmetics, local.cosmetics);
+    assert_eq!(local.standard_skin(), before);
+    assert!(menu.skin_packet_pending.is_none());
+    menu.activate(MenuAction::DressingRoom(Action::SelectCosmetic(None)));
+    wait(&mut menu, &mut local, &mut world);
+    assert!(local.cosmetics.is_empty());
+}

@@ -24,6 +24,7 @@ enum Job {
     Rename(usize, String),
     Delete(usize),
     SelectCape(Option<usize>),
+    SelectCosmetic(Option<cosmetics::Item>),
     ImportCape(Option<PathBuf>),
     RenameCape(usize, String),
     DeleteCape(usize),
@@ -93,6 +94,8 @@ impl Worker {
         fallback: crate::player_skin::LocalPlayerSkin,
     ) -> Result<Self, String> {
         Self::start_with_refresh(layout, fallback, |layout| {
+            #[cfg(not(any(test, feature = "test-support")))]
+            crate::player_skin::catalog::refresh_cosmetics(layout);
             #[cfg(not(any(test, feature = "test-support")))]
             crate::player_skin::catalog::refresh_default_capes(layout);
             #[cfg(any(test, feature = "test-support"))]
@@ -189,6 +192,7 @@ fn apply_job(layout: &InstallLayout, view: &mut DressingRoomView, job: Job) -> R
         Job::Rename(index, name) => catalog::rename(layout, view, index, &name),
         Job::Delete(index) => catalog::delete(layout, view, index),
         Job::SelectCape(index) => catalog::select_cape(layout, view, index),
+        Job::SelectCosmetic(hat) => catalog::select_cosmetic(layout, view, hat),
         Job::ImportCape(None) => picker::pick(true)
             .and_then(|path| path.map_or(Ok(()), |path| catalog::import_cape(layout, view, &path))),
         Job::ImportCape(Some(path)) => catalog::import_cape(layout, view, &path),
@@ -250,6 +254,7 @@ impl MenuRuntime {
             Action::Import => self.queue_skin_job(Job::Import(None)),
             Action::ImportCape => self.queue_skin_job(Job::ImportCape(None)),
             Action::SelectCape(index) => self.queue_skin_job(Job::SelectCape(index)),
+            Action::SelectCosmetic(hat) => self.queue_skin_job(Job::SelectCosmetic(hat)),
             Action::SetModel(model) => self.queue_skin_job(Job::Model(model)),
             Action::BeginRename(index) => self.begin_skin_editor(
                 index,
@@ -296,11 +301,13 @@ impl MenuRuntime {
     /// Publishes completed appearance work to local state and retries the current skin packet.
     pub fn poll_dressing_room(
         &mut self,
-        local: Option<&mut crate::player_skin::LocalPlayerSkin>,
+        mut local: Option<&mut crate::player_skin::LocalPlayerSkin>,
         stream: Option<&mut chunk_pipeline::WorldStream>,
         send: Option<&SkinPacketSender<'_>>,
         session: u64,
     ) {
+        #[cfg(not(any(test, feature = "test-support")))]
+        self.ensure_dressing_room();
         if let Some(worker) = self.dressing_room_worker.as_mut() {
             while let Ok(mut result) = worker.results.try_recv() {
                 if result.completed_command {
@@ -328,6 +335,15 @@ impl MenuRuntime {
                     self.skin_update_pending = true;
                     self.skin_outbound = None;
                     self.skin_packet_pending = result.packet;
+                }
+                if self.player_skin.cosmetics
+                    != cosmetics::resolve(&result.view.selected_cosmetics, |_| false)
+                {
+                    self.player_skin.cosmetics =
+                        cosmetics::resolve(&result.view.selected_cosmetics, |_| false);
+                    if let Some(local) = local.as_deref_mut() {
+                        local.cosmetics.clone_from(&self.player_skin.cosmetics);
+                    }
                 }
                 self.dressing_room = Arc::new(result.view);
             }
@@ -415,13 +431,10 @@ impl MenuRuntime {
             return actions;
         }
         actions.extend(
-            [
-                launcher::dressing_room::DressingRoomSection::Skins,
-                launcher::dressing_room::DressingRoomSection::Capes,
-            ]
-            .into_iter()
-            .filter(|section| *section != self.dressing_room.section)
-            .map(|section| MenuAction::DressingRoom(Action::SetSection(section))),
+            launcher::dressing_room::DressingRoomSection::ALL
+                .into_iter()
+                .filter(|section| *section != self.dressing_room.section)
+                .map(|section| MenuAction::DressingRoom(Action::SetSection(section))),
         );
         if self.dressing_room.section == launcher::dressing_room::DressingRoomSection::Capes {
             actions.extend([
@@ -443,6 +456,15 @@ impl MenuRuntime {
                     MenuAction::DressingRoom(Action::BeginDeleteCape(index)),
                 ]);
             }
+            return actions;
+        }
+        if self.dressing_room.section == launcher::dressing_room::DressingRoomSection::Cosmetics {
+            actions.push(MenuAction::DressingRoom(Action::SelectCosmetic(None)));
+            actions.extend(
+                cosmetics::Item::all()
+                    .iter()
+                    .map(|hat| MenuAction::DressingRoom(Action::SelectCosmetic(Some(*hat)))),
+            );
             return actions;
         }
         actions.push(MenuAction::DressingRoom(Action::Import));

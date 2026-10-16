@@ -23,6 +23,9 @@ mod actor_use_tests;
 #[path = "published_tests/item_use.rs"]
 mod item_use_tests;
 
+#[path = "published_tests/liquid_pick.rs"]
+mod liquid_pick_tests;
+
 #[path = "published_tests/riptide.rs"]
 mod riptide_tests;
 
@@ -49,6 +52,9 @@ mod attack_progress_tests;
 
 #[path = "published_tests/ledge.rs"]
 mod ledge_tests;
+
+#[path = "published_tests/selection.rs"]
+mod selection_tests;
 
 #[path = "published_tests/drop_inventory.rs"]
 mod drop_inventory_tests;
