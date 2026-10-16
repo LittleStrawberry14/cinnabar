@@ -38,7 +38,8 @@ fn cape_composition_reuses_the_drawn_chest_selection_with_cold_and_warm_predicat
                 install(&mut runtime, &mut pages, Arc::clone(&entities), catalog);
             }
             let mut state = ActorFrameState::default();
-            let stream = equipped_stream(Arc::clone(&entities), &mut state);
+            let mut stream = equipped_stream(Arc::clone(&entities), &mut state);
+            stream.advance_actor_interpolation_ticks(1);
             let input = equipment::remote_input(&stream, 2);
             for wings in [false, true, true] {
                 let batch = publish(

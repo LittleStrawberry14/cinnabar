@@ -54,7 +54,7 @@ pub(super) fn attach(
     new_geometries: &mut Vec<render_model::ActorRigGeometry>,
 ) {
     let LayerPoses {
-        local_runtime_id: _,
+        local_runtime_id,
         local_equipment: _,
         java_posed,
         combat_visuals: _,
