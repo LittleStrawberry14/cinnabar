@@ -1,5 +1,48 @@
 # Phases 2-5 Completion Ledger
 
+## Redstone dust item sprite
+
+A reviewed default binding selects the item-atlas dust sprite, leaving placed
+wire and redstone-block rendering separate. Owning regressions cover authored
+sprite pixels, carrier roundtrips and absent-atlas fallback. Native and current
+before frames confirm the wrong icon and invisible held item. Rebuilt carriers
+show the correct dust sprite in the fixed hotbar and hand. All 308 owning tests
+and focused checks pass; other geometry and item-parity gates remain open.
+
+## Command-block terrain materials
+
+Facing and conditional selectors now retain their front/back panels, oriented
+side arrows and atlas-bound animation strips. Compiler regressions cover every
+registered command variant, boundary culling and carrier roundtrips. Render-fact,
+exact regeneration and focused compile checks pass. Local BDS frames and animation
+phases pass against the official Android reference. Broader pack/platform parity
+and hardware performance gates remain open; the command-block editor is unfinished.
+
+## Liquid surfaces beneath opaque roofs
+
+Lowered water and lava tops remain visible below solid blocks, with shared side
+insets. Owning meshing regressions and the focused crate check pass. Matched local
+BDS frames reproduce the missing tops and verify the corrected surfaces against
+the official Android client. Broader liquid parity and hardware performance gates
+remain open.
+
+## Catalog cosmetics
+
+A domain catalog replaces the fixed hat list. Independent slot selections persist locally;
+ETag catalog caching and SHA-256 asset admission precede geometry or texture decoding.
+Original bunny ears use bounded authored joint motion. Every slot follows its declared
+attachment bone and offset, and the HUD shares local motion with world presentation.
+Saved hats migrate into the head slot without overriding current choices. Visible thumbnails
+and equipped textures share the artwork budget; stable gallery frames and cosmetic motion
+retain their catalog and raster caches. Cosmetic layers are separate from skins, flames and
+render-controller layers, with boundaries derived from the supported slot count.
+
+Session loadouts use authenticated mutual nearby subscriptions with account revision
+ordering and server-side ownership validation. Loadouts have no emote lease. The current
+catalog is free for every account. API and client implementation require API-first rollout;
+live authenticated multi-account acceptance, payments, moderation and hardware qualification
+remain incomplete. No broader parity or performance gate advances.
+
 Settings mod cards now show permission summaries, explicit requested-grant consent
 and a compact customization grid. Capability metadata supplies gameplay warnings;
 batch grant edits preserve the existing registration format and enforcement.
@@ -226,6 +269,10 @@ and exact native and platform comparison remain open.
 
 ## P4.4-LIVE-ACTOR
 
+Sulfur-cube material states and content-pinned shell opacity have alias, carrier
+roundtrip and custom-raster exclusion regressions. Absorbed-block attachment
+placement remains open; no complete actor parity claim.
+
 Held-sprite edge-mask fixtures include alpha 0/1/2 and 16–128 pixel rasters;
 matched pack frames, authored sword display transforms and first-person face shading
 remain open in `plan.md`.
@@ -285,6 +332,10 @@ vocabulary. Screen routing and core form/context consumers use those names;
 remaining controller migrations and stale-name corrections are incomplete.
 This adds no live visual evidence and leaves the UI acceptance gate open.
 
+Cube inventory thumbnails and alpha-tested GUI meshes share the canonical outward
+faces. Regressions cover projected surface orientation, transparent front holes and
+retained alpha/depth/UV behavior. Broader custom-model sidedness remains open.
+
 ## P5.2-HUD
 
 | Field | Evidence |
@@ -295,6 +346,10 @@ This adds no live visual evidence and leaves the UI acceptance gate open.
 | Live/native witness | Not started |
 | Performance/resource witness | Not started |
 | Final status | Open |
+
+Attack-category cooldown shading has owning timer and hotbar-publication regressions
+for admission rollback, shared categories and expiry. A local spear jab reproduces
+the missing overlay against the official client; broader HUD parity remains open.
 
 ## P5.3-CHAT
 

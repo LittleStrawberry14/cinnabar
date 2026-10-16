@@ -66,6 +66,7 @@ type PublishExtras<'w, 's> = (
         Res<'w, NetworkHandle<PackApplication>>,
         Option<ResMut<'w, render_scene::UiGlintSettings>>,
         Res<'w, client_interaction::item_use::ItemUseRuntime>,
+        Res<'w, client_interaction::melee::MeleeRuntime>,
         Res<'w, client_interaction::movement::MovementTicker>,
         Res<'w, client_interaction::movement::LocalPhysicsController>,
     ),
@@ -109,6 +110,7 @@ pub(crate) fn prepare_ui_runtime(
             network,
             glint_settings,
             item_use,
+            melee,
             movement,
             physics,
         ),
@@ -171,6 +173,8 @@ pub(crate) fn prepare_ui_runtime(
     runtime.expire_gameplay_effects(now_millis);
     let stream = client_world.stream.as_ref();
     let menu_skin = menu_runtime.player_skin();
+    presentation.set_preview_cosmetics(&menu_skin.cosmetics);
+    presentation.set_cosmetic_bends(&hand_rig.cosmetic_bends());
     let preview_ready = presentation.set_menu_preview_skin(&menu_skin.standard_skin());
     let own_pixels = render_model::ActorSkinPixels {
         width: menu_skin.width,
@@ -317,6 +321,7 @@ pub(crate) fn prepare_ui_runtime(
         &runtime,
         client_world.stream.as_ref(),
         &item_use,
+        &melee,
         movement.completed_tick(),
     );
     // Floored feet position and absolute world tick for the HUD's position and days-played text.

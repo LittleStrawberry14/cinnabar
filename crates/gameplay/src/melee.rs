@@ -8,11 +8,11 @@ use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration}
 const ATTACK_BUILD_BLOCK_MILLIS: u64 = 200;
 
 #[cfg(test)]
-mod painting_tests;
+mod actor_pick_tests;
 mod target;
 pub use target::{
-    ActorHit, Crosshair, actor_is_pickable, block_pick_distance, classify, classify_block_hit,
-    obstructs_placement, painting_pick_unique_id, pick_actor, pick_actor_by, pick_distance,
+    ActorHit, Crosshair, actor_is_pickable, actor_pick_unique_id, block_pick_distance, classify,
+    classify_block_hit, obstructs_placement, pick_actor, pick_actor_by, pick_distance,
     ray_box_entry,
 };
 
@@ -96,6 +96,19 @@ impl MeleeRuntime {
 
     pub const fn actor_in_front(&self) -> bool {
         self.actor_in_front
+    }
+
+    /// Remaining fraction of an admitted attack category at the completed player tick.
+    pub fn cooldown_progress(&self, cooldown: &protocol::ItemAttackCooldown, tick: u64) -> f32 {
+        if cooldown.ticks == 0 {
+            return 0.0;
+        }
+        self.attack_cooldowns
+            .iter()
+            .find(|(category, _)| *category == cooldown.category)
+            .map_or(0.0, |(_, until)| {
+                (until.saturating_sub(tick) as f32 / cooldown.ticks as f32).min(1.0)
+            })
     }
 
     /// An attack press not yet resolved; a use press waits for it, as an attack handled first

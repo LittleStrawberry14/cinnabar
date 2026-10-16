@@ -159,6 +159,7 @@ fn installed_spear_charge_keeps_the_authored_third_person_arm_with_java_enabled(
             prepared_actor_artwork: &mut prepared_artwork,
         },
         super::super::ActorFrameInput {
+            cosmetics: Vec::new(),
             local_feed: None,
             predicted_eye: Some([feet[0], feet[1] + protocol::PLAYER_NETWORK_OFFSET, feet[2]]),
             predicted_feet: Some(feet),
@@ -167,6 +168,7 @@ fn installed_spear_charge_keeps_the_authored_third_person_arm_with_java_enabled(
             renders_game: true,
             hide_hand: false,
             remote_emotes: Vec::new(),
+            remote_hats: Vec::new(),
             custom_emote: None,
         },
         |_| {},

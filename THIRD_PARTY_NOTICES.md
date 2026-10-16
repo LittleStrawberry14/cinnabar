@@ -434,3 +434,5 @@ SOFTWARE.
   (`webpki-roots`), Unicode-3.0 (`yoke`) and MPL-2.0 (`option-ext`). `wholesym` always links an
   HTTP client for symbol servers; `devtool symbolicate` configures none and never uses it.
 - Distribution: none. `devtool symbolicate` is a developer tool and is not packaged.
+
+The bunny ears and crown Blockbench projects, runtime geometry and textures in `crates/render-model/src/hats/` are original Cinnabar artwork, distributed under the repository license.
