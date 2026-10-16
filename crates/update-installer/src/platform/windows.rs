@@ -1,4 +1,4 @@
-//! Passive MSI installation uses existing rights and Windows Installer's rollback.
+//! Windows Installer owns update writes, permission consent and rollback.
 use anyhow::{Result, ensure};
 use std::{fs, path::Path, process::Command};
 

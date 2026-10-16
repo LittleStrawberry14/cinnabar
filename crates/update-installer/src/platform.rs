@@ -68,7 +68,7 @@ fn quoted(prefix: &str, path: &Path) -> OsString {
     argument
 }
 
-/// Runs Windows Installer passively without requesting elevation or forcing a reboot.
+/// Runs Windows Installer passively with system-managed permission consent and no forced reboot.
 pub(crate) fn install_windows(
     artifact: &Path,
     work: &Path,
