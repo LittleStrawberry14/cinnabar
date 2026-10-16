@@ -294,12 +294,13 @@ impl Session {
                 .iter()
                 .any(|record| record.text != 0 && record.rect[2] > record.rect[0])
         );
-        assert!(
-            scene
-                .atlas
+        assert!(scene.atlas.iter().any(|cell| {
+            cell.rgba8
+                .as_chunks::<4>()
+                .0
                 .iter()
-                .any(|cell| cell.rgba8.chunks_exact(4).any(|pixel| pixel[3] != 0))
-        );
+                .any(|pixel| pixel[3] != 0)
+        }));
     }
 }
 
