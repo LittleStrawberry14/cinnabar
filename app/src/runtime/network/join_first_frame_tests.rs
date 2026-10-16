@@ -100,7 +100,7 @@ fn join_first_frame_keeps_current_artwork_after_reversed_biome_completion_and_se
     let _sounds = client_audio::audio::SERVER_SOUNDS_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut app, _) = crate::runtime::world::authority_test_app();
+    let (mut app, _) = crate::runtime::world::committed_ui::tests::fixture_app();
     let (_original, artwork, entities) = crate::tests::actor_rest_presentation::compiled_fixture(
         "1.0",
         1,

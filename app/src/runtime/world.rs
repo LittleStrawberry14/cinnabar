@@ -14,7 +14,7 @@ use {
     acceptance::model_witness::ModelWitnessFileSource,
     acceptance::mutation::deterministic_mutation_coordinate, diagnostics::write_stdout_marker,
 };
-mod committed_ui;
+pub(super) mod committed_ui;
 mod control_apply;
 mod dimension;
 mod input_locks;
@@ -22,8 +22,6 @@ mod local_retention;
 mod respawn;
 pub(crate) use committed_ui::drain_committed_ui_before_authority;
 use committed_ui::refresh_player_list_cache_for_controls;
-#[cfg(test)]
-pub(crate) use committed_ui::tests::fixture_app as authority_test_app;
 pub(crate) use dimension::advance_dimension_transfer;
 #[cfg(test)]
 mod player_list_tests;
