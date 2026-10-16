@@ -153,7 +153,7 @@ fn assert_installed_creeper_samples(powered: bool) {
         }
     }
     let mut actor = store.get(1).unwrap().clone();
-    let mut animation = ActorAnimationStore::with_assets(assets);
+    let mut animation = ActorAnimationStore::with_assets(Arc::clone(&assets));
     animation.insert(1, 0, &actor);
     animation.advance_tick(
         &HashMap::from([(1, actor.clone())]),
@@ -284,9 +284,30 @@ fn assert_installed_creeper_samples(powered: bool) {
         }
     }
     store.advance_interpolation_ticks(1);
-    let completed = store.actor_rig(1).unwrap().render;
+    // A fresh stationary rig has no decaying walk speed that still needs frame sampling.
+    let actor = store.get(1).unwrap().clone();
+    let mut resting = ActorAnimationStore::with_assets(assets);
+    resting.insert(1, 0, &actor);
+    let actors = HashMap::from([(1, actor)]);
+    for _ in 0..2 {
+        resting.advance_tick(&actors, None, None, true, true, |_| {
+            ActorTickContext::default()
+        });
+    }
+    let completed = resting.get(1).unwrap().render;
     for alpha in [0.25, 0.75] {
-        let layers = store.render_frame(alpha).layers(1).unwrap();
+        let mut remaining = MAX_MOLANG_OPS_PER_RENDER_FRAME;
+        let layers = resting
+            .render_layers(
+                &actors[&1],
+                alpha,
+                [0.0; 2],
+                [0.0; 3],
+                &mut remaining,
+                false,
+            )
+            .unwrap()
+            .render;
         if powered {
             assert!(Arc::ptr_eq(&completed[1].pose, &layers[1].pose));
             assert!(Arc::ptr_eq(
