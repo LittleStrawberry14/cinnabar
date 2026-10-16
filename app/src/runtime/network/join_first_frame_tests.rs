@@ -229,8 +229,10 @@ fn join_first_frame_keeps_current_artwork_after_reversed_biome_completion_and_se
         !gpu.finish(&obsolete, true),
         "the old biome completion must be rejected"
     );
-    reload(&mut app);
-    assert!(app.world().resource::<PackReload>().progress().is_none());
+    test_time::eventually("current pack publication", || {
+        reload(&mut app);
+        app.world().resource::<PackReload>().progress().is_none()
+    });
 
     // Press before the first frame selecting the prepared pack, then observe that exact frame.
     drop(sent.drain());
