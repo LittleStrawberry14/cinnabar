@@ -257,9 +257,10 @@ fn installed_gui_carriers_reuse_sprite_pages_within_the_model_atlas_budget() {
         };
         if matches!(model.placements[0], PreviewHeldPlacement::Sprite { .. }) {
             assert_eq!(
-                model.source,
+                (model.source.page, model.source.uv),
                 presentation
                     .item_icon(&key.identifier, key.metadata)
+                    .map(|icon| (icon.page, icon.uv))
                     .unwrap()
             );
             assert!((model.source.page as usize) < presentation.textures.dynamic_start());
