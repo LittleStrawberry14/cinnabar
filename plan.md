@@ -703,6 +703,14 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   server-supplied terrain; FeatureRegistry consumption and client-side terrain generation
   remain unsupported and incomplete. Server-routing parity remains open.
 
+## Embedded-block overlay
+
+Eyes inside scaffolding keep a clear view instead of receiving the solid-block
+overlay. Submerged eyes still select the liquid medium before the scaffolding
+exception, and ordinary solid blocks retain their overlay. Eligibility for other
+nonopaque blocks, scaffolding interior-face rendering, and complete native
+screen-effect parity remain incomplete.
+
 ## Totem activation
 
 - Local totem activation retains the equipped item before later inventory or equipment updates
@@ -3913,6 +3921,9 @@ resource packs), rigs depending on vanilla clips are attributed as fallbacks; se
 
 Texture-only equipment overrides replace artwork at validated startup texture paths;
 startup bindings, controllers and geometry remain active without loose resource files.
+Startup and session equipment artwork maps bind each placed raster's catalog index once.
+Draws reuse that index, including after missing placements and pack replacement, while
+retaining pack precedence and startup fallback. Hardware frame budgets remain unverified.
 Artwork-only layers support item textures with no entity symbols, create no pack attachable
 bindings and need no sidecar rebuild. Each item's authored dependencies decide whether it
 uses this path. Mixed texture and geometry, controller or material overrides retain the
