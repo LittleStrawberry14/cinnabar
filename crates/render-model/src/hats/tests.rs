@@ -412,5 +412,12 @@ fn catalog_devil_horns_attach_directly_to_the_head_and_stay_rigid() {
     let attachment = head(Quat::from_rotation_y(0.8));
     assert_eq!(*model.pose(attachment, 0.0), *model.pose(attachment, 1.0));
     let preview = thumbnail::render(item, 128, 128).unwrap();
-    assert!(preview.rgba8.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    assert!(
+        preview
+            .rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0)
+    );
 }
