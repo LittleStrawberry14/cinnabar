@@ -543,7 +543,7 @@ mod tests {
     fn frame_uploads_stage_media_records() {
         use crate::upload_staging::BufferUploadStaging;
         let mut app = budget_app();
-        let staging = BufferUploadStaging::for_test(app.world().resource());
+        let staging = BufferUploadStaging::new(app.world().resource());
         app.world_mut().insert_resource(staging);
         prepared(&mut app, vec![screen(1, 0.0)]);
         let stats = app.world().resource::<BufferUploadStaging>().stats();

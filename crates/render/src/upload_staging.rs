@@ -91,7 +91,7 @@ fn initialize(world: &mut World) {
     let (frame, terrain) = (requested.frame, requested.terrain);
     let device = world.resource::<RenderDevice>().clone();
     if frame {
-        world.insert_resource(BufferUploadStaging(Staging::new(&device, FRAME)));
+        world.insert_resource(BufferUploadStaging::new(&device));
     }
     if terrain {
         world.insert_resource(TerrainUploadStaging::new(&device));
@@ -145,9 +145,8 @@ pub(crate) struct BufferUploadStaging(Staging);
 pub(crate) struct TerrainUploadStaging(Staging);
 
 impl BufferUploadStaging {
-    /// Creates the production frame pool for owner-level upload regressions.
-    #[cfg(test)]
-    pub(crate) fn for_test(device: &RenderDevice) -> Self {
+    /// Creates retained staging for recurring frame uploads.
+    pub(crate) fn new(device: &RenderDevice) -> Self {
         Self(Staging::new(device, FRAME))
     }
 }

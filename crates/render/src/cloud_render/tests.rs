@@ -513,7 +513,7 @@ fn frame_uploads_stage_cloud_records_and_colour() {
     use crate::upload_staging::BufferUploadStaging;
     let mut world = world();
     world.init_resource::<render_scene::AtmosphereViewInputs>();
-    let staging = BufferUploadStaging::for_test(world.resource());
+    let staging = BufferUploadStaging::new(world.resource());
     world.insert_resource(staging);
     spawn_view(&mut world, Vec3::ZERO);
     world.run_system_once(prepare_cloud_records).unwrap();

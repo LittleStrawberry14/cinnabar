@@ -369,7 +369,7 @@ mod review_tests {
         use crate::upload_staging::BufferUploadStaging;
         let (mut app, _) = fixture::app();
         let world = app.world_mut();
-        let staging = BufferUploadStaging::for_test(world.resource());
+        let staging = BufferUploadStaging::new(world.resource());
         world.insert_resource(staging);
         world.insert_resource(LightningScene {
             records: vec![BoltRecord {

@@ -519,7 +519,7 @@ fn actor_instances_and_both_bone_endpoints_take_one_pool_lock() {
     use crate::upload_staging::BufferUploadStaging;
     let mut app = render_app();
     let world = app.sub_app_mut(RenderApp).world_mut();
-    let staging = BufferUploadStaging::for_test(world.resource());
+    let staging = BufferUploadStaging::new(world.resource());
     world.insert_resource(staging);
     world.insert_resource(frame(&[false, false, true]));
     let before = world.resource::<BufferUploadStaging>().stats();

@@ -549,7 +549,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let (mut app, _) = crate::queue_review_support::app();
         let world = app.world_mut();
-        let staging = BufferUploadStaging::for_test(world.resource());
+        let staging = BufferUploadStaging::new(world.resource());
         world.insert_resource(staging);
         world.insert_resource(PrecipitationScene {
             layers: vec![PrecipitationLayerRecord::default()],

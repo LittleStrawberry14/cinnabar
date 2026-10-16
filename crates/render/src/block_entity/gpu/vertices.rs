@@ -206,7 +206,7 @@ mod tests {
         let (device, queue) = wgpu::Device::noop(&Default::default());
         let device = RenderDevice::from(device);
         let mut world = World::new();
-        world.insert_resource(BufferUploadStaging::for_test(&device));
+        world.insert_resource(BufferUploadStaging::new(&device));
         world.insert_resource(device);
         world.insert_resource(RenderQueue::new(queue));
         let mut state = SystemState::<FrameUploads>::new(&mut world);
