@@ -437,6 +437,8 @@ compilation, test execution and the behavior/performance acceptance gates remain
 Entity-hover reports use the retained primary actor pick shared with attacks. Local
 ticks report a changed actor or held item before movement, and leaving the actor
 sends a positionless clear. Unchanged targets do not generate repeated reports.
+Remote actor motion shares completed local ticks and fractional progress during prediction;
+otherwise it uses the client frame elapsed cap.
 
 ## Client runtime ownership
 
