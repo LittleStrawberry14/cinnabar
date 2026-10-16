@@ -72,6 +72,10 @@ fn overlay_files(masked: bool, authored_armor: bool) -> Vec<(Box<str>, Vec<u8>)>
 }
 
 /// Runs local or remote publication with the same Java pose marker used by normal assembly.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fixture supplies publication resources and independent presentation settings"
+)]
 fn publish_overlay(
     stream: &WorldStream,
     entities: &RuntimeEntityAssets,
