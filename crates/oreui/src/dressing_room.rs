@@ -2,6 +2,7 @@
 
 mod character;
 mod editor;
+mod hats;
 mod library;
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,7 @@ pub(super) struct PreviewArea {
     pub(super) clip: Bounds,
     pub(super) visible_skins: Vec<usize>,
     pub(super) visible_capes: Vec<usize>,
+    pub(super) visible_cosmetics: Vec<usize>,
 }
 
 fn command(action: Action) -> MenuAction {
@@ -49,10 +51,10 @@ pub(super) fn draw(
         let [left, right] = grid.span(0, if grid.narrow { 8 } else { 12 });
         let viewport = [left, top, right, bottom.max(top + canvas.r(4.0))];
         let scroll = canvas.begin_scroll(
-            if view.dressing_room.section == launcher::dressing_room::DressingRoomSection::Capes {
-                "dressing_room_capes"
-            } else {
-                "dressing_room"
+            match view.dressing_room.section {
+                launcher::dressing_room::DressingRoomSection::Skins => "dressing_room",
+                launcher::dressing_room::DressingRoomSection::Capes => "dressing_room_capes",
+                launcher::dressing_room::DressingRoomSection::Cosmetics => "dressing_room_hats",
             },
             viewport,
         )?;
@@ -106,10 +108,10 @@ pub(super) fn draw(
         bottom - pad,
     ];
     let scroll = canvas.begin_scroll(
-        if view.dressing_room.section == launcher::dressing_room::DressingRoomSection::Capes {
-            "cape_library"
-        } else {
-            "skin_library"
+        match view.dressing_room.section {
+            launcher::dressing_room::DressingRoomSection::Skins => "skin_library",
+            launcher::dressing_room::DressingRoomSection::Capes => "cape_library",
+            launcher::dressing_room::DressingRoomSection::Cosmetics => "hat_library",
         },
         viewport,
     )?;

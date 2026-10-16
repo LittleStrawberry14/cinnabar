@@ -25,6 +25,7 @@ pub struct LocalPlayerSkin {
     pub geometry: Option<Arc<render_api::SkinGeometrySource>>,
     pub engine_version: Arc<str>,
     pub cape: Option<render_api::CapeImage>,
+    pub cosmetics: Vec<cosmetics::Item>,
 }
 
 impl LocalPlayerSkin {
@@ -67,6 +68,7 @@ impl LocalPlayerSkin {
             skin.skin_id = selected_skin_id(selected);
             skin.engine_version = selected.engine_version.clone();
         }
+        skin.cosmetics = cosmetics::resolve(&catalog.selected_cosmetics, |_| false);
         skin
     }
 
@@ -103,6 +105,7 @@ impl LocalPlayerSkin {
             geometry: None,
             engine_version: render_api::DEFAULT_SKIN_GEOMETRY_ENGINE_VERSION.into(),
             cape: None,
+            cosmetics: Vec::new(),
         }
     }
 
