@@ -41,15 +41,19 @@ pub(super) fn spawn(layout: &InstallLayout, ready: &Ready) -> Result<()> {
     if let Some(lease) = &ready.lease {
         lease.set_modified(SystemTime::now())?;
     }
-    spawn_with_args(
-        layout,
-        &[
-            ready.stage.as_os_str().to_owned(),
-            installed_target()?.into_os_string(),
-            std::process::id().to_string().into(),
-            ready.channel.name().into(),
-        ],
-    )?;
+    let mut args = vec![
+        ready.stage.as_os_str().to_owned(),
+        installed_target()?.into_os_string(),
+        std::process::id().to_string().into(),
+        ready.channel.name().into(),
+    ];
+    // The monitor runs from the installed client image until after its parent exits.
+    if cfg!(windows)
+        && let Some(pid) = crate::lifecycle::crash::monitor::pid()
+    {
+        args.push(pid.to_string().into());
+    }
+    spawn_with_args(layout, &args)?;
     if let Some(lease) = &ready.lease {
         // Keep the parent reader through actual process exit, just like the helper copy reader.
         std::mem::forget(lease.clone());
@@ -96,7 +100,7 @@ fn spawn_with_args(layout: &InstallLayout, args: &[OsString]) -> Result<()> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x00000008 | 0x08000000);
     }
-    let mut child = command.spawn()?;
+    let mut child = crate::lifecycle::children::handoff_after_stopping(|| command.spawn())?;
     if let Some(pipe) = child.stdin.take() {
         std::mem::forget(pipe);
     }
@@ -105,7 +109,7 @@ fn spawn_with_args(layout: &InstallLayout, args: &[OsString]) -> Result<()> {
     Ok(())
 }
 
-/// Revalidates before exposing a native package to the desktop; this never requests elevation.
+/// Revalidates before exposing a native package or its download directory to the desktop.
 pub(super) fn open_download(ready: Ready) {
     std::thread::spawn(move || {
         let result = manual_package(&ready).and_then(|package| {
@@ -113,7 +117,7 @@ pub(super) fn open_download(ready: Ready) {
                 ready.expires > OffsetDateTime::now_utc(),
                 "release expired before manual handoff"
             );
-            let path = if cfg!(target_os = "linux") {
+            let path = if cfg!(any(target_os = "linux", windows)) {
                 package.path.parent().context("missing package directory")?
             } else {
                 &package.path

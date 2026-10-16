@@ -11,7 +11,9 @@ pub(super) fn install(
 ) -> Result<()> {
     use std::os::windows::fs::OpenOptionsExt;
     ensure!(
-        target.join("cinnabar.exe").is_file(),
+        target
+            .join(update_manifest::runtime::executable("CLIENT", "windows"))
+            .is_file(),
         "target is not an installed client"
     );
     let msi = work.join("update.msi");

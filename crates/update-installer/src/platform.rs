@@ -42,6 +42,8 @@ pub(crate) fn msiexec_arguments(msi: &Path, target: &Path) -> Vec<OsString> {
         "/passive".into(),
         "/norestart".into(),
         "REBOOT=ReallySuppress".into(),
+        // The helper owns the single client restart after installation completes.
+        "MSIDISABLERMRESTART=1".into(),
         quoted("INSTALLFOLDER=", target),
     ]
 }
