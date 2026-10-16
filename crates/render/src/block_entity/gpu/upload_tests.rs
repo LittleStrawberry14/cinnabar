@@ -106,6 +106,8 @@ fn recurring_vertices_do_not_allocate_native_staging_buffers() {
         return;
     };
     let world = app.sub_app_mut(RenderApp).world_mut();
+    world.init_resource::<render_scene::BlockEntityFrameResource>();
+    world.init_resource::<render_scene::BlockSelectionFrameResource>();
     let mut vertices = vec![BlockEntityVertex::default(); 6];
     world
         .resource_mut::<render_scene::BlockEntityFrameResource>()
