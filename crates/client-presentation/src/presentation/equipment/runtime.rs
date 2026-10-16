@@ -33,6 +33,7 @@ mod native;
 mod pack;
 mod push;
 mod readiness;
+mod routing;
 mod session;
 mod style;
 mod types;
@@ -394,7 +395,15 @@ impl EquipmentRuntime {
         ] {
             let Some(item) = item else { continue };
             let before = layers.len();
-            if self.uses_native_item_mesh(&item.identifier) {
+            let route = self.equipment_route(
+                item,
+                input,
+                animation,
+                routing::EquipmentSlot::Held {
+                    off_hand: layer == LAYER_OFF_HAND,
+                },
+            );
+            if matches!(route, routing::EquipmentRoute::NativeHeld) {
                 let elapsed = animation
                     .filter(|animation| animation.owner.is_using_item())
                     .map(|animation| animation.rig.hand[1].use_ticks);
@@ -426,49 +435,16 @@ impl EquipmentRuntime {
                 }
                 continue;
             }
-            // Authored item poses use the owning actor and the same sampled body as equipment.
-            let animated = animation
-                .filter(|animation| {
-                    self.held_binding_source(item, input, Some(*animation), layer == LAYER_OFF_HAND)
-                        .is_some_and(|source| {
-                            let binding = &source.catalog.bindings()[source.index];
-                            if layer == LAYER_MAIN_HAND
-                                && input.java.is_some()
-                                && !java::keep_authored_hand(
-                                    &item.identifier,
-                                    binding.category,
-                                    source.from_pack,
-                                )
-                            {
-                                return false;
-                            }
-                            matches!(
-                                self.effective_category(&item.identifier, binding.category),
-                                EquipmentCategory::Held | EquipmentCategory::Shield
-                            ) && (input.java.is_none() || binding.third_person.literal().is_none())
-                        })
-                })
-                .and_then(|animation| {
-                    self.held_attachable(
-                        body,
-                        item,
-                        animation.owner,
-                        animation.rig,
-                        animation.held_input(input, layer == LAYER_OFF_HAND),
-                        None,
-                    )
-                });
-            if let Some(animated) = animated {
-                layers.push(animated.presentation);
-                continue;
-            }
-            match input.java.filter(|_| layer == LAYER_MAIN_HAND) {
-                Some(grip) => {
-                    if !self.push_attachable(body, item, layer, bone, (input, animation), layers) {
-                        self.push_java_held(body, item, &bones, grip, layers);
-                    }
-                }
-                None => self.push_held(body, item, layer, bone, (input, animation), layers),
+            if let routing::EquipmentRoute::Held(source) = route {
+                self.push_held(
+                    body,
+                    item,
+                    layer,
+                    &bones,
+                    source.as_ref(),
+                    (input, animation),
+                    layers,
+                );
             }
             if layers.len() == before {
                 self.note_missing_layer(item, None, bone);
@@ -482,41 +458,40 @@ impl EquipmentRuntime {
         ];
         for ((slot, layer), item) in slots.into_iter().zip(&input.armor) {
             if let Some(item) = item {
-                if slot == ArmorSlot::Helmet
-                    && let Some(kind) = skull_kind(&item.identifier)
-                {
-                    self.push_skull(body, kind, layer, bones.head, layers);
-                    continue;
-                }
-                // A block worn in the helmet slot (a carved pumpkin) sits on the head bone.
-                if slot == ArmorSlot::Helmet
-                    && matches!(item.kind, HeldKind::Block(_))
-                    && !self.has_armor_binding(&item.identifier)
-                {
-                    self.push_attached(
-                        body,
-                        item,
-                        layer,
-                        bones.head,
-                        Some(head_block_display()),
-                        layers,
-                    );
-                    continue;
-                }
-                let Some(source) = self.worn_binding_source(item, input, animation, slot) else {
-                    self.note_missing_layer(item, Some(slot), bones.head);
-                    continue;
-                };
-                let category = self.effective_category(
-                    &item.identifier,
-                    source.catalog.bindings()[source.index].category,
+                let route = self.equipment_route(
+                    item,
+                    input,
+                    animation,
+                    routing::EquipmentSlot::Worn(slot),
                 );
-                if slot == ArmorSlot::Chestplate && category == EquipmentCategory::Elytra {
-                    if let Some(animation) = animation {
-                        self.push_elytra(body, item, source, input, animation, layers);
+                let source = match route {
+                    routing::EquipmentRoute::Skull(kind) => {
+                        self.push_skull(body, kind, layer, bones.head, layers);
+                        continue;
                     }
-                    continue;
-                }
+                    routing::EquipmentRoute::HeadBlock => {
+                        self.push_attached(
+                            body,
+                            item,
+                            layer,
+                            bones.head,
+                            Some(head_block_display()),
+                            layers,
+                        );
+                        continue;
+                    }
+                    routing::EquipmentRoute::Elytra(source) => {
+                        if let Some(animation) = animation {
+                            self.push_elytra(body, item, source, input, animation, layers);
+                        }
+                        continue;
+                    }
+                    routing::EquipmentRoute::Armor(source) => source,
+                    _ => {
+                        self.note_missing_layer(item, Some(slot), bones.head);
+                        continue;
+                    }
+                };
                 let before = layers.len();
                 self.push_armor(
                     body,
@@ -571,19 +546,17 @@ impl EquipmentRuntime {
     ) -> bool {
         equipment.armor[ArmorSlot::Chestplate as usize]
             .as_ref()
-            .and_then(|item| {
-                let source =
-                    self.worn_binding_source(item, equipment, animation, ArmorSlot::Chestplate)?;
-                Some(self.effective_category(
-                    &item.identifier,
-                    source.catalog.bindings()[source.index].category,
-                ))
+            .is_some_and(|item| {
+                matches!(
+                    self.equipment_route(
+                        item,
+                        equipment,
+                        animation,
+                        routing::EquipmentSlot::Worn(ArmorSlot::Chestplate)
+                    ),
+                    routing::EquipmentRoute::Elytra(_)
+                )
             })
-            == Some(EquipmentCategory::Elytra)
-    }
-
-    fn has_armor_binding(&self, identifier: &str) -> bool {
-        self.binding_source(identifier).is_some()
     }
 
     pub(super) fn armor_geometry_for(

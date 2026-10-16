@@ -8,19 +8,58 @@ use {
 };
 
 impl EquipmentRuntime {
+    /// Draws one admitted held definition, then uses the selected hand's ordinary mesh.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push_held(
         &mut self,
         body: &ActorRigSubmission,
         item: &WornItem,
         layer: u8,
-        hand: Option<usize>,
-        context: (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
+        bones: &BodyBones,
+        source: Option<&pack::BindingSource>,
+        (equipment, animation): (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
         layers: &mut Vec<EquipmentPresentation>,
     ) {
-        if self.push_attachable(body, item, layer, hand, context, layers) {
-            return;
+        if let Some(source) = source {
+            let binding = &source.catalog.bindings()[source.index];
+            let authored = layer != LAYER_MAIN_HAND
+                || equipment.java.is_none()
+                || java::keep_authored_hand(&item.identifier, binding.category, source.from_pack);
+            if authored
+                && (equipment.java.is_none() || binding.third_person.literal().is_none())
+                && let Some(animation) = animation
+                && let Some(animated) = self.held_attachable_from_source(
+                    body,
+                    item,
+                    source,
+                    animation.owner,
+                    animation.rig,
+                    animation.held_input(equipment, layer == LAYER_OFF_HAND),
+                    None,
+                )
+            {
+                layers.push(animated.presentation);
+                return;
+            }
+            let hand = if layer == LAYER_OFF_HAND {
+                bones.left_item
+            } else {
+                bones.right_item
+            };
+            if self.push_attachable(body, item, layer, hand, source, layers) {
+                return;
+            }
         }
-        self.push_attached(body, item, layer, hand, None, layers);
+        if let Some(grip) = equipment.java.filter(|_| layer == LAYER_MAIN_HAND) {
+            self.push_java_held(body, item, bones, grip, layers);
+        } else {
+            let hand = if layer == LAYER_OFF_HAND {
+                bones.left_item
+            } else {
+                bones.right_item
+            };
+            self.push_attached(body, item, layer, hand, None, layers);
+        }
     }
 
     /// A held item whose attachable ships its own single-bone geometry and a literal
@@ -32,27 +71,21 @@ impl EquipmentRuntime {
         item: &WornItem,
         layer: u8,
         hand: Option<usize>,
-        (equipment, animation): (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
+        source: &pack::BindingSource,
         layers: &mut Vec<EquipmentPresentation>,
     ) -> bool {
-        if self.uses_native_item_mesh(&item.identifier) {
-            return false;
-        }
         let Some(hand) = hand else {
             return false;
         };
         let off_hand = layer == LAYER_OFF_HAND;
-        let Some(source) = self.held_binding_source(item, equipment, animation, off_hand) else {
-            return false;
-        };
         let pack::BindingSource {
             ref catalog,
             from_pack,
             index,
             ..
-        } = source;
+        } = *source;
         let binding = &catalog.bindings()[index];
-        let Some((_, _, location)) = self.draw_artwork(&binding.texture.identifier, &source) else {
+        let Some((_, _, location)) = self.draw_artwork(&binding.texture.identifier, source) else {
             return false;
         };
         let channels = match self.effective_category(&item.identifier, binding.category) {

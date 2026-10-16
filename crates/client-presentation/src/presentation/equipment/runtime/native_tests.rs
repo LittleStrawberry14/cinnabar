@@ -13,6 +13,9 @@ mod geometry;
 #[path = "native_variant_tests.rs"]
 mod variants;
 
+#[path = "routing_tests.rs"]
+mod routing;
+
 /// Reads the selected equipment image's first pixel from its retained artwork page.
 fn selected_pixel(
     pages: &render_model::ActorArtworkPages,

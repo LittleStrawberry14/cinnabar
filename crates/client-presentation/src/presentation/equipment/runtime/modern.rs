@@ -19,23 +19,9 @@ impl EquipmentRuntime {
         input: AttachableAnimationInput<'_>,
         java_hand: Option<render_model::java_animation::JavaHand>,
     ) -> Option<FirstPersonItem> {
-        self.held_attachable(body, item, owner, owner_rig, input, java_hand)
-    }
-
-    /// Samples a held model in the requested view, retaining its authored bone binding.
-    pub(super) fn held_attachable(
-        &mut self,
-        body: &ActorRigSubmission,
-        item: &WornItem,
-        owner: &ActorSnapshot,
-        owner_rig: &ActorRigSnapshot<'_>,
-        input: AttachableAnimationInput<'_>,
-        java_hand: Option<render_model::java_animation::JavaHand>,
-    ) -> Option<FirstPersonItem> {
         if self.uses_native_item_mesh(&item.identifier) {
             return None;
         }
-        let (_, body_bones) = self.body_bones_for(body.input.rig)?;
         let source = self.selected_binding_source(
             item,
             EquipmentAnimation {
@@ -46,12 +32,28 @@ impl EquipmentRuntime {
             },
             input,
         )?;
+        self.held_attachable_from_source(body, item, &source, owner, owner_rig, input, java_hand)
+    }
+
+    /// Samples an already admitted held definition without selecting another fallback.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn held_attachable_from_source(
+        &mut self,
+        body: &ActorRigSubmission,
+        item: &WornItem,
+        source: &pack::BindingSource,
+        owner: &ActorSnapshot,
+        owner_rig: &ActorRigSnapshot<'_>,
+        input: AttachableAnimationInput<'_>,
+        java_hand: Option<render_model::java_animation::JavaHand>,
+    ) -> Option<FirstPersonItem> {
+        let (_, body_bones) = self.body_bones_for(body.input.rig)?;
         let pack::BindingSource {
             ref catalog,
             from_pack,
             index,
             ..
-        } = source;
+        } = *source;
         let binding = &catalog.bindings()[index];
         let java_hand = java_hand.filter(|_| {
             !super::java::keep_authored_hand(&item.identifier, binding.category, from_pack)
@@ -123,7 +125,7 @@ impl EquipmentRuntime {
             .strip_suffix(".png")
             .or_else(|| texture_source.path.strip_suffix(".tga"))
             .unwrap_or(&texture_source.path);
-        let (artwork, texture_index, location) = self.draw_artwork(texture_identifier, &source)?;
+        let (artwork, texture_index, location) = self.draw_artwork(texture_identifier, source)?;
         let texture = &artwork.textures()[texture_index];
         let key = (
             from_pack,
