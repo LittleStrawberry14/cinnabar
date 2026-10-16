@@ -20,7 +20,7 @@ fn java_hand_reuses_its_cold_selection_when_drawing_the_bow() {
         (0..count).map(|index| {
             (
                 format!("zfixture:rejected_{index}"),
-                format!("{}!v.rejected_{index}", "0;".repeat((cost - 4) / 2)),
+                crate::selection_test_support::rejected_predicate(index),
             )
         }),
     );

@@ -17,7 +17,8 @@ fn budget_files() -> Vec<(Box<str>, Vec<u8>)> {
     let count = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK / cost;
     for index in 0..count {
         description["identifier"] = serde_json::json!(format!("zfixture:rejected_{index}"));
-        description["item"] = serde_json::json!({(CHEST): format!("{}!v.rejected_{index}", "0;".repeat((cost - 4) / 2))});
+        description["item"] =
+            serde_json::json!({(CHEST): crate::selection_test_support::rejected_predicate(index)});
         files.push((
             format!("attachables/rejected_{index}.json").into(),
             serde_json::to_vec(&serde_json::json!({"format_version":"1.10.0","minecraft:attachable":{"description":description}})).unwrap(),

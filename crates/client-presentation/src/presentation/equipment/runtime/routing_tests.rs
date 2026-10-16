@@ -88,7 +88,7 @@ fn routing_pack(
         let count = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK / cost;
         for index in 0..count {
             description["identifier"] = serde_json::json!(format!("fixture:rejected_{index}"));
-            description["item"] = serde_json::json!({identifier: format!("{}!v.rejected_{index}", "0;".repeat((cost - 4) / 2))});
+            description["item"] = serde_json::json!({identifier: crate::selection_test_support::rejected_predicate(index)});
             files.push((format!("attachables/rejected_{index}.json").into(),
                 serde_json::to_vec(&serde_json::json!({"format_version":"1.10.0","minecraft:attachable":{"description":description}})).unwrap()));
         }
