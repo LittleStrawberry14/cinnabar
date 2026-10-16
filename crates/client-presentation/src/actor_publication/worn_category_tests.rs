@@ -202,6 +202,7 @@ fn publish(
             java_posed: &[],
             combat_visuals: render_api::DEFAULT_COMBAT_VISUALS,
             local_emote_pose: None,
+            remote_emote_poses: &Default::default(),
             native_body_sampled: false,
             remote_skin_layers: &Default::default(),
             native_pose: &state.java_hand.native_pose,

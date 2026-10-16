@@ -98,7 +98,7 @@ impl Clone for MolangVariables {
 
 impl MolangVariables {
     /// Clears scratch values and string ownership while retaining their allocated buffers.
-    pub(super) fn reset(&mut self, seed: u64) {
+    pub(crate) fn reset(&mut self, seed: u64) {
         #[cfg(test)]
         super::selection_work::record(|work| work.reset += self.values.len() + self.temps.len());
         self.values.fill(Slot::Unset);
