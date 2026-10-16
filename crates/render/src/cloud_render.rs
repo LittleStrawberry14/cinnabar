@@ -3,6 +3,8 @@ use bevy::prelude::IntoScheduleConfigs;
 use bevy::prelude::System;
 use bevy::render::render_phase::AddRenderCommand;
 use bevy::render::render_resource::ShaderType;
+#[cfg(test)]
+use bevy::render::renderer::RenderQueue;
 use render_scene::CloudVisibility;
 use std::collections::HashMap;
 
@@ -37,7 +39,7 @@ use bevy::{
             PipelineCache, PrimitiveState, RenderPipeline, RenderPipelineDescriptor, ShaderStages,
             Specializer, SpecializerKey, Variants, VertexState,
         },
-        renderer::{RenderDevice, RenderQueue},
+        renderer::RenderDevice,
         sync_world::MainEntity,
         view::{ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms},
     },

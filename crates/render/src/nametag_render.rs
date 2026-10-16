@@ -6,6 +6,8 @@ use bevy::prelude::DetectChanges;
 use bevy::prelude::IntoScheduleConfigs;
 use bevy::render::render_phase::AddRenderCommand;
 use bevy::render::render_resource::ShaderType;
+#[cfg(test)]
+use bevy::render::renderer::RenderQueue;
 use render_scene::NametagSceneResource;
 use std::{ops::Range, sync::Arc};
 
@@ -41,7 +43,7 @@ use bevy::{
             TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
             TextureViewDescriptor, TextureViewDimension, Variants, VertexState,
         },
-        renderer::{RenderDevice, RenderQueue},
+        renderer::RenderDevice,
         sync_world::MainEntity,
         view::{ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
