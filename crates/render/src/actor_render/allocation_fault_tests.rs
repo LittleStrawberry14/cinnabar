@@ -17,6 +17,9 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Resource, Default)]
 struct Frames(u32);
 
+#[derive(Resource, Default)]
+struct ExecutedSpans(Vec<crate::actor::gpu::ActorDrawSpan>);
+
 /// Resets the real phases and proves the render schedule keeps advancing after faults.
 fn begin_frame(
     views: Query<&ExtractedView>,
@@ -46,6 +49,7 @@ pub(crate) fn fixture() -> App {
         .init_resource::<ViewUniforms>()
         .init_resource::<FrameCount>()
         .init_resource::<Frames>()
+        .init_resource::<ExecutedSpans>()
         .init_resource::<render_scene::WorldLighting>()
         .init_resource::<render_scene::WorldFullbright>()
         .init_resource::<render_scene::NametagSceneResource>()
@@ -53,6 +57,12 @@ pub(crate) fn fixture() -> App {
         .add_systems(
             Render,
             prepare_view_uniforms.in_set(RenderSystems::PrepareResources),
+        )
+        .add_systems(
+            Render,
+            execute_draws
+                .in_set(RenderSystems::Render)
+                .before(submit_actor_presented_frame),
         );
     app.insert_resource(Assets::<Shader>::default());
     app.insert_sub_app(RenderApp, render);
@@ -143,6 +153,14 @@ pub(crate) fn draw_frame(
     let world = app.sub_app_mut(RenderApp).world_mut();
     world.insert_resource(frame.clone());
     world.run_schedule(Render);
+    let spans = world.resource::<ExecutedSpans>().0.clone();
+    assert!(app.should_exit().is_none());
+    spans
+}
+
+/// Executes the queued commands before render cleanup removes their phase.
+fn execute_draws(world: &mut World) {
+    let generation = world.resource::<ActorRenderFrame>().rig.frame_generation;
     let id = world
         .resource::<ActorPipeline>()
         .draw_variant(
@@ -226,7 +244,7 @@ pub(crate) fn draw_frame(
     let drawn = world.resource::<ActorDrawTracker>().take_drawn();
     let spans = if let Some(drawn) = drawn {
         assert!(drawn.is_exact());
-        assert_eq!(drawn.frame_generation, frame.rig.frame_generation);
+        assert_eq!(drawn.frame_generation, generation);
         assert_eq!(drawn.manifest.as_ref(), gpu.manifest.as_ref());
         gpu.spans.clone()
     } else {
@@ -237,8 +255,7 @@ pub(crate) fn draw_frame(
         );
         Vec::new()
     };
-    assert!(app.should_exit().is_none());
-    spans
+    world.resource_mut::<ExecutedSpans>().0 = spans;
 }
 
 /// Records every checked boundary so a fault cannot silently miss its intended consumer.
