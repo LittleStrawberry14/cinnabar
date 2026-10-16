@@ -9,6 +9,7 @@ pub(crate) struct MenuPreviewModel {
     source: Option<Arc<render_api::SkinGeometrySource>>,
     pub(crate) vertices: Option<Arc<[ActorVertex]>>,
     pub(crate) cape: Option<render_api::CapeImage>,
+    pub(crate) cosmetics: Vec<cosmetics::Item>,
     pub(crate) cape_key: Option<String>,
     pub(super) bounds: Option<super::fitting::OrbitBounds>,
     body_bounds: Option<super::fitting::OrbitBounds>,
@@ -49,6 +50,28 @@ impl MenuPreviewModel {
 }
 
 impl super::UiPresentationRuntime {
+    /// Updates headwear without reloading skin geometry or regenerating skin textures.
+    pub fn set_preview_cosmetics(&mut self, items: &[cosmetics::Item]) {
+        if self.menu_preview_model.cosmetics == items {
+            return;
+        }
+        self.menu_preview_model.cosmetics = items.to_vec();
+        let mut bounds = self
+            .menu_preview_model
+            .body_bounds
+            .unwrap_or_else(super::fitting::standard);
+        if self.menu_preview_model.cape.is_some() {
+            bounds = bounds.with_static_geometry(super::cape::rest_vertices());
+        }
+        for &hat in items {
+            bounds = bounds.with_static_geometry(&render_model::hats::rig(hat).rest_vertices);
+        }
+        self.menu_preview_model.bounds = Some(bounds);
+        self.last_frame = None;
+        self.player_preview_source_hash = None;
+        self.sync_equipped_cosmetic_artwork();
+    }
+
     /// Publishes a worker-built model, retaining the previous preview while a changed source prepares.
     pub fn set_menu_preview_skin(&mut self, skin: &render_api::StandardSkin) -> bool {
         let cape = skin.cape.as_ref().filter(|cape| cape.is_valid());
@@ -76,7 +99,15 @@ impl super::UiPresentationRuntime {
                     .with_static_geometry(super::cape::rest_vertices()),
             );
         }
+        for &hat in &self.menu_preview_model.cosmetics {
+            bounds = Some(
+                bounds
+                    .unwrap_or_else(super::fitting::standard)
+                    .with_static_geometry(&render_model::hats::rig(hat).rest_vertices),
+            );
+        }
         self.menu_preview_model = MenuPreviewModel {
+            cosmetics: self.menu_preview_model.cosmetics.clone(),
             source: skin.geometry.clone(),
             cape_key: if cape_matches {
                 self.menu_preview_model.cape_key.clone()
