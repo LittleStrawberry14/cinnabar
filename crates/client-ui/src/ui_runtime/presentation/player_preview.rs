@@ -16,6 +16,7 @@ pub(super) mod controller;
 mod equipment;
 mod fitting;
 pub mod geometry;
+pub(super) mod hats;
 pub(super) mod model;
 pub(super) mod selection;
 mod skin;
