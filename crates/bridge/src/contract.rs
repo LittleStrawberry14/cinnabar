@@ -236,11 +236,14 @@ pub const RPC_CINNABAR_RATE_LIMITED: i64 = -32024;
 /// Control method for the Cinnabar API identity and visibility.
 pub const METHOD_CINNABAR_API: &str = "cinnabar_api.v1";
 
-/// Control method for nearby Cinnabar emote playback.
-pub const METHOD_CINNABAR_EMOTES: &str = "cinnabar_emotes.v1";
+/// Control method for nearby Cinnabar emotes and cosmetics.
+pub const METHOD_CINNABAR_PLAYERS: &str = "cinnabar_players.v1";
 
 /// Control method for a Cinnabar player lookup.
 pub const METHOD_CINNABAR_LOOKUP: &str = "cinnabar_lookup.v1";
+
+/// Cinnabar API origin; the package workflow reads it from this manifest.
+pub const CINNABAR_API_BASE_URL: &str = "https://cinnabar-api.cinnabar-api.workers.dev";
 
 /// Most XUIDs in one Cinnabar player lookup.
 pub const CINNABAR_API_MAX_LOOKUP_XUIDS: usize = 128;
@@ -505,6 +508,15 @@ pub enum ConnectStage {
     Connecting,
 }
 
+/// One namespaced cosmetic item in a supported slot.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarCosmeticSlot {
+    /// Catalog slot name.
+    pub slot: String,
+    /// Namespaced item identifier.
+    pub item_id: String,
+}
+
 /// A release the Cinnabar API announced on the client's channel.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CinnabarRelease {
@@ -519,9 +531,9 @@ pub struct CinnabarRelease {
     pub published_at: String,
 }
 
-/// Nearby subscriptions and the local custom emote, cleared when the game session ends.
+/// Nearby subscriptions, local playback and the selected slot loadout.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct CinnabarEmoteState {
+pub struct CinnabarPlayerState {
     /// Nearby Xbox account identifiers.
     pub xuids: Vec<String>,
     /// Nearby UUIDs when the server omitted Xbox identifiers.
@@ -532,6 +544,8 @@ pub struct CinnabarEmoteState {
     pub elapsed_ms: u32,
     /// Local start identity, including same-clip restarts.
     pub playback_id: u64,
+    /// Persistent selected items by slot; empty clears the loadout.
+    pub slots: Vec<CinnabarCosmeticSlot>,
 }
 
 /// An authenticated nearby player animation with a remaining lease.
@@ -547,4 +561,26 @@ pub struct CinnabarRemoteEmote {
     pub elapsed_ms: u64,
     /// Remaining playback lease.
     pub valid_for_ms: u64,
+}
+
+/// An authenticated nearby session loadout without an emote lease.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarRemoteLoadout {
+    /// Authenticated Xbox account identifier.
+    pub xuid: String,
+    /// Account UUID derived by the API.
+    pub uuid: String,
+    /// Newest accepted account revision.
+    pub revision: u64,
+    /// Equipped items; empty withdraws the loadout.
+    pub slots: Vec<CinnabarCosmeticSlot>,
+}
+
+/// Current authenticated nearby playback and session loadouts.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CinnabarPlayerUpdates {
+    /// Nearby custom emotes.
+    pub emotes: Vec<CinnabarRemoteEmote>,
+    /// Nearby authenticated loadouts.
+    pub loadouts: Vec<CinnabarRemoteLoadout>,
 }
