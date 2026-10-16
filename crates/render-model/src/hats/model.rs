@@ -172,6 +172,10 @@ pub(super) fn build(
         },
         0.0,
     );
+    let part = crate::STANDARD_BIPED_BONES
+        .iter()
+        .position(|bone| bone.eq_ignore_ascii_case(&item.attachment_bone))
+        .map_or(u32::MAX, |part| part as u32);
     rig.rest_vertices = rig
         .geometry
         .vertices
@@ -186,7 +190,7 @@ pub(super) fn build(
             ActorVertex {
                 position: [-position.x, position.y, -position.z],
                 uv: vertex.uv,
-                part: 0,
+                part,
             }
         })
         .collect::<Vec<_>>()

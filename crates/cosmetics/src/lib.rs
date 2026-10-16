@@ -4,9 +4,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    sync::{OnceLock, RwLock},
+    sync::{
+        OnceLock, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
+/// Number of supported slots, checked against the pinned wire schema.
+pub const SLOT_COUNT: usize = 6;
 pub const MAX_ITEMS: usize = 256;
 pub const MAX_ASSET_BYTES: usize = 1024 * 1024;
 pub type Slots = BTreeMap<String, Option<String>>;
@@ -55,6 +60,7 @@ pub struct Descriptor {
 pub struct Item(u16);
 static ITEMS: RwLock<Vec<&'static Descriptor>> = RwLock::new(Vec::new());
 static ACTIVE: RwLock<Option<Vec<Item>>> = RwLock::new(None);
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 impl Item {
     /// Installs metadata after its renderer has admitted every asset; bounds lifetime allocations.
@@ -68,7 +74,13 @@ impl Item {
         }
         let index = items.len();
         items.push(Box::leak(Box::new(descriptor)));
+        GENERATION.fetch_add(1, Ordering::Release);
         Some(Self(index as u16))
+    }
+
+    /// Identifies catalog changes without copying its items on unchanged frames.
+    pub fn generation() -> u64 {
+        GENERATION.load(Ordering::Acquire)
     }
 
     /// Resolves the newest admitted revision of an identifier, ignoring unknown items.
@@ -139,7 +151,11 @@ pub fn activate(ids: &[String]) {
                 .map(|index| Item(index as u16))
         })
         .collect();
-    *ACTIVE.write().unwrap_or_else(|error| error.into_inner()) = Some(active);
+    let mut current = ACTIVE.write().unwrap_or_else(|error| error.into_inner());
+    if current.as_ref() != Some(&active) {
+        *current = Some(active);
+        GENERATION.fetch_add(1, Ordering::Release);
+    }
 }
 
 impl Asset {
@@ -223,6 +239,47 @@ pub fn resolve(slots: &Slots, owns: impl Fn(&str) -> bool) -> Vec<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_changes_only_when_catalog_content_changes() {
+        let asset = Asset {
+            url: "fixture".into(),
+            sha256: "a".repeat(64),
+            bytes: 1,
+        };
+        let descriptor = Descriptor {
+            id: "fixture:generation".into(),
+            slot: "head".into(),
+            display_name: "Fixture".into(),
+            tags: Vec::new(),
+            free: true,
+            assets: Assets {
+                geometry: asset.clone(),
+                texture: asset,
+                animation: None,
+            },
+            geometry_id: "geometry.fixture".into(),
+            attachment_bone: "head".into(),
+            offset: [0.0; 3],
+            render_flags: RenderFlags {
+                double_sided: false,
+            },
+        };
+        let before = Item::generation();
+        let item = Item::admit(descriptor.clone()).unwrap();
+        let admitted = Item::generation();
+        assert_ne!(before, admitted);
+        assert_eq!(Item::admit(descriptor), Some(item));
+        assert_eq!(Item::generation(), admitted);
+        activate(&[item.id().into()]);
+        let active = Item::generation();
+        assert_ne!(admitted, active);
+        activate(&[item.id().into()]);
+        assert_eq!(Item::generation(), active);
+        activate(&[]);
+        assert_ne!(Item::generation(), active);
+        assert!(Item::all().is_empty());
+    }
     #[test]
     fn cache_admission_checks_size_and_digest() {
         let bytes = b"original";
@@ -240,6 +297,13 @@ mod tests {
     fn slots_come_from_the_wire_schema() {
         let schema: serde_json::Value =
             serde_json::from_str(include_str!("../../../core/cinnabarapi/schema/v1.json")).unwrap();
+        assert_eq!(
+            schema["$defs"]["CosmeticSlot"]["x-known-slots"]
+                .as_array()
+                .unwrap()
+                .len(),
+            SLOT_COUNT
+        );
         assert_eq!(
             schema["$defs"]["CosmeticsCatalog"]["properties"]["items"]["maxItems"],
             MAX_ITEMS

@@ -188,6 +188,7 @@ pub(super) fn draw(
         ],
         visible_skins: Vec::new(),
         visible_capes: Vec::new(),
+        visible_cosmetics: Vec::new(),
     })
 }
 

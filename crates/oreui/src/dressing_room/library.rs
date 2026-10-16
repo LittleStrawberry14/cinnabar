@@ -119,7 +119,7 @@ pub(super) fn collection(
         y = note[3] + space(canvas, 4);
     }
     if view.dressing_room.section == DressingRoomSection::Cosmetics {
-        let end = super::hats::collection(canvas, view, [left, y, right, b[3]])?;
+        let end = super::hats::collection(canvas, view, [left, y, right, b[3]], viewport, preview)?;
         canvas.end_entrance(entrance, [viewport[2], viewport[3]])?;
         return Ok(end);
     }

@@ -31,7 +31,6 @@ impl UiPresentationRuntime {
         let bends: std::collections::HashMap<_, _> = bends.iter().copied().collect();
         if self.gui_models.live_player.hat_bends != bends {
             self.gui_models.live_player.hat_bends = bends;
-            self.player_preview_source_hash = None;
             self.last_frame = None;
         }
     }
@@ -111,10 +110,7 @@ impl UiPresentationRuntime {
             Vec3::from_array(rig.axis_scale)
                 * (rig.scale / super::super::player_preview::PLAYER_MODEL_SCALE),
         );
-        for (part, name) in ["head", "body", "rightarm", "leftarm", "rightleg", "leftleg"]
-            .into_iter()
-            .enumerate()
-        {
+        for (part, name) in render_model::STANDARD_BIPED_BONES.into_iter().enumerate() {
             if let Some(index) = rig.bone_names.iter().position(|bone| bone.as_ref() == name)
                 && let (Some(rest), Some(posed)) = (rig.rest.get(index), pose.get(index))
                 && let (Some(rest), Some(posed)) = (bone_matrix(rest), bone_matrix(posed))

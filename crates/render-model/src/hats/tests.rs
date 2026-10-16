@@ -1,5 +1,35 @@
 use super::*;
 
+#[test]
+fn cosmetic_preview_vertices_follow_each_biped_attachment_bone() {
+    let source = fixture::bunny();
+    for (part, bone) in crate::STANDARD_BIPED_BONES.iter().enumerate() {
+        let mut descriptor = source.descriptor().clone();
+        descriptor.attachment_bone = bone.to_uppercase();
+        let geometry = serde_json::json!({
+            "format_version": "1.12.0",
+            "minecraft:geometry": [{
+                "description": {"identifier": descriptor.geometry_id, "texture_width": rig(source).texture.width, "texture_height": rig(source).texture.height},
+                "bones": [{"name": descriptor.attachment_bone, "pivot": [0, 24, 0], "cubes": [{"origin": [0, 24, 0], "size": [1, 1, 1], "uv": [0, 0]}]}]
+            }]
+        });
+        let model = model::build(
+            &descriptor,
+            &geometry.to_string(),
+            include_bytes!("bunny_ears.png"),
+            &[],
+        )
+        .unwrap();
+        assert!(!model.rest_vertices.is_empty());
+        assert!(
+            model
+                .rest_vertices
+                .iter()
+                .all(|vertex| vertex.part == part as u32)
+        );
+    }
+}
+
 /// A standard head pivot in block coordinates, with an arbitrary evaluated orientation.
 fn head(rotation: Quat) -> RenderBoneTransform {
     RenderBoneTransform {
@@ -326,6 +356,12 @@ fn catalog_geometry_keeps_authored_rotations_at_a_different_attachment_bone() {
     )
     .unwrap();
     let pose = rig(item).pose(head(Quat::IDENTITY), 0.0);
+    assert!(
+        rig(item)
+            .rest_vertices
+            .iter()
+            .all(|vertex| vertex.part == 1)
+    );
     let actual = Quat::from_array(pose[0].rotation);
     assert!(
         actual

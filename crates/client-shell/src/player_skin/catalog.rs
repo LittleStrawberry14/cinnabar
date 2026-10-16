@@ -36,8 +36,23 @@ struct Preferences {
     selected_cape: Option<String>,
     #[serde(default)]
     selected_cosmetics: cosmetics::Slots,
+    #[serde(default, skip_serializing)]
+    selected_hat: Option<String>,
     #[serde(default)]
     capes: Vec<ImportedCape>,
+}
+
+impl Preferences {
+    /// Restores historical hat identifiers without overriding a current head-slot choice.
+    fn migrate_legacy_hat(&mut self) {
+        if let Some(hat) = self.selected_hat.take()
+            && matches!(hat.as_str(), "bunny_ears" | "crown")
+        {
+            self.selected_cosmetics
+                .entry("head".into())
+                .or_insert_with(|| Some(format!("cinnabar:{hat}")));
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,10 +93,11 @@ struct Starter {
 
 pub fn load(layout: &InstallLayout, fallback: &LocalPlayerSkin) -> DressingRoomView {
     cosmetic_catalog::load(layout);
-    let preferences = read_bounded(&layout.skin_selection_file(), MAX_PREFERENCES_BYTES)
+    let mut preferences = read_bounded(&layout.skin_selection_file(), MAX_PREFERENCES_BYTES)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok())
         .unwrap_or_default();
+    preferences.migrate_legacy_hat();
     let mut skins = Vec::new();
     let starter = starter(layout);
     let geometries = starter.as_ref().map(|starter| starter.geometries.clone());
@@ -281,6 +297,7 @@ fn save(layout: &InstallLayout, view: &DressingRoomView) -> Result<(), String> {
             .collect(),
         selected_cape: view.selected_cape().map(|entry| entry.id.clone()),
         selected_cosmetics: view.selected_cosmetics.clone(),
+        selected_hat: None,
         capes: view
             .capes
             .iter()

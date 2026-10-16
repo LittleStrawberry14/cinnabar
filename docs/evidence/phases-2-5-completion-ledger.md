@@ -23,6 +23,10 @@ A domain catalog replaces the fixed hat list. Independent slot selections persis
 ETag catalog caching and SHA-256 asset admission precede geometry or texture decoding.
 Original bunny ears use bounded authored joint motion. Every slot follows its declared
 attachment bone and offset, and the HUD shares local motion with world presentation.
+Saved hats migrate into the head slot without overriding current choices. Visible thumbnails
+and equipped textures share the artwork budget; stable gallery frames and cosmetic motion
+retain their catalog and raster caches. Cosmetic layers are separate from skins, flames and
+render-controller layers, with boundaries derived from the supported slot count.
 
 Session loadouts use authenticated mutual nearby subscriptions with account revision
 ordering and server-side ownership validation. Loadouts have no emote lease. The current

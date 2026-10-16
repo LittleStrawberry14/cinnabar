@@ -16,6 +16,8 @@ pub(super) fn collection(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
     b: Bounds,
+    viewport: Bounds,
+    preview: &mut super::PreviewArea,
 ) -> Result<f32, PaintError> {
     let [left, top, right, _] = b;
     let side = canvas.r(12.8).min(right - left);
@@ -39,12 +41,21 @@ pub(super) fn collection(
     let y = top + canvas.r(6.0);
     let gap = canvas.r(1.2);
     let columns = (((right - left + gap) / (side + gap)).floor() as usize).max(1);
-    for (slot, hat) in cosmetics::Item::all().iter().enumerate() {
+    let items = cosmetics::Item::all();
+    for (slot, hat) in items.iter().enumerate() {
         let x = left + (slot % columns) as f32 * (side + gap);
         let y = y + (slot / columns) as f32 * (side + gap);
-        tile(canvas, view, [x, y, x + side, y + side], *hat)?;
+        let bounds = [x, y, x + side, y + side];
+        if bounds[0] < viewport[2]
+            && bounds[2] > viewport[0]
+            && bounds[1] < viewport[3]
+            && bounds[3] > viewport[1]
+        {
+            preview.visible_cosmetics.push(slot);
+        }
+        tile(canvas, view, bounds, *hat)?;
     }
-    Ok(y + cosmetics::Item::all().len().div_ceil(columns) as f32 * (side + gap))
+    Ok(y + items.len().div_ceil(columns) as f32 * (side + gap))
 }
 
 /// Uses the existing surface feedback, selection mark and focus frame around the preview.

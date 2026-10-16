@@ -7,6 +7,33 @@ use launcher::dressing_room::{
 };
 use {super::*, launcher::menu::MenuAction};
 
+#[test]
+fn cosmetic_viewport_reports_only_intersecting_gallery_tiles() {
+    let _ = render_model::hats::fixture::gallery();
+    let mut view = view(STARTER_SKIN_NAMES.len());
+    Arc::make_mut(&mut view.dressing_room).section = DressingRoomSection::Cosmetics;
+    let mut visible = Vec::new();
+    paint(HashMap::new(), |canvas| {
+        let left = 40.0;
+        let top = 40.0;
+        let side = canvas.r(12.8);
+        let right = left + side * 2.0 + canvas.r(1.2);
+        let viewport = [left, top + canvas.r(6.0), right, top + canvas.r(6.0) + side];
+        let mut preview =
+            character::draw(canvas, &view, [left, top, right, 680.0], viewport).unwrap();
+        hats::collection(
+            canvas,
+            &view,
+            [left, top, right, 680.0],
+            viewport,
+            &mut preview,
+        )
+        .unwrap();
+        visible = preview.visible_cosmetics;
+    });
+    assert_eq!(visible, vec![0, 1]);
+}
+
 fn text_bounds(nodes: Vec<ui::UiNode>, size: [f32; 2]) -> Vec<([u8; 32], ui::UiRect)> {
     let texts = nodes
         .iter()

@@ -19,6 +19,7 @@ pub(super) struct PreviewArea {
     pub(super) clip: Bounds,
     pub(super) visible_skins: Vec<usize>,
     pub(super) visible_capes: Vec<usize>,
+    pub(super) visible_cosmetics: Vec<usize>,
 }
 
 fn command(action: Action) -> MenuAction {

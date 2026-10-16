@@ -55,3 +55,23 @@ pub fn crown() -> Item {
         .unwrap()
     })
 }
+
+/// Admits a large gallery of independently named items using the original ear surface.
+pub fn gallery() -> &'static [Item] {
+    static ITEMS: OnceLock<Vec<Item>> = OnceLock::new();
+    ITEMS.get_or_init(|| {
+        (0..40)
+            .map(|index| {
+                let mut item = bunny().descriptor().clone();
+                item.id = format!("fixture:gallery-{index}");
+                super::admit(
+                    item,
+                    include_bytes!("bunny_ears.geo.json"),
+                    include_bytes!("bunny_ears.png"),
+                    include_bytes!("fixture/animation.json"),
+                )
+                .unwrap()
+            })
+            .collect()
+    })
+}

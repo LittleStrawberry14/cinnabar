@@ -5,8 +5,16 @@ use glam::{Quat, Vec3};
 use render_api::{CapeImage, SkinRgba8};
 use std::sync::{Arc, RwLock};
 
-/// First attachment layer, following the cape and preceding skin overlays.
-pub const ACTOR_LAYER_HAT: u8 = 25;
+/// First cosmetic attachment layer, following animated skins and world flames.
+pub const ACTOR_LAYER_HAT: u8 = crate::ACTOR_LAYER_FLAME + 1;
+const _: () = assert!(cosmetics::SLOT_COUNT <= (u8::MAX - ACTOR_LAYER_HAT) as usize);
+/// Exclusive end of the cosmetic range; authored controller layers start here.
+pub const ACTOR_LAYER_HAT_END: u8 = ACTOR_LAYER_HAT + cosmetics::SLOT_COUNT as u8;
+
+/// Distinguishes every supported cosmetic slot from skins, flames and equipment.
+pub const fn is_cosmetic_layer(layer: u8) -> bool {
+    layer >= ACTOR_LAYER_HAT && layer < ACTOR_LAYER_HAT_END
+}
 
 pub struct HatRig {
     pub geometry: ActorRigGeometry,

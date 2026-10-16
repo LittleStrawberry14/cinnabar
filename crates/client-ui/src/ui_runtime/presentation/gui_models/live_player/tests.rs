@@ -1,4 +1,22 @@
 use super::*;
+
+#[test]
+fn cosmetic_motion_keeps_software_hand_rasters() {
+    let mut presentation =
+        UiPresentationRuntime::new(ui_engine::test_support::fixture_font()).unwrap();
+    let item = render_model::hats::fixture::bunny();
+    presentation.set_preview_cosmetics(&[item]);
+    presentation.set_player_preview_skin(None, Default::default());
+    let hands = presentation.player_preview_pixels.as_ref().unwrap();
+    let before = (hands.left_hand.as_ptr(), hands.right_hand.as_ptr());
+    presentation.set_cosmetic_bends(&[(item, 0.5)]);
+    presentation.set_player_preview_skin(None, Default::default());
+    let hands = presentation.player_preview_pixels.as_ref().unwrap();
+    assert_eq!(
+        before,
+        (hands.left_hand.as_ptr(), hands.right_hand.as_ptr())
+    );
+}
 use std::sync::Arc;
 
 /// Compiles original one-cube player geometry without installed assets or a server.

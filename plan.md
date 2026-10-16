@@ -7,6 +7,11 @@ bunny ears, with the original crown retained; editable artwork and export confor
 Each attachment follows its declared bone and offset. World and HUD share local motion.
 Unknown, unsupported and unowned items render nothing.
 
+Saved hat choices migrate into the head slot. Gallery requests include visible thumbnails
+and prioritize equipped textures. Cosmetic motion retains the hand rasters, and unchanged
+gallery requests compare the catalog generation without cloning its items. Attachments use
+their declared preview bone and a separate range of render layers.
+
 Authenticated nearby players exchange revisioned session loadouts independently of leased
 emotes. The highest account revision wins across sockets. Disconnect, visibility opt-out
 and nearby departure withdraw the shared selection. The API validates slot placement and

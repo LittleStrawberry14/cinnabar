@@ -69,6 +69,7 @@ impl super::UiPresentationRuntime {
         self.menu_preview_model.bounds = Some(bounds);
         self.last_frame = None;
         self.player_preview_source_hash = None;
+        self.sync_equipped_cosmetic_artwork();
     }
 
     /// Publishes a worker-built model, retaining the previous preview while a changed source prepares.
