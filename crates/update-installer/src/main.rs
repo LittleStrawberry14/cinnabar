@@ -38,22 +38,9 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
-    ensure!(
-        args.len() == 4 || (cfg!(windows) && args.len() == 5),
-        "expected STAGE TARGET PARENT_PID CHANNEL [MONITOR_PID]"
-    );
+    ensure!(args.len() == 4, "expected STAGE TARGET PARENT_PID CHANNEL");
     let (stage, target) = (PathBuf::from(&args[0]), PathBuf::from(&args[1]));
     let pid = args[2].to_str().context("invalid parent PID")?.parse()?;
-    let monitor = args
-        .get(4)
-        .map(|value| {
-            value
-                .to_str()
-                .context("invalid monitor PID")?
-                .parse::<u32>()
-                .context("invalid monitor PID")
-        })
-        .transpose()?;
     let channel =
         update_manifest::channel::Channel::parse(args[3].to_str().context("invalid channel")?)
             .context("unknown channel")?;
@@ -61,7 +48,7 @@ fn run() -> Result<()> {
         .context("unsupported platform")?;
     let keys = update_manifest::parse_keys(update_installer::TRUSTED_KEYS)?;
     let snapshot_reader = update_installer::helper::hold_snapshot(&stage);
-    update_installer::parent::wait_with_monitor(pid, monitor)?;
+    update_installer::parent::wait(pid)?;
     let root = stage.parent().context("missing update directory")?;
     let mut started = false;
     let result = (|| {

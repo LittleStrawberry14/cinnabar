@@ -1,22 +1,21 @@
 //! Parent-exit barriers used only by the offline helper process.
 use anyhow::{Result, ensure};
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::transfer_monitor;
+
 /// Waits for the pipe held by the client and for its actual process exit before installing.
 pub fn wait(pid: u32) -> Result<()> {
-    wait_with_monitor(pid, None)
-}
-
-/// Also waits for the client's Windows crash monitor, which uses the same installed image.
-pub fn wait_with_monitor(pid: u32, monitor: Option<u32>) -> Result<()> {
     ensure!(
         pid != 0 && pid != std::process::id(),
         "invalid updater parent"
     );
     #[cfg(windows)]
-    return windows_wait(pid, monitor);
+    return windows::wait(pid);
     #[cfg(unix)]
     {
-        ensure!(monitor.is_none(), "unexpected update monitor on Unix");
         use std::io::Read;
         std::io::stdin().take(1).read_to_end(&mut Vec::new())?;
         while rustix::process::getppid()
@@ -30,67 +29,13 @@ pub fn wait_with_monitor(pid: u32, monitor: Option<u32>) -> Result<()> {
     anyhow::bail!("unsupported parent wait")
 }
 
-#[cfg(windows)]
-/// Holds a process handle, so PID reuse cannot let the helper replace a live parent.
-fn windows_wait(pid: u32, monitor: Option<u32>) -> Result<()> {
-    use std::io::Read;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WAIT_OBJECT_0},
-        System::Threading::{INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
-    };
-    struct Process(HANDLE);
-    impl Drop for Process {
-        /// Closes the owned synchronization handle on success and on every error path.
-        fn drop(&mut self) {
-            // SAFETY: this handle came from a successful OpenProcess and is owned here.
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-    exit_barrier(
-        std::iter::once(pid).chain(monitor),
-        |pid| {
-            ensure!(
-                pid != 0 && pid != std::process::id(),
-                "invalid updater process"
-            );
-            // Open both before reading the exit pipe, so subsequent PID reuse cannot change either wait.
-            // SAFETY: opens an owned handle with synchronization rights only.
-            let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-            if handle.is_null() {
-                // SAFETY: reads the error from the immediately preceding failed OpenProcess.
-                ensure!(
-                    unsafe { GetLastError() } == ERROR_INVALID_PARAMETER,
-                    "cannot open updater process"
-                );
-                Ok(None)
-            } else {
-                Ok(Some(Process(handle)))
-            }
-        },
-        || {
-            std::io::stdin().take(1).read_to_end(&mut Vec::new())?;
-            Ok(())
-        },
-        |process| {
-            // SAFETY: this synchronization handle remains owned until the wait finishes.
-            ensure!(
-                unsafe { WaitForSingleObject(process.0, INFINITE) } == WAIT_OBJECT_0,
-                "waiting for updater process failed"
-            );
-            Ok(())
-        },
-    )
-}
-
-/// Captures stable process identities before the pipe closes, then waits for every image to unload.
+/// Keeps transferred process identities through pipe closure and waits for every image to unload.
 #[cfg(any(windows, test))]
 fn exit_barrier<T>(
-    pids: impl Iterator<Item = u32>,
-    open: impl FnMut(u32) -> Result<Option<T>>,
+    processes: impl IntoIterator<Item = Option<T>>,
     pipe_closed: impl FnOnce() -> Result<()>,
     mut wait: impl FnMut(T) -> Result<()>,
 ) -> Result<()> {
-    let processes = pids.map(open).collect::<Result<Vec<_>>>()?;
     pipe_closed()?;
     for process in processes.into_iter().flatten() {
         wait(process)?;
@@ -104,14 +49,30 @@ mod tests {
     use std::cell::RefCell;
 
     #[test]
-    fn client_and_monitor_handles_precede_the_exit_pipe_and_both_exits_precede_installation() {
+    fn a_reaped_monitor_is_not_reopened_by_pid_during_handoff() {
+        let mut waited = Vec::new();
+        let open_parent = |pid| {
+            ensure!(pid == 10, "the monitor PID now belongs to another process");
+            Ok::<_, anyhow::Error>(Some(pid))
+        };
+        let transferred_monitor = Some(20);
+        exit_barrier(
+            [open_parent(10).unwrap(), transferred_monitor],
+            || Ok(()),
+            |process| {
+                waited.push(process);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(waited, [10, 20]);
+    }
+
+    #[test]
+    fn client_and_monitor_exits_precede_installation() {
         let events = RefCell::new(Vec::new());
         exit_barrier(
-            [10, 20].into_iter(),
-            |pid| {
-                events.borrow_mut().push(("open", pid));
-                Ok(Some(pid))
-            },
+            [Some(10), Some(20)],
             || {
                 events.borrow_mut().push(("pipe closed", 0));
                 Ok(())
@@ -126,8 +87,6 @@ mod tests {
         assert_eq!(
             *events.borrow(),
             [
-                ("open", 10),
-                ("open", 20),
                 ("pipe closed", 0),
                 ("exited", 10),
                 ("exited", 20),
@@ -141,8 +100,7 @@ mod tests {
         let mut waited = Vec::new();
         assert!(
             exit_barrier(
-                [10, 20, 30].into_iter(),
-                |pid| Ok((pid != 10).then_some(pid)),
+                [None, Some(20), Some(30)],
                 || Ok(()),
                 |pid| {
                     waited.push(pid);

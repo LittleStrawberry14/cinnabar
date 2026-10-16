@@ -308,6 +308,13 @@ impl Spawned {
         lock(&self.0.child).id()
     }
 
+    /// Duplicates this child's Windows process handle without looking its PID up again.
+    #[cfg(windows)]
+    pub(crate) fn process_handle(&self) -> io::Result<std::os::windows::io::OwnedHandle> {
+        use std::os::windows::io::AsHandle;
+        lock(&self.0.child).as_handle().try_clone_to_owned()
+    }
+
     pub fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
         lock(&self.0.child).try_wait()
     }
