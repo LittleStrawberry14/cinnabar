@@ -450,7 +450,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod update_tests {
     use super::*;
-    use std::io::Read;
+    use std::{io::Read, process::Stdio};
 
     #[test]
     fn updater_handoff_observes_the_core_exit_after_graceful_stdin_close() {
