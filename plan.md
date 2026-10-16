@@ -703,6 +703,14 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   server-supplied terrain; FeatureRegistry consumption and client-side terrain generation
   remain unsupported and incomplete. Server-routing parity remains open.
 
+## Embedded-block overlay
+
+Eyes inside scaffolding keep a clear view instead of receiving the solid-block
+overlay. Submerged eyes still select the liquid medium before the scaffolding
+exception, and ordinary solid blocks retain their overlay. Eligibility for other
+nonopaque blocks, scaffolding interior-face rendering, and complete native
+screen-effect parity remain incomplete.
+
 ## Totem activation
 
 - Local totem activation retains the equipped item before later inventory or equipment updates
@@ -7152,6 +7160,15 @@ Scope: block breaking (server-auth crack progress overlay), placement, item use 
 these); chat with Bedrock formatting codes; HUD (health/hunger/armor/air, bossbar, scoreboard,
 title/actionbar); Bedrock bitmap font rendering from pack `font/` assets. Taste bar applies:
 UI phases get fable-5/opus-4.8 review before merge.
+
+Empty vanilla buckets use a liquid-enabled block-use pick for source water and lava,
+with the selected item resolved through the negotiated registry. Mining and outline
+picks keep their ordinary eligibility. Flowing liquids and solid occluders retain
+their existing rules; inventory remains authoritative until the server updates it.
+Full bucket prediction and component-defined liquid picking remain incomplete.
+Source-water, source-lava, and powder-snow collection were observed against a
+local Bedrock server. Waterlogged-source acceptance remains unverified; this does
+not close the interaction parity gate.
 
 **Phase 5 roadmap (kept current as work lands):**
 
