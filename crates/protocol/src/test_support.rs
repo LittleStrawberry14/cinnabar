@@ -4,4 +4,5 @@
 pub mod items;
 pub mod packets;
 pub mod recipes;
+pub mod startup;
 pub mod transactions;
