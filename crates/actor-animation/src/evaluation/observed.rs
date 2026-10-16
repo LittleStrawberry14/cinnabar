@@ -15,6 +15,7 @@ pub(crate) struct ObservedInputs {
     variables: BTreeMap<u32, Option<MolangValue>>,
     written: BTreeSet<u32>,
     undo: Vec<(Place, Option<MolangValue>)>,
+    temporary_checkpoint: usize,
     queries: Vec<QueryRead>,
     random: u64,
 }
@@ -26,6 +27,7 @@ impl ObservedInputs {
             variables: BTreeMap::new(),
             written: BTreeSet::new(),
             undo: Vec::new(),
+            temporary_checkpoint: variables.temporary_checkpoint(),
             queries: Vec::new(),
             random: variables.random_state(),
         }
@@ -93,11 +95,7 @@ impl ObservedInputs {
 
     /// Restores the selection prefix after success or failure, including clean temps and RNG.
     pub(crate) fn restore(&mut self, variables: &mut MolangVariables) {
-        for (place, value) in std::mem::take(&mut self.undo) {
-            #[cfg(test)]
-            super::selection_work::record(|work| work.restored += 1);
-            variables.restore(place, value);
-        }
+        variables.restore(std::mem::take(&mut self.undo), self.temporary_checkpoint);
         variables.restore_random(self.random);
     }
 

@@ -8,6 +8,85 @@ const STAND: [u8; 4] = [220, 110, 30, 255];
 const STARTUP: [u8; 4] = [70, 100, 210, 255];
 const DYE: u32 = 0x00d0_3040;
 
+#[test]
+fn preview_cape_suppression_follows_the_admitted_chest_definition() {
+    let base = catalog(&[Definition {
+        name: ITEM,
+        condition: None,
+        color: STARTUP,
+        dyed: false,
+    }]);
+    let mut pack = catalog(&[Definition {
+        name: "fixture:z_wings",
+        condition: Some("v.is_enchanted && q.is_in_ui && c.item_slot == 'torso'"),
+        color: PLAYER,
+        dyed: false,
+    }]);
+    let equipment = pack.equipment.as_ref().unwrap();
+    let mut bindings = equipment.bindings().to_vec();
+    bindings[0].category = assets::EquipmentCategory::Elytra;
+    pack.equipment = Some(Arc::new(
+        assets::RuntimeEquipmentCatalog::from_parts(
+            [2; 32],
+            bindings,
+            equipment.textures().to_vec(),
+        )
+        .unwrap(),
+    ));
+    let world = owner(Arc::clone(&base.assets));
+    let mut presentation = material_tests::presentation(base.equipment.as_ref().unwrap());
+    let cape_page = 100;
+    presentation.menu_preview_model.cape_key = Some("fixture-cape".into());
+    presentation.menu_artwork.refs.insert(
+        "fixture-cape".into(),
+        ui::IconRef {
+            page: cape_page,
+            uv: [0, 0, 64, 32],
+            glint: false,
+        },
+    );
+    presentation.gui_models.live_player.cape_vertices =
+        player_preview::cape::rest_vertices().to_vec();
+    presentation.set_preview_equipment_assets(Some(base.assets), Some(pack.assets));
+    presentation.set_preview_pack_equipment(pack.equipment);
+    for enchanted in [false, true, false] {
+        presentation.set_player_preview_gear_with_owner(
+            [None, Some((ITEM, None, enchanted)), None, None],
+            None,
+            PreviewEquipmentOwner {
+                actor: world.authority().actor(1).unwrap(),
+                rig: world.authority().actor_rig(1).unwrap(),
+                input: actor_animation::AttachableAnimationInput {
+                    is_local_player: true,
+                    frame_alpha: 1.0,
+                    ..Default::default()
+                },
+            },
+        );
+        let selected = presentation.player_preview_gear.armor[1].as_ref().unwrap();
+        assert_eq!(
+            &selected.rgba[..4],
+            if enchanted { &PLAYER } else { &STARTUP }
+        );
+        assert_eq!(presentation.gui_models.wearing_elytra, enchanted);
+        for view in material_tests::views() {
+            presentation.player_preview_view = view;
+            let mesh = presentation.gui_player_mesh().unwrap();
+            assert_eq!(
+                mesh.batches()
+                    .iter()
+                    .any(|batch| batch.texture_page == cape_page),
+                !enchanted,
+                "{view:?} enchanted={enchanted}"
+            );
+        }
+    }
+    presentation.set_player_preview_gear([None, Some((ITEM, None)), None, None], None);
+    assert!(!presentation.gui_models.wearing_elytra);
+    presentation.set_player_preview_gear([None; 4], None);
+    assert!(!presentation.gui_models.wearing_elytra);
+}
+
 struct Definition<'a> {
     name: &'a str,
     condition: Option<&'a str>,

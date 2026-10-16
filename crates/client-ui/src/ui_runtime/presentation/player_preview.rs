@@ -193,12 +193,7 @@ impl UiPresentationRuntime {
     ) {
         let pack = self.gui_models.pack_equipment.source.clone();
         let base = self.equipment_catalog.clone();
-        self.gui_models.wearing_elytra = armor[1].is_some_and(|(identifier, _, _)| {
-            pack.as_deref()
-                .and_then(|catalog| catalog.binding(identifier))
-                .or_else(|| base.as_deref()?.binding(identifier))
-                .is_some_and(|binding| binding.category == assets::EquipmentCategory::Elytra)
-        });
+        self.gui_models.wearing_elytra = false;
         let mut budgets = [actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK; 4];
         let resolved: [_; 4] = std::array::from_fn(|slot| {
             let (identifier, dye, enchanted) = armor[slot]?;
@@ -211,6 +206,10 @@ impl UiPresentationRuntime {
                 Some(slot),
                 &mut budgets[slot],
             )?;
+            if slot == 1 {
+                self.gui_models.wearing_elytra =
+                    binding.category == assets::EquipmentCategory::Elytra;
+            }
             worn_armor(binding, pack.as_deref(), base.as_deref(), dye)
         });
         self.prepare_preview_hands(

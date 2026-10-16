@@ -78,20 +78,26 @@ impl EquipmentRuntime {
         let mut sources = [
             self.pack
                 .as_ref()
-                .and_then(|pack| pack.catalog.as_ref())
-                .map(|catalog| (catalog, true)),
-            self.catalog.as_ref().map(|catalog| (catalog, false)),
+                .and_then(|pack| Some((pack.catalog.as_ref()?, &pack.assets, true))),
+            self.catalog
+                .as_ref()
+                .map(|catalog| (catalog, &self.assets, false)),
         ]
         .into_iter()
         .flatten()
-        .filter_map(|(catalog, from_pack)| {
+        .filter_map(|(catalog, assets, from_pack)| {
             let start = catalog
                 .bindings()
                 .partition_point(|binding| binding.identifier.as_ref() < item.identifier.as_ref());
             let offset = catalog
                 .bindings_for(&item.identifier)
                 .iter()
-                .rposition(|binding| binding.attachable.is_none())?;
+                .rposition(|binding| {
+                    binding.attachable.is_none()
+                        && assets
+                            .attachable_rig_binding(binding.attachable_identifier())
+                            .is_none_or(|rig| assets.rig_bindings()[rig].item_condition.is_none())
+                })?;
             Some((Arc::clone(catalog), from_pack, start + offset))
         });
         let (catalog, from_pack, index) = sources.next()?;

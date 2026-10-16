@@ -1,6 +1,47 @@
 //! Selected definitions retain fallback artwork and the sampled owner frame.
 use super::*;
 
+#[test]
+fn selection_consumers_ownerless_same_id_conditions_require_unrestricted_fallback() {
+    let identifier = "minecraft:iron_helmet";
+    for condition in ["0", "1"] {
+        let mut files = variant_pack(identifier, "fixture:unused", false);
+        files.retain(|(path, _)| !path.contains("mapped"));
+        let (_, bytes) = files
+            .iter_mut()
+            .find(|(path, _)| path.as_ref() == "attachables/ordinary.json")
+            .unwrap();
+        let mut json: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        json["minecraft:attachable"]["description"]["item"] =
+            serde_json::json!({identifier: condition});
+        *bytes = serde_json::to_vec(&json).unwrap();
+        let (mut runtime, _) = startup_runtime(files.clone());
+        let body = player_body(&mut runtime);
+        let mut input = held(identifier);
+        input.armor[0] = input.main.take();
+        assert!(runtime.layers_for(&body, &input, None).is_empty());
+
+        let (mut runtime, pages) =
+            startup_runtime(variant_pack(identifier, "fixture:unused", false));
+        let (entities, catalog) = pack_catalog(files);
+        let (_pages, locations) =
+            pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+        runtime.set_pack_layer(Some((entities, Some(catalog), locations)));
+        let body = player_body(&mut runtime);
+        let stack = input.armor[0].as_ref().unwrap();
+        let source = runtime
+            .worn_binding_source(stack, &input, None, assets::ArmorSlot::Helmet)
+            .unwrap();
+        assert!(!source.from_pack, "condition={condition}");
+        assert!(source.startup.is_some());
+        let source = runtime
+            .held_binding_source(stack, &input, None, false)
+            .unwrap();
+        assert!(!source.from_pack, "condition={condition}");
+        assert_eq!(runtime.layers_for(&body, &input, None).len(), 1);
+    }
+}
+
 /// Gives each startup owner mapping a distinct original raster.
 fn startup_variants(item: &str) -> Vec<(Box<str>, Vec<u8>)> {
     let mut files = variant_pack(item, "fixture:a_player", false);

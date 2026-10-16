@@ -120,17 +120,24 @@ impl MolangVariables {
         self.random_draws = 0;
     }
 
-    /// Restores a journaled value and keeps the sparse temporary list consistent.
-    pub(super) fn restore(&mut self, place: Place, value: Option<MolangValue>) {
-        let assigned = value.is_some();
-        let unset = self.put(place, value);
-        if let Place::Temporary(slot) = place {
-            if !assigned {
-                self.live_temps.retain(|live| *live != slot);
-            } else if unset == Some(true) {
-                self.live_temps.push(slot);
-            }
+    /// Marks the temporary-list prefix retained before a scratch predicate assigns new slots.
+    pub(super) fn temporary_checkpoint(&self) -> usize {
+        self.live_temps.len()
+    }
+
+    /// Restores journaled slots and drops the temporary-list suffix added by their writes.
+    /// Scratch evaluation keeps the original prefix intact until this restoration.
+    pub(super) fn restore(
+        &mut self,
+        journal: impl IntoIterator<Item = (Place, Option<MolangValue>)>,
+        temporary_checkpoint: usize,
+    ) {
+        for (place, value) in journal {
+            #[cfg(test)]
+            super::selection_work::record(|work| work.restored += 1);
+            self.put(place, value);
         }
+        self.live_temps.truncate(temporary_checkpoint);
     }
 
     /// An unassigned set sized for one layout's variables and temporaries.
@@ -574,6 +581,61 @@ impl Drop for ScratchVariables {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_predicates_restore_many_temporaries_with_linear_slot_work() {
+        for count in [1, 100, 1_000] {
+            let layout = VariableLayout {
+                variable_count: 1,
+                temp_count: count + 2,
+                ..Default::default()
+            };
+            let mut variables = layout.fresh(7);
+            variables
+                .store(
+                    Place::Temporary(0),
+                    MolangValue::String(Arc::from("retained")),
+                )
+                .unwrap();
+            variables
+                .store(Place::Temporary(1), MolangValue::ActorReference(42))
+                .unwrap();
+            for _ in 0..3 {
+                let mut observed = ObservedInputs::new(&variables);
+                for slot in 0..count + 1 {
+                    let place = Place::Temporary(slot);
+                    observed.written(slot as u32, place, &variables);
+                    variables
+                        .store(place, MolangValue::String(Arc::from("scratch")))
+                        .unwrap();
+                }
+                // The untouched final slot checks that cleanup does not scan the whole layout.
+                super::super::selection_work::take();
+                observed.restore(&mut variables);
+                let work = super::super::selection_work::take();
+                assert!(
+                    work.restored <= 2 * (count + 1),
+                    "count={count}, work={work:?}"
+                );
+                assert_eq!(
+                    variables.read(Place::Temporary(0)),
+                    Some(MolangValue::String(Arc::from("retained")))
+                );
+                assert_eq!(
+                    variables.read(Place::Temporary(1)),
+                    Some(MolangValue::ActorReference(42))
+                );
+                assert_eq!(variables.live_temps, [0, 1]);
+                assert_eq!(variables.strings.iter().flatten().count(), 1);
+                for slot in 2..count + 2 {
+                    assert_eq!(variables.read(Place::Temporary(slot)), None);
+                }
+            }
+            variables.clear_temporaries();
+            assert!(variables.live_temps.is_empty());
+            assert!(variables.strings.iter().all(Option::is_none));
+        }
+    }
 
     #[test]
     fn observed_predicates_restore_strings_references_and_sparse_temporaries() {

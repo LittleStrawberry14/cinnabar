@@ -4,6 +4,100 @@ use super::*;
 
 const BOW: &str = "minecraft:bow";
 
+#[test]
+fn same_id_native_conditions_select_pack_or_startup_artwork_in_both_views() {
+    for player in [false, true] {
+        for first_person in [false, true] {
+            for java in [false, true] {
+                let mut files = fixture(BOW, "geometry.bow_standby", 80, true);
+                let (_, bytes) = files
+                    .iter_mut()
+                    .find(|(path, _)| path.as_ref() == "attachables/weapon.json")
+                    .unwrap();
+                let mut json: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+                json["minecraft:attachable"]["description"]["item"] =
+                    serde_json::json!({BOW: "q.owner_identifier == 'minecraft:player'"});
+                *bytes = serde_json::to_vec(&json).unwrap();
+                let (mut runtime, pages) =
+                    startup_runtime(fixture(BOW, "geometry.bow_standby", 10, true));
+                let pages = install(&mut runtime, pages, files);
+                let body = player_body(&mut runtime);
+                let mut actor = owner();
+                if player {
+                    actor.kind = protocol::ActorKind::Player {
+                        uuid: [2; 16],
+                        username: "fixture".into(),
+                    };
+                }
+                let names = [Box::from("rightItem")];
+                let rig = owner_rig(&actor, &names);
+                let stack = item(BOW);
+                let hand = render_model::java_animation::JavaHand {
+                    swing: 0.0,
+                    equip: 1.0,
+                    using: None,
+                };
+                let draw = if first_person {
+                    let input = AttachableAnimationInput {
+                        first_person: true,
+                        ..Default::default()
+                    };
+                    runtime
+                        .first_person_attachable(
+                            &body,
+                            &stack,
+                            &actor,
+                            &rig,
+                            input,
+                            java.then_some(hand),
+                        )
+                        .or_else(|| {
+                            if java {
+                                runtime.first_person_java_item_with_use(&body, &stack, hand, input)
+                            } else {
+                                runtime.first_person_item_with_use(
+                                    &body,
+                                    &stack,
+                                    FirstPersonHand {
+                                        swing: 0.0,
+                                        equip: 1.0,
+                                        consume: None,
+                                        aspect: 1.0,
+                                    },
+                                    render_api::DEFAULT_COMBAT_VISUALS,
+                                    input,
+                                )
+                            }
+                        })
+                        .unwrap()
+                        .presentation
+                } else {
+                    runtime.layers_for(
+                        &body,
+                        &ActorEquipmentInput {
+                            main: Some(stack),
+                            java: java.then_some(JavaGrip::default()),
+                            ..Default::default()
+                        },
+                        Some(EquipmentAnimation {
+                            owner: &actor,
+                            rig: &rig,
+                            frame_alpha: 1.0,
+                            delta_seconds: 0.05,
+                        }),
+                    )[0]
+                    .clone()
+                };
+                assert_eq!(
+                    selected_pixel(&pages, &draw)[0],
+                    if player { 80 } else { 10 },
+                    "player={player} first_person={first_person} java={java}"
+                );
+            }
+        }
+    }
+}
+
 /// Adds an owner-mapped literal cube to an otherwise native sprite bow pack.
 fn mixed_fixture() -> Vec<(Box<str>, Vec<u8>)> {
     let mut files = fixture(BOW, "geometry.bow_standby", 80, true);

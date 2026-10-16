@@ -157,6 +157,13 @@ pub(super) fn recognize(
             // An item-wide shortcut cannot represent owner-selected definitions.
             if candidates.bindings_for(&binding.identifier).len() != 1
                 || binding.attachable.is_some()
+                || candidate_assets
+                    .attachable_rig_binding(binding.attachable_identifier())
+                    .is_some_and(|rig| {
+                        candidate_assets.rig_bindings()[rig]
+                            .item_condition
+                            .is_some()
+                    })
             {
                 return None;
             }
