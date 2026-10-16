@@ -35,8 +35,8 @@ pub fn transfer_monitor(child: &mut Child, monitor: Option<BorrowedHandle<'_>>) 
         .ok_or_else(|| io::Error::other("missing updater exit pipe"))?;
     let mut handle = std::ptr::null_mut();
     if let Some(monitor) = monitor {
-        // SAFETY: both processes and the borrowed source handle are live. The duplicate belongs
-        // to the helper, remains valid after this process exits, and is never inherited further.
+        // SAFETY: the process handles and borrowed source handle remain valid during duplication.
+        // The duplicate belongs to the helper, survives this process, and is never inherited.
         if unsafe {
             DuplicateHandle(
                 GetCurrentProcess(),
@@ -73,7 +73,7 @@ fn receive_monitor(pipe: &mut impl Read) -> Result<Option<Process>> {
     })
 }
 
-/// Opens the still-held parent, then waits on it and the monitor handle sent by the client.
+/// Opens the parent and waits on it and the monitor handle sent by the client.
 pub(super) fn wait(pid: u32) -> Result<()> {
     // SAFETY: opens an owned handle with synchronization rights only.
     let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
@@ -118,7 +118,7 @@ mod tests {
     const MONITOR_EXIT: u32 = 42;
     const PROBE_EXIT: i32 = 43;
 
-    /// Runs in a separate helper after its parent has dropped every source monitor handle.
+    /// Checks the monitor after the client drops its source handle and exit pipe.
     #[test]
     fn monitor_handle_probe() {
         let Some(expected) = std::env::var_os(PROBE) else {
