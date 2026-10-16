@@ -2,8 +2,43 @@
 
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEXTURE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Separates armor mappings sourced from a replaceable pack.
 pub(super) const ARMOR_CACHE_PREFIX: &str = "\u{1}pack:";
+
+/// A placed raster and its index in the catalog that owns its pixels.
+#[derive(Clone, Copy)]
+pub(super) struct TextureArtwork {
+    pub texture_index: usize,
+    pub location: ActorArtworkLocation,
+}
+
+/// Binds catalog indices before discarding textures without an artwork placement.
+pub(super) fn placed_textures(
+    textures: &[assets::EquipmentTexture],
+    locations: impl IntoIterator<Item = Option<ActorArtworkLocation>>,
+) -> BTreeMap<Box<str>, TextureArtwork> {
+    textures
+        .iter()
+        .enumerate()
+        .zip(locations)
+        .filter_map(|((texture_index, texture), location)| {
+            #[cfg(test)]
+            TEXTURE_VISITS.with(|visits| visits.set(visits.get() + 1));
+            Some((
+                texture.identifier.clone(),
+                TextureArtwork {
+                    texture_index,
+                    location: location?,
+                },
+            ))
+        })
+        .collect()
+}
 
 /// A server pack's entity catalog, its attachables if it has any, and their artwork locations.
 pub type PackEquipmentLayer = (
@@ -17,7 +52,7 @@ pub struct PackEquipment {
     pub(super) assets: Arc<RuntimeEntityAssets>,
     pub(super) catalog: Option<Arc<RuntimeEquipmentCatalog>>,
     pub(super) native_items: BTreeMap<Box<str>, super::native::NativeArtwork>,
-    pub(super) texture_locations: BTreeMap<Box<str>, ActorArtworkLocation>,
+    pub(super) texture_locations: BTreeMap<Box<str>, TextureArtwork>,
     armor_geometry: BTreeMap<Box<str>, Option<Arc<ArmorGeometry>>>,
     pub(super) attachables: actor_animation::AttachablesRuntime,
 }
@@ -124,12 +159,10 @@ impl EquipmentRuntime {
                 self.catalog.as_deref(),
             ),
             attachables: actor_animation::AttachablesRuntime::new(Arc::clone(&assets)),
-            texture_locations: catalog
-                .iter()
-                .flat_map(|catalog| catalog.textures())
-                .zip(locations)
-                .filter_map(|(texture, location)| Some((texture.identifier.clone(), location?)))
-                .collect(),
+            texture_locations: placed_textures(
+                catalog.as_ref().map_or(&[], |catalog| catalog.textures()),
+                locations,
+            ),
             assets,
             catalog,
             armor_geometry: BTreeMap::new(),
@@ -162,22 +195,21 @@ impl EquipmentRuntime {
     ) -> Option<(Arc<RuntimeEquipmentCatalog>, usize, ActorArtworkLocation)> {
         if let Some(pack) = &self.pack
             && let Some(artwork) = &pack.catalog
-            && let Some(location) = pack.texture_locations.get(texture)
-            && let Some(index) = artwork
-                .textures()
-                .iter()
-                .position(|image| image.identifier.as_ref() == texture)
+            && let Some(placement) = pack.texture_locations.get(texture)
         {
-            return Some((Arc::clone(artwork), index, *location));
+            return Some((
+                Arc::clone(artwork),
+                placement.texture_index,
+                placement.location,
+            ));
         }
         let base = self.catalog.as_ref().unwrap_or(&catalog);
-        if let Some(index) = base
-            .textures()
-            .iter()
-            .position(|image| image.identifier.as_ref() == texture)
-            && let Some(location) = self.texture_locations.get(texture)
-        {
-            return Some((Arc::clone(base), index, *location));
+        if let Some(placement) = self.texture_locations.get(texture) {
+            return Some((
+                Arc::clone(base),
+                placement.texture_index,
+                placement.location,
+            ));
         }
         if !from_pack {
             return None;
@@ -191,6 +223,7 @@ impl EquipmentRuntime {
         )
     }
 
+    /// Returns only the artwork placement from the selected catalog layer.
     pub(super) fn texture_location(
         &self,
         identifier: &str,
@@ -201,7 +234,9 @@ impl EquipmentRuntime {
         } else {
             &self.texture_locations
         };
-        locations.get(identifier).copied()
+        locations
+            .get(identifier)
+            .map(|placement| placement.location)
     }
 
     /// The pack geometry and bones of a pack-rigged body, under its pack body key.
