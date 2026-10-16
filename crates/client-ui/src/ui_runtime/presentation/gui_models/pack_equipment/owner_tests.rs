@@ -9,6 +9,114 @@ const STARTUP: [u8; 4] = [70, 100, 210, 255];
 const DYE: u32 = 0x00d0_3040;
 
 #[test]
+fn preview_atlas_fallback_keeps_the_selected_chest_category() {
+    let base = catalog(&[Definition {
+        name: ITEM,
+        condition: None,
+        color: STARTUP,
+        dyed: false,
+    }]);
+    let mut pack = catalog(&[Definition {
+        name: "fixture:wings",
+        condition: Some("1"),
+        color: PLAYER,
+        dyed: false,
+    }]);
+    let equipment = pack.equipment.as_ref().unwrap();
+    let mut bindings = equipment.bindings().to_vec();
+    bindings[0].category = assets::EquipmentCategory::Elytra;
+    pack.equipment = Some(Arc::new(
+        assets::RuntimeEquipmentCatalog::from_parts(
+            [2; 32],
+            bindings,
+            equipment.textures().to_vec(),
+        )
+        .unwrap(),
+    ));
+    let world = owner(Arc::clone(&base.assets));
+    let mut presentation = material_tests::presentation(base.equipment.as_ref().unwrap());
+    let side = render_model::UI_MODEL_ATLAS_SIDE;
+    let full =
+        UiTexturePage::owned([side; 2], vec![255; (side * side * 4) as usize].into()).unwrap();
+    presentation.gui_models.pages = vec![full; MODEL_PAGES];
+    presentation.gui_models.required_pages = MODEL_PAGES;
+    presentation.set_preview_equipment_assets(Some(base.assets), Some(pack.assets));
+    presentation.set_preview_pack_equipment(pack.equipment);
+    let cape_page = 100;
+    presentation.menu_preview_model.cape_key = Some("fixture-cape".into());
+    presentation.menu_artwork.refs.insert(
+        "fixture-cape".into(),
+        ui::IconRef {
+            page: cape_page,
+            uv: [0, 0, 64, 32],
+            glint: false,
+        },
+    );
+    presentation.gui_models.live_player.cape_vertices =
+        player_preview::cape::rest_vertices().to_vec();
+    presentation.set_player_preview_gear_with_owner(
+        [None, Some((ITEM, None, false)), None, None],
+        None,
+        PreviewEquipmentOwner {
+            actor: world.authority().actor(1).unwrap(),
+            rig: world.authority().actor_rig(1).unwrap(),
+            input: Default::default(),
+        },
+    );
+    let mesh = presentation.gui_player_mesh().unwrap();
+    let draw_cape = mesh
+        .batches()
+        .iter()
+        .any(|batch| batch.texture_page == cape_page);
+    let cape = render_api::CapeImage {
+        width: 64,
+        height: 32,
+        rgba8: [210, 60, 40, 255].repeat(64 * 32).into(),
+    };
+    let pixels = player_preview::render_body_with_cape(
+        &render_model::standard_biped_vertices(),
+        &[120, 150, 180, 255].repeat(64 * 64),
+        Default::default(),
+        player_preview::PreviewView::Doll {
+            yaw: 150.0,
+            tilt: -10.0,
+        },
+        0.0,
+        &presentation.player_preview_gear,
+        draw_cape.then_some(&cape),
+    );
+    let image = image::RgbaImage::from_raw(
+        player_preview::PREVIEW_WIDTH,
+        player_preview::PREVIEW_HEIGHT,
+        pixels,
+    )
+    .unwrap();
+    let image = image::imageops::resize(
+        &image,
+        image.width() * 4,
+        image.height() * 4,
+        image::imageops::FilterType::Nearest,
+    );
+    super::super::super::forms::snapshot::write_image(&image, "preview-atlas-chest-cape");
+    assert!(presentation.gui_models.pack_equipment.region(1).is_none());
+    assert_eq!(
+        &presentation.player_preview_gear.armor[1]
+            .as_ref()
+            .unwrap()
+            .rgba[..4],
+        &STARTUP
+    );
+    assert!(
+        !presentation.gui_models.wearing_elytra,
+        "the drawn startup chestplate must keep its cape"
+    );
+    assert!(
+        draw_cape,
+        "the preview mesh must retain the cape beside its fallback armour"
+    );
+}
+
+#[test]
 fn preview_cape_suppression_follows_the_admitted_chest_definition() {
     let base = catalog(&[Definition {
         name: ITEM,

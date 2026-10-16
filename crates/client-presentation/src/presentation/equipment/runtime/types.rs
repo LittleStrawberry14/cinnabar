@@ -94,6 +94,12 @@ pub struct EquipmentPresentation {
     pub location: ActorArtworkLocation,
 }
 
+/// Drawn equipment and the chest routing decision used by later cape composition.
+pub struct EquipmentLayers<'a> {
+    pub layers: &'a mut [EquipmentPresentation],
+    pub wearing_elytra: bool,
+}
+
 /// An ordinary item already in camera space, or an attachable on the avatar skeleton.
 pub struct FirstPersonItem {
     pub presentation: EquipmentPresentation,

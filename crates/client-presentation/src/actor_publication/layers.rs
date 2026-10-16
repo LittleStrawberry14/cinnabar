@@ -1,6 +1,5 @@
 //! Composes actor layers in draw order and applies final visibility and cosmetic routes.
 use super::*;
-use crate::presentation::equipment::remote_input;
 use crate::presentation::{
     actors::ActorPresentationBatch, cape::CapeState, entity_layers::LayerPoseCache,
     equipment::ActorEquipmentInput, skin_layers::SkinLayerCache, skin_rig::SkinRigCache,
@@ -55,8 +54,8 @@ pub(super) fn attach(
     new_geometries: &mut Vec<render_model::ActorRigGeometry>,
 ) {
     let LayerPoses {
-        local_runtime_id,
-        local_equipment: local_equipment_input,
+        local_runtime_id: _,
+        local_equipment: _,
         java_posed,
         combat_visuals: _,
         local_emote_pose: _,
@@ -83,7 +82,8 @@ pub(super) fn attach(
                 .map(|layers| layers.render)
         }
     };
-    if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream) {
+    let wearing_elytra = if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream)
+    {
         equipment_layers::attach(
             batch,
             equipment,
@@ -101,8 +101,10 @@ pub(super) fn attach(
                     )
                 })
             },
-        );
-    }
+        )
+    } else {
+        Default::default()
+    };
     // Equipment inherits animation poses before body-only visibility masks are applied.
     crate::presentation::entity_layers::apply_render_layers_cached(
         batch,
@@ -129,28 +131,7 @@ pub(super) fn attach(
             },
             |runtime_id| stream.authority().actor_player_profile(runtime_id),
             |runtime_id| java::posed(java_posed, runtime_id).map(|posed| posed.cape),
-            |runtime_id| {
-                let input = if runtime_id == local_runtime_id {
-                    local_equipment(stream, runtime_id, local_equipment_input)
-                } else {
-                    remote_input(stream, runtime_id)
-                };
-                equipment.as_deref_mut().is_some_and(|equipment| {
-                    let rig = stream.authority().actor_rig(runtime_id);
-                    let animation = stream.authority().actor(runtime_id).zip(rig.as_ref());
-                    equipment.is_wearing_elytra(
-                        &input,
-                        animation.map(|(owner, rig)| {
-                            crate::presentation::equipment::EquipmentAnimation {
-                                owner,
-                                rig,
-                                frame_alpha: partial_tick,
-                                delta_seconds,
-                            }
-                        }),
-                    )
-                })
-            },
+            |runtime_id| wearing_elytra.contains(&runtime_id),
         );
     }
 

@@ -8,6 +8,9 @@ use render_model::{ActorArtworkPages, EntityRigId};
 #[path = "overlay_tests.rs"]
 mod overlays;
 
+#[path = "selection_composition_tests.rs"]
+mod selection_composition;
+
 const CHEST: &str = "minecraft:iron_chestplate";
 const ARMOR_GEOMETRY: &str = "geometry.fixture.armour";
 
@@ -416,7 +419,16 @@ fn ownerless_preview_and_unknown_stacks_do_not_admit_mapped_wing_categories() {
                 drawn.first().map(|draw| draw.submission.input.rig),
                 ordinary.then_some(expected)
             );
-            assert!(!runtime.is_wearing_elytra(&input, None));
+            assert!(
+                !runtime
+                    .layers_for_profile(
+                        &body.submission,
+                        &input,
+                        render_api::DEFAULT_COMBAT_VISUALS,
+                        None,
+                    )
+                    .wearing_elytra
+            );
             let owned = publish(
                 &stream,
                 &entities,
@@ -443,16 +455,31 @@ fn ownerless_preview_and_unknown_stacks_do_not_admit_mapped_wing_categories() {
                     .layers_for(&body.submission, &input, None)
                     .is_empty()
             );
-            assert!(!runtime.is_wearing_elytra(&input, None));
-            assert!(!runtime.is_wearing_elytra(
-                &input,
-                Some(EquipmentAnimation {
-                    owner: authority.actor(2).unwrap(),
-                    rig: &rig,
-                    frame_alpha: 1.0,
-                    delta_seconds: 0.05,
-                })
-            ));
+            assert!(
+                !runtime
+                    .layers_for_profile(
+                        &body.submission,
+                        &input,
+                        render_api::DEFAULT_COMBAT_VISUALS,
+                        None,
+                    )
+                    .wearing_elytra
+            );
+            assert!(
+                !runtime
+                    .layers_for_profile(
+                        &body.submission,
+                        &input,
+                        render_api::DEFAULT_COMBAT_VISUALS,
+                        Some(EquipmentAnimation {
+                            owner: authority.actor(2).unwrap(),
+                            rig: &rig,
+                            frame_alpha: 1.0,
+                            delta_seconds: 0.05,
+                        })
+                    )
+                    .wearing_elytra
+            );
             let batch = publish(
                 &stream,
                 &entities,

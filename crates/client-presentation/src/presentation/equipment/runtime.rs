@@ -29,6 +29,7 @@ mod elytra;
 mod held_block_entities;
 mod java;
 mod modern;
+pub(crate) use modern::HeldSelection;
 mod native;
 mod pack;
 mod push;
@@ -42,8 +43,8 @@ pub use java::java_draws_attachable;
 pub use pack::PackEquipment;
 pub use session::StagedSessionIcons;
 pub use types::{
-    ActorEquipmentInput, EquipmentAnimation, EquipmentPresentation, FirstPersonArms,
-    FirstPersonItem, HeldKind, JavaGrip, WornItem,
+    ActorEquipmentInput, EquipmentAnimation, EquipmentLayers, EquipmentPresentation,
+    FirstPersonArms, FirstPersonItem, HeldKind, JavaGrip, WornItem,
 };
 use types::{ArmorGeometry, AttachableMeshKey, BodyBones, JavaRasterFrame, MeshKey};
 
@@ -347,6 +348,7 @@ impl EquipmentRuntime {
         animation: Option<EquipmentAnimation<'_>>,
     ) -> &mut [EquipmentPresentation] {
         self.layers_for_profile(body, input, render_api::DEFAULT_COMBAT_VISUALS, animation)
+            .layers
     }
 
     /// Selects combat visuals for worn slots without changing held items or Java poses.
@@ -356,13 +358,16 @@ impl EquipmentRuntime {
         input: &ActorEquipmentInput,
         profile: render_api::CombatVisuals,
         animation: Option<EquipmentAnimation<'_>>,
-    ) -> &mut [EquipmentPresentation] {
+    ) -> EquipmentLayers<'_> {
         let mut layers = std::mem::take(&mut self.layers);
         layers.clear();
-        self.fill_layers(body, input, profile, animation, &mut layers);
+        let wearing_elytra = self.fill_layers(body, input, profile, animation, &mut layers);
         combat::apply(&mut layers, body, input, profile, animation);
         self.layers = layers;
-        &mut self.layers
+        EquipmentLayers {
+            layers: &mut self.layers,
+            wearing_elytra,
+        }
     }
 
     /// Appends one body's equipment while retaining the caller's output capacity.
@@ -373,21 +378,21 @@ impl EquipmentRuntime {
         profile: render_api::CombatVisuals,
         animation: Option<EquipmentAnimation<'_>>,
         layers: &mut Vec<EquipmentPresentation>,
-    ) {
+    ) -> bool {
         if !matches!(
             body.route,
             ActorRigRoute::Compiled | ActorRigRoute::StaticFallback
         ) || body.input.identity.layer != ACTOR_LAYER_BODY
         {
-            return;
+            return false;
         }
         let Some((geometry, bones)) = self.body_bones_for(body.input.rig) else {
-            return;
+            return false;
         };
         let pose_len = bones.names.len();
         if body.input.previous_bones.len() != pose_len || body.input.current_bones.len() != pose_len
         {
-            return;
+            return false;
         }
         for (item, layer, bone) in [
             (&input.main, LAYER_MAIN_HAND, bones.right_item),
@@ -456,6 +461,7 @@ impl EquipmentRuntime {
             (ArmorSlot::Leggings, LAYER_LEGGINGS),
             (ArmorSlot::Boots, LAYER_BOOTS),
         ];
+        let mut wearing_elytra = false;
         for ((slot, layer), item) in slots.into_iter().zip(&input.armor) {
             if let Some(item) = item {
                 let route = self.equipment_route(
@@ -481,6 +487,7 @@ impl EquipmentRuntime {
                         continue;
                     }
                     routing::EquipmentRoute::Elytra(source) => {
+                        wearing_elytra = true;
                         if let Some(animation) = animation {
                             self.push_elytra(body, item, source, input, animation, layers);
                         }
@@ -508,6 +515,7 @@ impl EquipmentRuntime {
                 }
             }
         }
+        wearing_elytra
     }
 
     /// Records the bones of a skin model registered under `rig`, replacing any earlier model.
@@ -536,27 +544,6 @@ impl EquipmentRuntime {
             )?)))
         });
         entry.clone().map(|bones| (geometry, bones))
-    }
-
-    /// Whether the admitted chest definition is wings in the same context used for its draw.
-    pub(crate) fn is_wearing_elytra(
-        &mut self,
-        equipment: &ActorEquipmentInput,
-        animation: Option<EquipmentAnimation<'_>>,
-    ) -> bool {
-        equipment.armor[ArmorSlot::Chestplate as usize]
-            .as_ref()
-            .is_some_and(|item| {
-                matches!(
-                    self.equipment_route(
-                        item,
-                        equipment,
-                        animation,
-                        routing::EquipmentSlot::Worn(ArmorSlot::Chestplate)
-                    ),
-                    routing::EquipmentRoute::Elytra(_)
-                )
-            })
     }
 
     pub(super) fn armor_geometry_for(

@@ -16,8 +16,9 @@ pub(super) fn attach(
         &render_model::ActorRigSubmission,
         bool,
     ) -> Option<crate::presentation::entity_layers::ControllerStyle>,
-) {
+) -> std::collections::BTreeSet<u64> {
     let (partial_tick, delta_seconds, glint_settings) = frame;
+    let mut wearing_elytra = std::collections::BTreeSet::new();
     crate::presentation::actors::attach_layers(
         batch,
         equipment,
@@ -48,7 +49,7 @@ pub(super) fn attach(
                 styled_body.overlay_rgba8 = style.overlay_rgba8;
                 styled_body.light = style.light;
             }
-            let layers = equipment.layers_for_profile(
+            let selected = equipment.layers_for_profile(
                 &styled_body,
                 &input,
                 poses.combat_visuals,
@@ -61,12 +62,16 @@ pub(super) fn attach(
                     }
                 }),
             );
-            for layer in layers.iter_mut() {
+            if selected.wearing_elytra {
+                wearing_elytra.insert(runtime_id);
+            }
+            for layer in selected.layers.iter_mut() {
                 animate_glint(&mut layer.submission, partial_tick, glint_settings);
             }
-            layers
+            selected.layers
         },
     );
+    wearing_elytra
 }
 
 /// Reuses inventory facts while reading pose flags after this frame's local pose synchronization.

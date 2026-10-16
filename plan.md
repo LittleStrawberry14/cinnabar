@@ -1634,6 +1634,11 @@ not close a parity or visual acceptance gate.
   remain available to owner queries when the body pose is static.
   Attachable timing is independent of owner tick batching, and elytra scripts
   receive the actual render delta.
+- Cape composition retains the chest route used by the equipment draw. First-person
+  hand placement and drawing share one admitted definition, and preview atlas fallback
+  retains its startup choice and category. Predicate cache warming cannot change a
+  routing decision within those compositions. The routing table includes budget
+  exhaustion and armour-stand helmet and chest slots.
 - Incomplete: matching body bones still use the owner's pose without the attachable's
   own animation channels. Worn bone-binding expressions, multiple armour material
   groups, trim artwork, modern controller materials, and precedence among overlapping

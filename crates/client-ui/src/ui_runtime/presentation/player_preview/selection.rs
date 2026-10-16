@@ -15,6 +15,13 @@ pub(in crate::ui_runtime::presentation) struct EquipmentSelection {
     pack: Option<SelectionAssets>,
 }
 
+/// One admitted preview definition and its startup choice for an unavailable atlas region.
+pub(in crate::ui_runtime::presentation) struct SelectedBinding<'a> {
+    pub binding: &'a assets::EquipmentBinding,
+    pub from_pack: bool,
+    pub startup: Option<&'a assets::EquipmentBinding>,
+}
+
 impl EquipmentSelection {
     /// Selects session artwork before startup, sharing the caller's budget across both layers.
     #[allow(clippy::too_many_arguments)]
@@ -27,7 +34,7 @@ impl EquipmentSelection {
         owner: Option<PreviewEquipmentOwner<'_>>,
         slot: Option<usize>,
         budget: &mut usize,
-    ) -> Option<(&'a assets::EquipmentBinding, bool)> {
+    ) -> Option<SelectedBinding<'a>> {
         let enchantment = [(
             assets::entity::EngineVariable::IsEnchanted.name(),
             f32::from(enchanted),
@@ -84,9 +91,13 @@ impl EquipmentSelection {
             };
             catalog.bindings().get(index)
         };
-        select(pack, &mut self.pack)
-            .map(|binding| (binding, true))
-            .or_else(|| select(base, &mut self.base).map(|binding| (binding, false)))
+        let selected = select(pack, &mut self.pack);
+        let startup = select(base, &mut self.base);
+        Some(SelectedBinding {
+            binding: selected.or(startup)?,
+            from_pack: selected.is_some(),
+            startup,
+        })
     }
     /// Returns the immutable geometry owner for the selected catalog layer.
     pub(in crate::ui_runtime::presentation) fn entities(

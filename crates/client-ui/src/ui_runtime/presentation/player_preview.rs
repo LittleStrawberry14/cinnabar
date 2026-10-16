@@ -195,23 +195,27 @@ impl UiPresentationRuntime {
         let pack = self.gui_models.pack_equipment.source.clone();
         let base = self.equipment_catalog.clone();
         self.gui_models.wearing_elytra = false;
-        let mut budgets = [actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK; 4];
-        let resolved: [_; 4] = std::array::from_fn(|slot| {
-            let (identifier, dye, enchanted) = armor[slot]?;
-            let (binding, _) = self.preview_equipment_selection.binding(
+        let selected: [_; 4] = std::array::from_fn(|slot| {
+            let (identifier, _, enchanted) = armor[slot]?;
+            let mut budget = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK;
+            self.preview_equipment_selection.binding(
                 base.as_deref(),
                 pack.as_deref(),
                 identifier,
                 enchanted,
                 owner,
                 Some(slot),
-                &mut budgets[slot],
-            )?;
-            if slot == 1 {
-                self.gui_models.wearing_elytra =
-                    binding.category == assets::EquipmentCategory::Elytra;
-            }
-            worn_armor(binding, pack.as_deref(), base.as_deref(), dye)
+                &mut budget,
+            )
+        });
+        let resolved: [_; 4] = std::array::from_fn(|slot| {
+            let (_, dye, _) = armor[slot]?;
+            worn_armor(
+                selected[slot].as_ref()?.binding,
+                pack.as_deref(),
+                base.as_deref(),
+                dye,
+            )
         });
         self.prepare_preview_hands(
             &hands,
@@ -223,27 +227,26 @@ impl UiPresentationRuntime {
             }),
         );
         let armor = std::array::from_fn(|slot| {
+            let selection = selected[slot].as_ref()?;
             // A supplied image that could not fit the GUI atlas retains base artwork.
-            if self.gui_models.enabled
+            let (binding, preview) = if self.gui_models.enabled
                 && resolved[slot].as_ref().is_some_and(|(_, texture)| {
                     pack.as_deref()
                         .is_some_and(|pack| pack.texture(texture).is_some())
                 })
                 && self.gui_models.pack_equipment.region(slot).is_none()
             {
-                let (identifier, dye, enchanted) = armor[slot]?;
-                let (binding, _) = self.preview_equipment_selection.binding(
-                    base.as_deref(),
-                    None,
-                    identifier,
-                    enchanted,
-                    owner,
-                    Some(slot),
-                    &mut budgets[slot],
-                )?;
-                return worn_armor(binding, None, base.as_deref(), dye).map(|(preview, _)| preview);
+                let (_, dye, _) = armor[slot]?;
+                let binding = selection.startup?;
+                (binding, worn_armor(binding, None, base.as_deref(), dye)?.0)
+            } else {
+                (selection.binding, resolved[slot].as_ref()?.0.clone())
+            };
+            if slot == assets::ArmorSlot::Chestplate as usize {
+                self.gui_models.wearing_elytra =
+                    binding.category == assets::EquipmentCategory::Elytra;
             }
-            resolved[slot].as_ref().map(|(preview, _)| preview.clone())
+            Some(preview)
         });
         let held = hands[0].as_ref().and_then(|(hand, _)| {
             let identifier = hand.identifier.as_ref();

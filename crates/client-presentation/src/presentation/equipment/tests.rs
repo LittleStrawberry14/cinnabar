@@ -1033,7 +1033,9 @@ fn modern_sprite_items_and_worn_attachables_skip_the_hurt_overlay() {
         ],
         ..Default::default()
     };
-    let layers = runtime.layers_for_profile(&body, &input, render_api::CombatVisuals::Modern, None);
+    let layers = runtime
+        .layers_for_profile(&body, &input, render_api::CombatVisuals::Modern, None)
+        .layers;
     assert_eq!(layers.len(), 3);
     assert!(
         layers

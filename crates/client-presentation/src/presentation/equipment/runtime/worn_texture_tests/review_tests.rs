@@ -366,6 +366,7 @@ fn owner_context_worn_enchantments_select_geometry_and_preserve_intrinsic_glint(
                     delta_seconds: 0.05,
                 }),
             )
+            .layers
             .to_vec();
         assert_eq!(drawn.len(), 1);
         let geometry = render_model::find_geometry_index(

@@ -14,6 +14,7 @@ enum Definition {
     ConditionFailed,
     Missing,
     MissingArtwork,
+    BudgetRejected,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +26,8 @@ enum Mount {
     BlockHelmet,
     Helmet,
     BlockChest,
+    StandHelmet,
+    StandChest,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +56,7 @@ fn routing_pack(
                 Definition::OwnerAccepted | Definition::OwnerRejected => {
                     description["identifier"] = serde_json::json!("fixture:owner_model");
                     description["item"] = serde_json::json!({identifier: if matches!(definition, Definition::OwnerAccepted) {
-                        "q.owner_identifier == 'minecraft:skeleton'"
+                        "q.owner_identifier != 'minecraft:player'"
                     } else { "q.owner_identifier == 'minecraft:player'" }});
                 }
                 Definition::ConditionFailed => {
@@ -74,6 +77,22 @@ fn routing_pack(
         Definition::MissingArtwork => !path.starts_with("textures/"),
         _ => true,
     });
+    if matches!(definition, Definition::BudgetRejected) {
+        let (_, bytes) = files
+            .iter()
+            .find(|(path, _)| path.starts_with("attachables/"))
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        let mut description = json["minecraft:attachable"]["description"].clone();
+        let cost = assets::MAX_MOLANG_OPS_PER_EXPRESSION;
+        let count = actor_animation::MAX_MOLANG_OPS_PER_ACTOR_TICK / cost;
+        for index in 0..count {
+            description["identifier"] = serde_json::json!(format!("fixture:rejected_{index}"));
+            description["item"] = serde_json::json!({identifier: format!("{}!v.rejected_{index}", "0;".repeat((cost - 4) / 2))});
+            files.push((format!("attachables/rejected_{index}.json").into(),
+                serde_json::to_vec(&serde_json::json!({"format_version":"1.10.0","minecraft:attachable":{"description":description}})).unwrap()));
+        }
+    }
     files
 }
 
@@ -131,20 +150,21 @@ fn equipment_routing_fallback_table() {
     use Definition::*;
     use Expected::*;
     use Mount::*;
-    // Columns: hand, Java main, Java offhand, block hand, block helmet, helmet, block chest.
+    // Columns follow the mounts below; stands use the same worn routing as other owners.
     let rejected = [
-        Fallback, Fallback, Fallback, Fallback, Fallback, Hidden, Hidden,
+        Fallback, Fallback, Fallback, Fallback, Fallback, Hidden, Hidden, Hidden, Hidden,
     ];
     let cases = [
-        (Ordinary, [Selected; 7]),
-        (OwnerAccepted, [Selected; 7]),
+        (Ordinary, [Selected; 9]),
+        (OwnerAccepted, [Selected; 9]),
+        (BudgetRejected, [Selected; 9]),
         (OwnerRejected, rejected),
         (ConditionFailed, rejected),
         (Missing, rejected),
         (
             MissingArtwork,
             [
-                Fallback, Fallback, Fallback, Fallback, Hidden, Hidden, Hidden,
+                Fallback, Fallback, Fallback, Fallback, Hidden, Hidden, Hidden, Hidden, Hidden,
             ],
         ),
     ];
@@ -156,6 +176,8 @@ fn equipment_routing_fallback_table() {
         BlockHelmet,
         Helmet,
         BlockChest,
+        StandHelmet,
+        StandChest,
     ];
     for (definition, outcomes) in cases {
         assert_eq!(mounts.len(), outcomes.len());
@@ -188,8 +210,8 @@ fn equipment_routing_fallback_table() {
                         pages = install(&mut runtime, pages, files);
                     }
                     let slot = match mount {
-                        BlockHelmet | Helmet => Some(ArmorSlot::Helmet),
-                        BlockChest => Some(ArmorSlot::Chestplate),
+                        BlockHelmet | Helmet | StandHelmet => Some(ArmorSlot::Helmet),
+                        BlockChest | StandChest => Some(ArmorSlot::Chestplate),
                         _ => None,
                     };
                     if let Some(slot) = slot {
@@ -204,7 +226,12 @@ fn equipment_routing_fallback_table() {
                         );
                     }
                     let body = player_body(&mut runtime);
-                    let actor = owner();
+                    let mut actor = owner();
+                    if matches!(mount, StandHelmet | StandChest) {
+                        actor.kind = protocol::ActorKind::Entity {
+                            identifier: "minecraft:armor_stand".into(),
+                        };
+                    }
                     let names = [
                         Box::from("head"),
                         Box::from("rightItem"),
@@ -261,23 +288,24 @@ fn equipment_routing_fallback_table() {
                             &mut fallback,
                         );
                     }
-                    let drawn = runtime
-                        .layers_for(
-                            &body,
-                            &input,
-                            Some(EquipmentAnimation {
-                                owner: &actor,
-                                rig: &rig,
-                                frame_alpha: 0.5,
-                                delta_seconds: 0.05,
-                            }),
-                        )
-                        .to_vec();
+                    let selection = runtime.layers_for_profile(
+                        &body,
+                        &input,
+                        render_api::DEFAULT_COMBAT_VISUALS,
+                        Some(EquipmentAnimation {
+                            owner: &actor,
+                            rig: &rig,
+                            frame_alpha: 0.5,
+                            delta_seconds: 0.05,
+                        }),
+                    );
+                    assert!(!selection.wearing_elytra);
+                    let drawn = selection.layers.to_vec();
                     let label = format!(
                         "{definition:?} {mount:?} pack={pack} startup={startup} native={native}"
                     );
                     let startup_artwork =
-                        startup && !matches!(definition, Ordinary | OwnerAccepted);
+                        startup && !matches!(definition, Ordinary | OwnerAccepted | BudgetRejected);
                     let startup_definition =
                         startup_artwork && !matches!(definition, MissingArtwork);
                     let outcome =

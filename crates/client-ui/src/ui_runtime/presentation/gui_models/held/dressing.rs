@@ -22,7 +22,7 @@ impl UiPresentationRuntime {
                 input: owner.input.for_hand(index == 1),
                 ..owner
             });
-            let (binding, from_pack) = self.preview_equipment_selection.binding(
+            let selection = self.preview_equipment_selection.binding(
                 base.as_deref(),
                 pack.as_deref(),
                 &hand.identifier,
@@ -31,7 +31,10 @@ impl UiPresentationRuntime {
                 None,
                 &mut budget,
             )?;
-            let mut entities = self.preview_equipment_selection.entities(from_pack)?;
+            let binding = selection.binding;
+            let mut entities = self
+                .preview_equipment_selection
+                .entities(selection.from_pack)?;
             if render_model::find_geometry_index(&entities, &binding.geometry.identifier).is_none()
             {
                 entities = self.preview_equipment_selection.entities(false)?;

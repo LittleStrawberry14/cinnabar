@@ -222,6 +222,10 @@ pub(super) fn vanilla_hand_source(
     hand: FirstPersonHand,
     native_pose: &mut NativePoseCache,
     java_mode: bool,
+    main_selection: Option<(
+        &crate::presentation::equipment::HeldSelection,
+        actor_animation::AttachableAnimationInput<'_>,
+    )>,
 ) -> Option<HandSource> {
     let runtime_id = inputs.presentation.submission.input.identity.runtime_id;
     let stream = inputs.stream;
@@ -260,10 +264,24 @@ pub(super) fn vanilla_hand_source(
             render_input.frame_alpha = alpha;
             let render_input =
                 attachable_hand_input(equipment_input, owner_equipment, render_input, index == 1);
+            let actor = stream.authority().actor(runtime_id)?;
+            if index == 0
+                && let Some((selected, selected_input)) = main_selection
+            {
+                return equipment.first_person_selected_attachable(
+                    &presentation.submission,
+                    item,
+                    selected,
+                    actor,
+                    &rig,
+                    selected_input,
+                    None,
+                );
+            }
             equipment.first_person_attachable(
                 &presentation.submission,
                 item,
-                stream.authority().actor(runtime_id)?,
+                actor,
                 &rig,
                 render_input,
                 None,
@@ -444,6 +462,7 @@ pub(super) fn source(
         hand,
         &mut cache.native_pose,
         java_mode,
+        None,
     )
 }
 
