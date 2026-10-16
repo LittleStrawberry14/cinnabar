@@ -49,7 +49,9 @@ fn elevated() -> io::Result<bool> {
         let result = if read == 0 {
             Err(io::Error::last_os_error())
         } else if length != size_of::<TOKEN_ELEVATION>() as u32 {
-            Err(io::Error::other("Windows returned an invalid elevation token"))
+            Err(io::Error::other(
+                "Windows returned an invalid elevation token",
+            ))
         } else {
             Ok(elevation.TokenIsElevated != 0)
         };
