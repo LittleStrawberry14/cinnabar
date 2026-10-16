@@ -318,7 +318,11 @@ fn inherited_and_authored_overlays_preserve_unmasked_worn_categories_for_each_pr
                     for masked in [false, true] {
                         let (entities, catalog) =
                             compile_fixture(overlay_files(masked, authored_armor));
-                        let (mut runtime, pages) = build_runtime(&entities, Some(catalog));
+                        let (mut runtime, mut pages) =
+                            build_runtime(&entities, Some(Arc::clone(&catalog)));
+                        if authored_armor {
+                            install(&mut runtime, &mut pages, Arc::clone(&entities), catalog);
+                        }
                         let mut state = ActorFrameState::default();
                         let mut stream = equipped_stream(Arc::clone(&entities), &mut state);
                         for (step, wings) in [false, true, false].into_iter().enumerate() {
@@ -358,7 +362,12 @@ fn inherited_and_authored_overlays_preserve_unmasked_worn_categories_for_each_pr
                                     profile,
                                     java_mode,
                                 );
-                                let expected_rig = render_model::equipment_rig_id(
+                                let rig_id = if authored_armor {
+                                    render_model::pack_equipment_rig_id
+                                } else {
+                                    render_model::equipment_rig_id
+                                };
+                                let expected_rig = rig_id(
                                     render_model::find_geometry_index(
                                         &entities,
                                         if wings {
@@ -386,15 +395,22 @@ fn inherited_and_authored_overlays_preserve_unmasked_worn_categories_for_each_pr
                                     "the primary controller must not restyle a later body layer"
                                 );
                                 let worn = drawn(&batch, equipment::ELYTRA_LAYER);
-                                // Startup armour keeps the legacy profile's inherited overlay.
-                                let expected_overlay =
-                                    if profile == CombatVisuals::Legacy112 || java_mode {
-                                        pack_overlay_rgba8(BODY_OVERLAY)
-                                    } else if authored_armor && !wings {
-                                        pack_overlay_rgba8(ARMOR_OVERLAY)
-                                    } else {
-                                        0
-                                    };
+                                let own_overlay = if authored_armor
+                                    && !wings
+                                    && profile == CombatVisuals::Legacy112
+                                {
+                                    pack_overlay_rgba8(ARMOR_OVERLAY)
+                                } else {
+                                    0
+                                };
+                                let expected_overlay = if profile == CombatVisuals::Modern
+                                    && java_mode
+                                    || profile == CombatVisuals::Legacy112 && own_overlay == 0
+                                {
+                                    pack_overlay_rgba8(BODY_OVERLAY)
+                                } else {
+                                    own_overlay
+                                };
                                 assert_eq!(
                                     worn.overlay_rgba8, expected_overlay,
                                     "authored={authored_armor}, local={local}, profile={profile:?}, java={java_mode}, masked={masked}, wings={wings}, repeat={repeat}"
