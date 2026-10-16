@@ -102,5 +102,22 @@ func TestLoadoutConnectionWritesAndReceivesIndependentSnapshots(t *testing.T) {
 	session.send(t, map[string]any{"type": typeLoadout, "xuid": "11", "uuid": "00112233-4455-6677-8899-aabbccddeeff", "revision": 9, "slots": map[string]any{"head": state.Slots[0].ItemID}})
 	testwait.Eventually(t, testwait.DefaultTimeout, "received loadout", func() bool { got := client.SyncPlayers(state).Loadouts; return len(got) == 1 && len(got[0].Slots) == 1 })
 	session.send(t, map[string]any{"type": typeLoadout, "xuid": "11", "uuid": "00112233-4455-6677-8899-aabbccddeeff", "revision": 9, "slots": map[string]any{}})
-	testwait.Eventually(t, testwait.DefaultTimeout, "loadout withdrawal", func() bool { got := client.SyncPlayers(state).Loadouts; return len(got) == 1 && len(got[0].Slots) == 0 })
+	testwait.Eventually(t, testwait.DefaultTimeout, "loadout withdrawal", func() bool { return len(client.SyncPlayers(state).Loadouts) == 0 })
+}
+
+func TestLoadoutWithdrawalAllowsTheNextSessionToRestartItsRevision(t *testing.T) {
+	s := &session{emoteState: PlayerState{XUIDs: []string{"11"}}}
+	c := &Client{live: s}
+	id := "cinnabar:bunny_ears"
+	message := inbound{Type: typeLoadout, XUID: "11", UUID: "00112233-4455-6677-8899-aabbccddeeff", Revision: 10, Slots: map[string]*string{"head": &id}}
+	c.receiveLoadout(s, message)
+	message.Slots = map[string]*string{}
+	c.receiveLoadout(s, message)
+	message.Revision = 1
+	message.Slots = map[string]*string{"head": &id}
+	c.receiveLoadout(s, message)
+	got := c.syncPlayers(PlayerState{XUIDs: []string{"11"}}, time.Unix(123, 0)).Loadouts
+	if len(got) != 1 || len(got[0].Slots) != 1 || got[0].Revision != message.Revision {
+		t.Fatalf("withdrawn session revision blocked the next session: %+v", got)
+	}
 }

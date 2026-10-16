@@ -105,6 +105,10 @@ func (c *Client) receiveLoadout(s *session, msg inbound) {
 	if previous, ok := s.loadouts[msg.XUID]; ok && previous.Revision > msg.Revision {
 		return
 	}
+	if len(slots) == 0 {
+		delete(s.loadouts, msg.XUID)
+		return
+	}
 	if len(s.loadouts) >= bridgecontract.CinnabarAPIMaxLookupXUIDs {
 		if _, ok := s.loadouts[msg.XUID]; !ok {
 			return
