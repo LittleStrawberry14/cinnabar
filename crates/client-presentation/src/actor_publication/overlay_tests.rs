@@ -386,20 +386,19 @@ fn inherited_and_authored_overlays_preserve_unmasked_worn_categories_for_each_pr
                                     "the primary controller must not restyle a later body layer"
                                 );
                                 let worn = drawn(&batch, equipment::ELYTRA_LAYER);
-                                let own_overlay = if authored_armor && !wings {
-                                    pack_overlay_rgba8(ARMOR_OVERLAY)
-                                } else {
-                                    0
-                                };
-                                let expected_overlay = if profile == CombatVisuals::Modern
-                                    && java_mode
-                                    || profile == CombatVisuals::Legacy112 && own_overlay == 0
-                                {
-                                    pack_overlay_rgba8(BODY_OVERLAY)
-                                } else {
-                                    own_overlay
-                                };
-                                assert_eq!(worn.overlay_rgba8, expected_overlay);
+                                // Startup armour keeps the legacy profile's inherited overlay.
+                                let expected_overlay =
+                                    if profile == CombatVisuals::Legacy112 || java_mode {
+                                        pack_overlay_rgba8(BODY_OVERLAY)
+                                    } else if authored_armor && !wings {
+                                        pack_overlay_rgba8(ARMOR_OVERLAY)
+                                    } else {
+                                        0
+                                    };
+                                assert_eq!(
+                                    worn.overlay_rgba8, expected_overlay,
+                                    "authored={authored_armor}, local={local}, profile={profile:?}, java={java_mode}, masked={masked}, wings={wings}, repeat={repeat}"
+                                );
                                 assert!(
                                     worn.input
                                         .current_bones
