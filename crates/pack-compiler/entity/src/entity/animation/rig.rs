@@ -187,17 +187,20 @@ pub(super) fn compile_rigs(
             .get("item")
             .and_then(Value::as_object)
             .and_then(|items| items.values().next())
-            .and_then(Value::as_str)
             .map(|condition| {
-                molang.compile(condition).or_else(|_| {
-                    outcomes.push(CompileReferenceOutcome::OptionalStaticFallback {
-                        source: entity.source_index,
-                        symbol: entity_symbol as u32,
-                        reason: FallbackReason::UnsupportedOptionalExpression,
-                    });
-                    // An unreadable restriction must not admit this definition for every owner.
-                    molang.compile("0")
-                })
+                condition
+                    .as_str()
+                    .ok_or_else(|| invalid("item condition must be a string"))
+                    .and_then(|condition| molang.compile(condition))
+                    .or_else(|_| {
+                        outcomes.push(CompileReferenceOutcome::OptionalStaticFallback {
+                            source: entity.source_index,
+                            symbol: entity_symbol as u32,
+                            reason: FallbackReason::UnsupportedOptionalExpression,
+                        });
+                        // An unreadable restriction must not admit this definition for every owner.
+                        molang.compile("0")
+                    })
             })
             .transpose()?;
         // Owner selection remains available when this pack reuses external render resources.
