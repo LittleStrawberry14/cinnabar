@@ -33,6 +33,7 @@ fn begin_frame(
 
 /// Installs the production actor plugin, shaders, lighting and a headless validation device.
 pub(crate) fn fixture() -> App {
+    bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
     let (mut app, _) = crate::queue_review_support::app();
     let mut render = SubApp::new();
     *render.world_mut() = std::mem::take(app.world_mut());
