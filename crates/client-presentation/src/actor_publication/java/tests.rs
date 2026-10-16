@@ -600,7 +600,7 @@ fn held(item: &WornItem) -> JavaHeldItem {
 fn mixed_swaps_change_hands_at_the_bottom_of_the_dip() {
     const CROSSBOW: &str = "minecraft:crossbow";
     const SHIELD: &str = "minecraft:shield";
-    let vanilla = |identifier: &str| matches!(identifier, CROSSBOW | SHIELD);
+    let vanilla = |item: &WornItem| matches!(item.identifier.as_ref(), CROSSBOW | SHIELD);
     let id = |item: Option<WornItem>| item.map(|item| item.identifier);
     for (old, new) in [
         ("minecraft:iron_sword", CROSSBOW),
@@ -616,13 +616,13 @@ fn mixed_swaps_change_hands_at_the_bottom_of_the_dip() {
         let dipping = cache.displayed_main(Some(&held(&old)), Some(&new));
         assert_eq!(
             vanilla_draws(dipping.as_ref(), None, vanilla),
-            vanilla(&old.identifier)
+            vanilla(&old)
         );
         assert_eq!(id(dipping), Some(Arc::clone(&old.identifier)));
         let adopted = cache.displayed_main(Some(&held(&new)), Some(&new));
         assert_eq!(
             vanilla_draws(adopted.as_ref(), None, vanilla),
-            vanilla(&new.identifier)
+            vanilla(&new)
         );
         assert_eq!(id(adopted), Some(Arc::clone(&new.identifier)));
     }

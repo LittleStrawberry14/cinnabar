@@ -9,6 +9,7 @@ use client_world::ActorSnapshot;
 use super::*;
 
 impl EquipmentRuntime {
+    /// Draws the owner's admitted attachable, retaining authored hand poses when it owns them.
     pub fn first_person_attachable(
         &mut self,
         body: &ActorRigSubmission,
@@ -52,6 +53,9 @@ impl EquipmentRuntime {
             ..
         } = source;
         let binding = &catalog.bindings()[index];
+        let java_hand = java_hand.filter(|_| {
+            !super::java::keep_authored_hand(&item.identifier, binding.category, from_pack)
+        });
         if !matches!(
             self.effective_category(&item.identifier, binding.category),
             EquipmentCategory::Held | EquipmentCategory::Shield

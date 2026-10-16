@@ -4,6 +4,99 @@ use super::*;
 
 const BOW: &str = "minecraft:bow";
 
+/// Supplies startup bow artwork and its inventory sprite so Java fallback can draw.
+fn bow_startup_runtime() -> (EquipmentRuntime, render_model::ActorArtworkPages) {
+    let (entities, catalog) = pack_catalog(fixture(BOW, "geometry.bow_standby", 10, true));
+    let texture = catalog
+        .texture(&catalog.binding(BOW).unwrap().texture.identifier)
+        .unwrap();
+    let icons = Arc::new(
+        assets::RuntimeIconCatalog::decode(
+            &assets::encode_icon_catalog(
+                [0; 32],
+                &[assets::IconSprite {
+                    width: texture.width,
+                    height: texture.height,
+                    rgba8: Arc::clone(&texture.rgba8),
+                }],
+                &[assets::IconEntry {
+                    identifier: BOW.into(),
+                    metadata: 0,
+                    sprite: 0,
+                }],
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    let (runtime, pages, _) = EquipmentRuntime::build(
+        entities,
+        Some(catalog),
+        icons,
+        None,
+        None,
+        render_model::ActorArtworkPages::default(),
+    );
+    (runtime, pages)
+}
+
+#[test]
+fn java_bow_third_person_hand_follows_the_owner_admitted_definition() {
+    let draw = |condition: Option<&str>| {
+        let (mut runtime, mut pages) = bow_startup_runtime();
+        if let Some(condition) = condition {
+            let mut files = fixture(BOW, "geometry.bow_standby", 80, true);
+            let (_, bytes) = files
+                .iter_mut()
+                .find(|(path, _)| path.as_ref() == "attachables/weapon.json")
+                .unwrap();
+            let mut json: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+            json["minecraft:attachable"]["description"]["item"] =
+                serde_json::json!({BOW: condition});
+            *bytes = serde_json::to_vec(&json).unwrap();
+            pages = install(&mut runtime, pages, files);
+        }
+        let body = player_body(&mut runtime);
+        let actor = owner();
+        let names = [Box::from("rightItem")];
+        let rig = owner_rig(&actor, &names);
+        let equipment = ActorEquipmentInput {
+            main: Some(item(BOW)),
+            java: Some(JavaGrip::default()),
+            ..Default::default()
+        };
+        let layers = runtime.layers_for(
+            &body,
+            &equipment,
+            Some(EquipmentAnimation {
+                owner: &actor,
+                rig: &rig,
+                frame_alpha: 0.5,
+                delta_seconds: 0.05,
+            }),
+        );
+        assert_eq!(layers.len(), 1);
+        (layers[0].clone(), pages)
+    };
+    let (baseline, _) = draw(None);
+    let (rejected, _) = draw(Some("q.owner_identifier == 'minecraft:player'"));
+    let (admitted, pages) = draw(Some("q.owner_identifier != 'minecraft:player'"));
+    assert_eq!(
+        rejected.submission.input.current_bones,
+        baseline.submission.input.current_bones
+    );
+    assert_eq!(
+        rejected.submission.input.previous_bones,
+        baseline.submission.input.previous_bones
+    );
+    assert_eq!(rejected.location, baseline.location);
+    assert_ne!(
+        admitted.submission.input.current_bones,
+        baseline.submission.input.current_bones
+    );
+    assert_eq!(selected_pixel(&pages, &admitted)[0], 80);
+}
+
 #[test]
 fn same_id_native_conditions_select_pack_or_startup_artwork_in_both_views() {
     for player in [false, true] {
@@ -18,8 +111,7 @@ fn same_id_native_conditions_select_pack_or_startup_artwork_in_both_views() {
                 json["minecraft:attachable"]["description"]["item"] =
                     serde_json::json!({BOW: "q.owner_identifier == 'minecraft:player'"});
                 *bytes = serde_json::to_vec(&json).unwrap();
-                let (mut runtime, pages) =
-                    startup_runtime(fixture(BOW, "geometry.bow_standby", 10, true));
+                let (mut runtime, pages) = bow_startup_runtime();
                 let pages = install(&mut runtime, pages, files);
                 let body = player_body(&mut runtime);
                 let mut actor = owner();
@@ -202,8 +294,7 @@ fn mixed_native_variants_keep_selected_first_person_models_in_both_settings() {
         for java in [false, true] {
             let files = mixed_fixture();
             let (entities, catalog) = pack_catalog(files.clone());
-            let (mut runtime, pages) =
-                startup_runtime(fixture(BOW, "geometry.bow_standby", 10, true));
+            let (mut runtime, pages) = bow_startup_runtime();
             let pages = install(&mut runtime, pages, files);
             let body = player_body(&mut runtime);
             let mut owner = owner();
@@ -265,8 +356,7 @@ fn mixed_native_variants_keep_selected_third_person_models_in_both_settings() {
         for java in [false, true] {
             let files = mixed_fixture();
             let (entities, catalog) = pack_catalog(files.clone());
-            let (mut runtime, pages) =
-                startup_runtime(fixture(BOW, "geometry.bow_standby", 10, true));
+            let (mut runtime, pages) = bow_startup_runtime();
             let pages = install(&mut runtime, pages, files);
             let body = player_body(&mut runtime);
             let mut owner = owner();

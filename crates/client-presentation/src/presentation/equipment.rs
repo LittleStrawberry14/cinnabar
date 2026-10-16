@@ -5,7 +5,7 @@ mod atlas;
 mod display;
 mod first_person;
 #[cfg(any(test, feature = "test-support"))]
-mod frame_raster;
+pub(crate) mod frame_raster;
 #[cfg(test)]
 mod frames;
 mod input;

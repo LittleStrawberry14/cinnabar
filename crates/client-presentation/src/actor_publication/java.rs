@@ -518,11 +518,10 @@ impl HandCache {
 fn vanilla_draws(
     main: Option<&WornItem>,
     off: Option<&WornItem>,
-    vanilla_attachable: impl Fn(&str) -> bool,
+    mut vanilla_attachable: impl FnMut(&WornItem) -> bool,
 ) -> bool {
     let map = |item: &WornItem| &*item.identifier == FILLED_MAP;
-    main.is_some_and(|item| map(item) || vanilla_attachable(&item.identifier))
-        || off.is_some_and(map)
+    main.is_some_and(|item| map(item) || vanilla_attachable(item)) || off.is_some_and(map)
 }
 
 /// Retains the drawn stack through Java's dip while authored player rigs keep their whole hand.
@@ -564,8 +563,21 @@ pub(super) fn hand_source(
         main: main.clone(),
         ..equipment_input.clone()
     };
-    if vanilla_draws(main.as_ref(), equipment_input.off.as_ref(), |identifier| {
-        equipment.is_vanilla_attachable(identifier)
+    if vanilla_draws(main.as_ref(), equipment_input.off.as_ref(), |item| {
+        let Some(actor) = stream.authority().actor(runtime_id) else {
+            return false;
+        };
+        let input = super::hand::attachable_hand_input(
+            &retained_equipment,
+            owner_equipment,
+            actor_animation::AttachableAnimationInput {
+                first_person: true,
+                frame_alpha: alpha,
+                ..item_animation.unwrap_or_default()
+            },
+            false,
+        );
+        equipment.uses_authored_hand(item, actor, &rig, input)
     }) {
         let progress = FirstPersonHand {
             swing: hand.swing,

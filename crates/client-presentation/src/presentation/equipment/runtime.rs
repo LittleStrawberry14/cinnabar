@@ -429,15 +429,19 @@ impl EquipmentRuntime {
             // Authored item poses use the owning actor and the same sampled body as equipment.
             let animated = animation
                 .filter(|animation| {
-                    if layer == LAYER_MAIN_HAND
-                        && input.java.is_some()
-                        && !self.is_vanilla_attachable(&item.identifier)
-                    {
-                        return false;
-                    }
                     self.held_binding_source(item, input, Some(*animation), layer == LAYER_OFF_HAND)
                         .is_some_and(|source| {
                             let binding = &source.catalog.bindings()[source.index];
+                            if layer == LAYER_MAIN_HAND
+                                && input.java.is_some()
+                                && !java::keep_authored_hand(
+                                    &item.identifier,
+                                    binding.category,
+                                    source.from_pack,
+                                )
+                            {
+                                return false;
+                            }
                             matches!(
                                 self.effective_category(&item.identifier, binding.category),
                                 EquipmentCategory::Held | EquipmentCategory::Shield

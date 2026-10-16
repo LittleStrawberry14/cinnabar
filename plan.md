@@ -1464,6 +1464,8 @@ not close a parity or visual acceptance gate.
   clocks through swaps, authored first-person rigs retain ownership, and raster depth stays
   one sixteenth at any texture size. Emote skin layers follow the sampled body pose.
   Unchanged render layers sharing geometry retain their own completed pose allocations.
+  Held-item hand routing uses the owner's admitted definition, so rejected pack bows
+  retain the startup bow's Java placement in both views.
 - Focused regression suites and touched-crate checks pass. Windows/DX12 headless captures
   exercise held-item swaps, use, both third-person views, cape motion and local emotes.
 - Incomplete: swimming, crawling, gliding, sleeping and emoting stay vanilla (Java 1.7 has

@@ -147,7 +147,7 @@ pub(super) struct HandSource {
 
 impl HandSource {
     /// Places the exact body/item submissions shared by validation and final construction.
-    fn submissions(&self) -> [Option<ActorRigSubmission>; 3] {
+    pub(super) fn submissions(&self) -> [Option<ActorRigSubmission>; 3] {
         let placement = hand_camera_from_rig(self.presentation.authored_scale, self.motion);
         let body = self.body.clone().map(|mut body| {
             body.world_from_actor = self

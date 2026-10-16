@@ -31,6 +31,36 @@ pub(super) fn rest_bone(pivot: [f32; 3]) -> RenderBoneTransform {
 }
 
 impl EquipmentRuntime {
+    /// Chooses the hand mode from the same owner-admitted definition used to draw the model.
+    pub fn uses_authored_hand(
+        &mut self,
+        item: &WornItem,
+        owner: &client_world::ActorSnapshot,
+        rig: &actor_animation::ActorRigSnapshot<'_>,
+        input: actor_animation::AttachableAnimationInput<'_>,
+    ) -> bool {
+        if self.uses_native_item_mesh(&item.identifier) {
+            return false;
+        }
+        self.selected_binding_source(
+            item,
+            EquipmentAnimation {
+                owner,
+                rig,
+                frame_alpha: input.frame_alpha,
+                delta_seconds: input.delta_seconds.unwrap_or_default(),
+            },
+            input,
+        )
+        .is_some_and(|source| {
+            keep_authored_hand(
+                &item.identifier,
+                source.catalog.bindings()[source.index].category,
+                source.from_pack,
+            )
+        })
+    }
+
     /// The main-hand item in Java's third-person grip on the right arm; `false` when the body
     /// lacks the arm or the item has no drawable mesh.
     pub(super) fn push_java_held(
@@ -83,20 +113,6 @@ impl EquipmentRuntime {
             span,
         ));
         true
-    }
-
-    /// Authored pack attachables and held items Java never had keep their own hand animation.
-    pub fn is_vanilla_attachable(&self, identifier: &str) -> bool {
-        if self.uses_native_item_mesh(identifier) {
-            return false;
-        }
-        self.binding_source(identifier)
-            .and_then(|(catalog, from_pack)| {
-                catalog
-                    .binding(identifier)
-                    .map(|binding| keep_authored_hand(identifier, binding.category, from_pack))
-            })
-            .unwrap_or(false)
     }
 
     /// The main-hand item placed by Java's first-person stack in camera space.
@@ -154,7 +170,11 @@ pub fn java_draws_attachable(identifier: &str) -> bool {
 }
 
 /// Server-pack attachables own their hand poses, including replacements for Java's bow.
-fn keep_authored_hand(identifier: &str, category: EquipmentCategory, from_pack: bool) -> bool {
+pub(super) fn keep_authored_hand(
+    identifier: &str,
+    category: EquipmentCategory,
+    from_pack: bool,
+) -> bool {
     matches!(
         category,
         EquipmentCategory::Held | EquipmentCategory::Shield
