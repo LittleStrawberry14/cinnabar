@@ -120,10 +120,11 @@ fn recurring_vertices_do_not_allocate_native_staging_buffers() {
         .staged_writes;
     for generation in 1..=3 {
         vertices[0].position[0] = generation as f32;
-        let mut frame = world.resource_mut::<render_scene::BlockEntityFrameResource>();
-        frame.solid = Arc::from(vertices.clone());
-        frame.revision += 1;
-        drop(frame);
+        {
+            let mut frame = world.resource_mut::<render_scene::BlockEntityFrameResource>();
+            frame.solid = Arc::from(vertices.clone());
+            frame.revision += 1;
+        }
         world.run_system_once(prepare_resources).unwrap();
         assert_eq!(crate::upload_allocation_tests::buffers(world), before);
     }
