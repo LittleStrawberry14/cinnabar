@@ -115,6 +115,10 @@ use meshing::{
 pub use actor::gpu::storage_binding_bytes as actor_storage_binding_bytes;
 pub use actor::material::blend_state as actor_material_blend_state;
 pub use actor_render::ActorRenderPlugin;
+#[cfg(feature = "publication-test-support")]
+pub use actor_render::publication_test_support::{
+    PublicationActorPreparation, publication_actor_preparation,
+};
 
 pub use atmosphere_render::AtmospherePlugin;
 pub use block_entity::{BlockEntityRenderPlugin, DRAGON_DEATH_BLEND};
