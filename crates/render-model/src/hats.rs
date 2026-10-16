@@ -12,6 +12,7 @@ pub struct HatRig {
     pub geometry: ActorRigGeometry,
     parents: Vec<Option<usize>>,
     flex: Vec<f32>,
+    rest_rotations: Vec<Quat>,
     head: usize,
     offset: [f32; 3],
     wind: Option<cosmetics_animation::Wind>,
@@ -91,6 +92,9 @@ impl HatRig {
         let mut poses: Vec<RenderBoneTransform> = Vec::with_capacity(self.parents.len());
         for index in 0..self.parents.len() {
             let mut pose = attachment;
+            if index == self.head {
+                pose.rotation = (rotation * self.rest_rotations[index]).to_array();
+            }
             if index != self.head {
                 let parent = self.parents[index].expect("admitted attachment parent");
                 let parent_pose = poses[parent];
@@ -107,8 +111,10 @@ impl HatRig {
                         "z" => Vec3::Z,
                         _ => Vec3::X,
                     });
-                pose.rotation =
-                    (rotation * Quat::from_axis_angle(axis, bend * self.flex[index])).to_array();
+                pose.rotation = (Quat::from_array(parent_pose.rotation)
+                    * self.rest_rotations[index]
+                    * Quat::from_axis_angle(axis, bend * (self.flex[index] - self.flex[parent])))
+                .to_array();
             }
             poses.push(pose);
         }

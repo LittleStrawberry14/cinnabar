@@ -295,3 +295,48 @@ fn corrupt_assets_and_unknown_slots_never_admit_a_renderable_handle() {
         vec![fixture::bunny()]
     );
 }
+
+#[test]
+fn catalog_geometry_keeps_authored_rotations_at_a_different_attachment_bone() {
+    use sha2::{Digest, Sha256};
+    let mut geometry: serde_json::Value =
+        serde_json::from_str(include_str!("bunny_ears.geo.json")).unwrap();
+    let bones = geometry["minecraft:geometry"][0]["bones"]
+        .as_array_mut()
+        .unwrap();
+    bones[0]["name"] = "body".into();
+    bones[0]["rotation"] = serde_json::json!([0, 90, 0]);
+    for bone in bones {
+        if bone["parent"] == "head" {
+            bone["parent"] = "body".into();
+        }
+    }
+    let bytes = serde_json::to_vec(&geometry).unwrap();
+    let mut descriptor = fixture::bunny().descriptor().clone();
+    descriptor.id = "fixture:body-rotation".into();
+    descriptor.slot = "back".into();
+    descriptor.attachment_bone = "body".into();
+    descriptor.assets.geometry.sha256 = format!("{:x}", Sha256::digest(&bytes));
+    descriptor.assets.geometry.bytes = bytes.len();
+    let item = admit(
+        descriptor,
+        &bytes,
+        include_bytes!("bunny_ears.png"),
+        include_bytes!("fixture/animation.json"),
+    )
+    .unwrap();
+    let pose = rig(item).pose(head(Quat::IDENTITY), 0.0);
+    let actual = Quat::from_array(pose[0].rotation);
+    assert!(
+        actual
+            .dot(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2))
+            .abs()
+            > 0.99999
+    );
+    assert!(
+        rig(item)
+            .rest_vertices
+            .iter()
+            .any(|vertex| vertex.position[2].abs() > 0.2)
+    );
+}

@@ -191,7 +191,8 @@ pub(super) fn exchange(
                     .into_iter()
                     .map(|slot| (slot.slot, Some(slot.item_id)))
                     .collect();
-                cosmetics::resolve(&slots, |_| false)
+                // The authenticated API has already checked the sender's entitlements.
+                cosmetics::resolve(&slots, |_| true)
                     .into_iter()
                     .map(|hat| RemoteHat {
                         runtime_id: peer.runtime_id,

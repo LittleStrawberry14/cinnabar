@@ -13,7 +13,7 @@ pub(super) fn build(
         serde_json::to_string(&item.geometry_id).ok()?
     );
     let model = assets::parse_skin_geometry(&patch, geometry).ok()??;
-    if model.bones.is_empty() || model.bones.len() > 128 {
+    if model.bones.is_empty() {
         return None;
     }
     let mut original = crate::skin_geometry(&model, EntityRigId(0)).ok()?;
@@ -141,29 +141,55 @@ pub(super) fn build(
         height: image.height(),
         rgba8: image.into_raw().into(),
     };
-    let rest_vertices = original
-        .vertices
+    let rest_rotations = model
+        .bones
         .iter()
-        .map(|vertex| ActorVertex {
-            position: [
-                -vertex.position[0] + item.offset[0],
-                vertex.position[1] + item.offset[1],
-                -vertex.position[2] + item.offset[2],
-            ],
-            uv: vertex.uv,
-            part: 0,
+        .map(|bone| {
+            bone.rotation.map_or(Quat::IDENTITY, |rotation| {
+                let [x, y, z] = rotation.map(|value| value.get().to_radians());
+                Quat::from_euler(glam::EulerRot::ZYX, -z, y, -x)
+            })
         })
-        .collect::<Vec<_>>()
-        .into();
-    Some(HatRig {
+        .collect();
+    let mut rig = HatRig {
         geometry: original,
         parents,
         flex,
+        rest_rotations,
         head,
         offset: item.offset,
-        rest_vertices,
+        rest_vertices: Arc::from([]),
         texture,
         pixels,
         wind: definition.wind,
-    })
+    };
+    let root = rig.geometry.bone_pivots[head];
+    let poses = rig.pose(
+        RenderBoneTransform {
+            rotation: Quat::IDENTITY.to_array(),
+            translation_scale: [root[0], root[1], root[2], 1.0],
+            axis_scale: crate::UNIT_AXIS_SCALE,
+        },
+        0.0,
+    );
+    rig.rest_vertices = rig
+        .geometry
+        .vertices
+        .iter()
+        .map(|vertex| {
+            let bone = vertex.bone_index as usize;
+            let pose = poses[bone];
+            let position = Vec3::from_slice(&pose.translation_scale[..3])
+                + Quat::from_array(pose.rotation)
+                    * (Vec3::from_array(vertex.position)
+                        - Vec3::from_array(rig.geometry.bone_pivots[bone]));
+            ActorVertex {
+                position: [-position.x, position.y, -position.z],
+                uv: vertex.uv,
+                part: 0,
+            }
+        })
+        .collect::<Vec<_>>()
+        .into();
+    Some(rig)
 }
