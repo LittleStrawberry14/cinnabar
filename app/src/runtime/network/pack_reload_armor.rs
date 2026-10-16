@@ -583,7 +583,9 @@ fn mixed_texture_and_material_reload_disables_authored_armour_dye() {
         render_api::CombatVisuals::Modern,
         render_api::CombatVisuals::Legacy112,
     ] {
-        let layers = runtime.layers_for_profile(&body, &equipped, profile, None);
+        let layers = runtime
+            .layers_for_profile(&body, &equipped, profile, None)
+            .layers;
         assert_eq!(layers[0].submission.tint, 0);
         assert!(!layers[0].submission.material.color_mask);
     }
