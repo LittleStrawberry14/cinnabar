@@ -256,12 +256,12 @@ fn installed_gui_carriers_reuse_sprite_pages_within_the_model_atlas_budget() {
             continue;
         };
         if matches!(model.placements[0], PreviewHeldPlacement::Sprite { .. }) {
-            assert_eq!(
-                model.source,
-                presentation
-                    .item_icon(&key.identifier, key.metadata)
-                    .unwrap()
-            );
+            let icon = presentation
+                .item_icon(&key.identifier, key.metadata)
+                .unwrap();
+            // Item glint does not change which atlas pixels the sprite reuses.
+            assert_eq!(model.source.page, icon.page);
+            assert_eq!(model.source.uv, icon.uv);
             assert!((model.source.page as usize) < presentation.textures.dynamic_start());
             sprites += 1;
         }
