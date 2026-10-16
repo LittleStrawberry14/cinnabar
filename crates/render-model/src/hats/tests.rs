@@ -189,6 +189,10 @@ fn blockbench_project_and_runtime_export_share_the_same_surface_and_joint_pivots
             include_str!("crown.bbmodel"),
             include_str!("crown.geo.json"),
         ),
+        (
+            include_str!("devil_horns.bbmodel"),
+            include_str!("devil_horns.geo.json"),
+        ),
     ] {
         let project: serde_json::Value = serde_json::from_str(project).unwrap();
         let exported: serde_json::Value = serde_json::from_str(geometry).unwrap();
@@ -375,4 +379,38 @@ fn catalog_geometry_keeps_authored_rotations_at_a_different_attachment_bone() {
             .iter()
             .any(|vertex| vertex.position[2].abs() > 0.2)
     );
+}
+
+#[test]
+fn catalog_devil_horns_attach_directly_to_the_head_and_stay_rigid() {
+    let item = fixture::devil_horns();
+    let model = rig(item);
+    assert!(item.descriptor().free);
+    assert_eq!(item.descriptor().attachment_bone, "head");
+    assert!(!model.bends_in_wind());
+    let bottom = model
+        .rest_vertices
+        .iter()
+        .map(|v| v.position[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (1.98..=2.0).contains(&bottom),
+        "horn roots intersect the standard head top"
+    );
+    assert!(
+        model
+            .rest_vertices
+            .iter()
+            .all(|v| v.position[0].abs() <= 0.25)
+    );
+    assert!(
+        model.rest_vertices.as_chunks::<3>().0.iter().all(|face| {
+            face.iter().all(|v| v.position[0] > 0.0) || face.iter().all(|v| v.position[0] < 0.0)
+        }),
+        "no band joins the two horns"
+    );
+    let attachment = head(Quat::from_rotation_y(0.8));
+    assert_eq!(*model.pose(attachment, 0.0), *model.pose(attachment, 1.0));
+    let preview = thumbnail::render(item, 128, 128).unwrap();
+    assert!(preview.rgba8.chunks_exact(4).any(|pixel| pixel[3] > 0));
 }

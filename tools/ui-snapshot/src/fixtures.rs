@@ -59,6 +59,13 @@ pub const STATES: &[State] = &[
     },
     #[cfg(feature = "test-support")]
     State {
+        name: "dressing-room-devil-horns",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: devil_horns,
+    },
+    #[cfg(feature = "test-support")]
+    State {
         name: "craft-overlap-ready",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -571,10 +578,24 @@ fn wardrobe() -> Fixture {
     view.screen = MenuScreen::DressingRoom;
     let item = render_model::hats::fixture::bunny();
     render_model::hats::fixture::crown();
+    render_model::hats::fixture::devil_horns();
     Arc::make_mut(&mut view.dressing_room).section =
         launcher::dressing_room::DressingRoomSection::Cosmetics;
     Arc::make_mut(&mut view.dressing_room)
         .selected_cosmetics
         .insert(item.descriptor().slot.clone(), Some(item.id().into()));
     Fixture::Menu(Box::new(view))
+}
+
+/// Shows the catalog gallery with the original devil horns selected.
+#[cfg(feature = "test-support")]
+fn devil_horns() -> Fixture {
+    let mut fixture = wardrobe();
+    if let Fixture::Menu(view) = &mut fixture {
+        let item = render_model::hats::fixture::devil_horns();
+        Arc::make_mut(&mut view.dressing_room)
+            .selected_cosmetics
+            .insert(item.descriptor().slot.clone(), Some(item.id().into()));
+    }
+    fixture
 }

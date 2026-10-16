@@ -75,3 +75,23 @@ pub fn gallery() -> &'static [Item] {
             .collect()
     })
 }
+
+/// Admits original rigid devil horns through the downloaded-item validation path.
+pub fn devil_horns() -> Item {
+    static ITEM: OnceLock<Item> = OnceLock::new();
+    *ITEM.get_or_init(|| {
+        let catalog: Catalog = serde_json::from_str(include_str!("fixture/catalog.json")).unwrap();
+        let item = catalog
+            .items
+            .into_iter()
+            .find(|item| item.id == "cinnabar:devil_horns")
+            .unwrap();
+        super::admit(
+            item,
+            include_bytes!("devil_horns.geo.json"),
+            include_bytes!("devil_horns.png"),
+            b"{}\n",
+        )
+        .unwrap()
+    })
+}
