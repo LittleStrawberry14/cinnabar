@@ -1,4 +1,3 @@
-use crate::queue_writes::ProfiledQueue as _;
 use bevy::prelude::IntoScheduleConfigs;
 #[cfg(test)]
 use bevy::prelude::System;
@@ -60,6 +59,7 @@ use {
 
 const CLOUD_SHADER_HANDLE: Handle<Shader> = uuid_handle!("8dcfe9d0-c182-44cc-ae4c-7e5233b68659");
 pub(crate) fn install_cloud_render(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<CloudPipeline>(app);
     app.init_resource::<CloudVisibility>()
         .add_plugins(ExtractResourcePlugin::<CloudVisibility>::default());
@@ -152,8 +152,7 @@ fn init_cloud_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
 pub(crate) fn prepare_cloud_records(
     requested: Res<AtmosphereTextureAssets>,
     atmosphere: Res<AtmosphereFrame>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
     visibility: Res<CloudVisibility>,
     views: Query<(Entity, &ExtractedView), With<Camera3d>>,
     mut gpu: ResMut<CloudGpu>,
@@ -176,7 +175,7 @@ pub(crate) fn prepare_cloud_records(
         ..
     } = &mut *gpu;
     #[cfg(test)]
-    let mut uploads = 0;
+    let mut uploaded_views = 0;
     for (entity, view) in &views {
         let camera = view.world_from_view.translation();
         let above = camera.y >= CLOUD_UNDERSIDE_Y.ceil();
@@ -231,20 +230,17 @@ pub(crate) fn prepare_cloud_records(
                     .as_ref()
                     .is_none_or(|buffer| buffer.size() < bytes.len() as u64)
                 {
-                    prepared.record_buffer = Some(render_device.create_buffer(&BufferDescriptor {
-                        label: Some("retained viewport cloud quad records"),
-                        size: (bytes.len() as u64).next_power_of_two(),
-                        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    }));
+                    prepared.record_buffer =
+                        Some(uploads.device.create_buffer(&BufferDescriptor {
+                            label: Some("retained viewport cloud quad records"),
+                            size: (bytes.len() as u64).next_power_of_two(),
+                            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
                     prepared.bind_group = None;
                     work.buffer_creations += 1;
                 }
-                render_queue.profiled_write_buffer(
-                    prepared.record_buffer.as_ref().unwrap(),
-                    0,
-                    bytes,
-                );
+                uploads.write(prepared.record_buffer.as_ref().unwrap(), 0, bytes);
             }
             prepared.record_count =
                 u32::try_from(records.len()).expect("bounded cloud records fit u32");
@@ -262,7 +258,7 @@ pub(crate) fn prepare_cloud_records(
             span.record("uploaded_bytes", work.uploaded_bytes);
             #[cfg(test)]
             {
-                uploads += 1;
+                uploaded_views += 1;
             }
         }
         prepared
@@ -271,7 +267,7 @@ pub(crate) fn prepare_cloud_records(
     }
     #[cfg(test)]
     {
-        gpu.upload_count += uploads;
+        gpu.upload_count += uploaded_views;
     }
 }
 
@@ -279,7 +275,7 @@ fn prepare_cloud_colour(
     atmosphere: Res<AtmosphereFrame>,
     view: Res<render_scene::AtmosphereViewInputs>,
     mut gpu: ResMut<CloudGpu>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
 ) {
     let colour = atmosphere.cloud_colour_for_view(*view);
     let native = [
@@ -295,7 +291,7 @@ fn prepare_cloud_colour(
     if gpu.colour == native {
         return;
     }
-    render_queue.profiled_write_buffer(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native));
+    uploads.write(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native));
     gpu.colour = native;
     #[cfg(test)]
     {

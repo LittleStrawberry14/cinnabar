@@ -285,10 +285,8 @@ fn init_actor_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
 #[allow(clippy::too_many_arguments)]
 fn prepare_actor_resources(
     frame: Res<ActorRenderFrame>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
+    uploads: crate::upload_staging::FrameUploads,
     mut gpu: ResMut<ActorGpu>,
-    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
     witness: Res<ActorRuntimeWitness>,
     gate: Res<ActorPresentationGate>,
     tracker: Res<ActorDrawTracker>,
@@ -298,7 +296,7 @@ fn prepare_actor_resources(
     let rig = &frame.rig;
     let artwork_valid = gpu
         .artwork
-        .prepare(&frame.artwork, &render_device, &render_queue);
+        .prepare(&frame.artwork, &uploads.device, &uploads.queue);
     gpu.artwork_current = artwork_valid;
     if gpu.artwork_identity != frame.artwork.identity() {
         gate.clear();
@@ -323,17 +321,19 @@ fn prepare_actor_resources(
         gpu.bones.clear();
         // A new skin model or item mesh uploads only its own vertices.
         gpu.geometry_vertices.sync(
-            &render_device,
-            &render_queue,
+            &uploads.device,
+            &uploads.queue,
             "shared actor rig vertices",
             &rig.geometry_vertices,
         );
         gpu.geometry_span_buffer = (!rig.geometry_spans.is_empty()).then(|| {
-            render_device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("shared actor rig geometry spans"),
-                contents: bytemuck::cast_slice::<ActorRigGeometrySpan, u8>(&rig.geometry_spans),
-                usage: BufferUsages::STORAGE,
-            })
+            uploads
+                .device
+                .create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("shared actor rig geometry spans"),
+                    contents: bytemuck::cast_slice::<ActorRigGeometrySpan, u8>(&rig.geometry_spans),
+                    usage: BufferUsages::STORAGE,
+                })
         });
         gpu.geometry_revision = rig.geometry_revision;
         gpu.bind_group = None;
@@ -384,29 +384,22 @@ fn prepare_actor_resources(
                 bytes = std::mem::size_of_val(&*rig.instances) + prepared.uploaded_bytes(),
             )
             .entered();
-            crate::upload_staging::write_batch(
-                staging.as_deref(),
-                &render_device,
-                &render_queue,
-                &[(
-                    &gpu.instance_buffer,
-                    0,
-                    bytemuck::cast_slice::<ActorGpuInstance, u8>(&prepared.instances),
-                )],
-            );
+            let mut writes =
+                Vec::with_capacity(1 + prepared.previous.len() + prepared.current.len());
+            writes.push((
+                &*gpu.instance_buffer,
+                0,
+                bytemuck::cast_slice::<ActorGpuInstance, u8>(&prepared.instances),
+            ));
             gpu.bones.writes(&prepared, |current, offset, bytes| {
                 let buffer = if current {
                     &gpu.current_bone_buffer
                 } else {
                     &gpu.previous_bone_buffer
                 };
-                crate::upload_staging::write_batch(
-                    staging.as_deref(),
-                    &render_device,
-                    &render_queue,
-                    &[(buffer, offset, bytes)],
-                );
+                writes.push((&**buffer, offset, bytes));
             });
+            uploads.write_batch(&writes);
             #[cfg(feature = "tracy")]
             drop(_span);
             gpu.instance_count = rig.instances.len() as u32;
@@ -457,7 +450,10 @@ fn prepare_actor_resources(
             });
             return;
         }
-        if gpu.skins.sync(&frame.skins, &render_device, &render_queue) {
+        if gpu
+            .skins
+            .sync(&frame.skins, &uploads.device, &uploads.queue)
+        {
             gpu.bind_group = None;
         }
         gpu.skin_revision = frame.skin_revision;

@@ -74,7 +74,6 @@ impl Plugin for EntityShadowRenderPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        crate::upload_staging::install(app);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };

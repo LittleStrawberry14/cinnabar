@@ -1,3 +1,4 @@
+use super::vertices::changed_span;
 use super::*;
 use bevy::ecs::system::RunSystemOnce;
 
