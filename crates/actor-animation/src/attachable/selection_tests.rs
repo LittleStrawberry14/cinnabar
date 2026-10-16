@@ -17,7 +17,7 @@ fn worn_selection_uses_the_owner_animation_epoch_and_refreshes_cached_time() {
         RuntimeEntityAssets::from_compiled(compiled).unwrap(),
     ));
     let owner = crate::tests::actor_with_metadata(HashMap::new());
-    let variables = crate::evaluation::MolangVariables::default();
+    let variables = crate::MolangVariables::default();
     let mut rig = tests::owner_rig();
     for (completed, lifetime, animation, alpha, expected) in [
         (1000, 0, 0, 0.0, true),

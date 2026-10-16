@@ -77,6 +77,7 @@ fn stream(entities: Arc<RuntimeEntityAssets>) -> WorldStream {
                     uuid: [2; 16],
                     unique_id: 2,
                     username: "fixture".into(),
+                    xuid: "".into(),
                     verified: true,
                     skin: protocol::PlayerSkin::Standard(render_api::StandardSkin {
                         width: 64,

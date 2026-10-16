@@ -162,7 +162,7 @@ impl AttachablesRuntime {
             work_left: MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK,
             transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
             used: 0,
-            stack: std::mem::take(&mut self.selection_stack),
+            stack: OperandStack(std::mem::take(&mut self.selection_stack)),
             static_draw: None,
         };
         let result = evaluator.run_observed(
@@ -172,7 +172,7 @@ impl AttachablesRuntime {
             &mut budget,
             Some(&mut reads),
         );
-        self.selection_stack = budget.stack;
+        self.selection_stack = std::mem::take(&mut budget.stack.0);
         reads.restore(&mut self.selection_variables);
         let matches = result.as_ref().is_ok_and(|value| value.truthy());
         if result.is_ok() {

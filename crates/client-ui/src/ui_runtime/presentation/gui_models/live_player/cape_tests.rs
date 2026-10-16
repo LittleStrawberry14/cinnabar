@@ -274,6 +274,7 @@ fn worn_wings_suppress_the_hud_cape_until_the_chest_slot_is_cleared() {
     };
     let binding = assets::EquipmentBinding {
         identifier: "fixture:wings".into(),
+        attachable: None,
         category: assets::EquipmentCategory::Elytra,
         geometry: reference("geometry.fixture.wings"),
         texture: reference("textures/fixture/wings"),

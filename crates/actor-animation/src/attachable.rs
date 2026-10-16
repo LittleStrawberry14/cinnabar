@@ -176,7 +176,7 @@ pub struct AttachablesRuntime {
     evaluations: u64,
     previewing: bool,
     previewed: Vec<AttachableKey>,
-    selection_variables: evaluation::MolangVariables,
+    selection_variables: MolangVariables,
     selection_stack: Vec<evaluation::MolangValue>,
     selections: selection::SelectionCache,
     #[cfg(test)]

@@ -90,7 +90,15 @@ fn missing_mapped_artwork_resolves_startup_default_with_pack_precedence() {
         (false, true, false, PLAIN),
         (true, true, true, PAINTED),
     ] {
-        let (mut runtime, base_pages) = startup_runtime(coat_pack("v.coat=0;"));
+        let startup = coat_pack("v.coat=0;");
+        let (_, startup_catalog) = pack_catalog(startup.clone());
+        let fallback_texture = startup_catalog
+            .binding("minecraft:iron_helmet")
+            .unwrap()
+            .texture
+            .identifier
+            .clone();
+        let (mut runtime, base_pages) = startup_runtime(startup);
         let body = player_body(&mut runtime);
         let mut files = mapped_pack("1");
         let override_path = files[3].0.clone();
@@ -101,15 +109,6 @@ fn missing_mapped_artwork_resolves_startup_default_with_pack_precedence() {
                 && (override_available || path != &override_path)
         });
         let (entities, catalog) = pack_catalog(files);
-        let fallback_texture = runtime
-            .catalog
-            .as_ref()
-            .unwrap()
-            .binding("minecraft:iron_helmet")
-            .unwrap()
-            .texture
-            .identifier
-            .clone();
         let (pages, mut locations) =
             base_pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
         if !override_uploaded {
@@ -133,47 +132,27 @@ fn missing_mapped_artwork_resolves_startup_default_with_pack_precedence() {
 fn missing_artwork_has_no_recursive_fallback_or_unadmitted_startup_default() {
     for same_missing_path in [false, true] {
         let mut startup = coat_pack("v.coat=0;");
+        let mut definition: serde_json::Value = serde_json::from_slice(&startup[0].1).unwrap();
+        let description = &mut definition["minecraft:attachable"]["description"];
         if same_missing_path {
-            let mut definition: serde_json::Value = serde_json::from_slice(&startup[0].1).unwrap();
-            for value in definition["minecraft:attachable"]["description"]["textures"]
+            for value in description["textures"]
                 .as_object_mut()
                 .unwrap()
                 .values_mut()
             {
                 *value = "textures/models/mapped_helmet".into();
             }
-            startup[0].1 = serde_json::to_vec(&definition).unwrap();
+        } else {
+            description["identifier"] = "fixture:unrelated_helmet".into();
         }
+        startup[0].1 = serde_json::to_vec(&definition).unwrap();
         let (mut runtime, _) = startup_runtime(startup);
+        let body = player_body(&mut runtime);
         let mut files = mapped_pack("1");
         files.retain(|(path, _)| !path.starts_with("textures/"));
         let (entities, catalog) = pack_catalog(files);
         runtime.set_pack_layer(Some((entities, Some(catalog), Vec::new())));
-        let catalog = Arc::clone(runtime.pack.as_ref().unwrap().catalog.as_ref().unwrap());
-        let startup = runtime
-            .catalog
-            .as_ref()
-            .unwrap()
-            .bindings()
-            .iter()
-            .position(|binding| binding.identifier.as_ref() == "minecraft:iron_helmet")
-            .unwrap();
-        let source = super::super::pack::BindingSource {
-            catalog,
-            from_pack: true,
-            index: 0,
-            startup: same_missing_path.then_some(startup),
-        };
-        assert!(
-            runtime
-                .draw_artwork("textures/models/mapped_helmet", &source)
-                .is_none()
-        );
-        assert!(
-            runtime
-                .draw_artwork("test:unknown_artwork", &source)
-                .is_none()
-        );
+        assert!(layers(&mut runtime, &body, &owner(), &helmet(), 1).is_empty());
     }
 }
 

@@ -1,7 +1,8 @@
 //! One search prepares owner slots once and restores only actual predicate mutations.
 
 use super::*;
-use crate::evaluation::{ActorAnimationVariables, MolangVariables, VariableLayout, selection_work};
+use crate::MolangVariables;
+use crate::evaluation::{ActorAnimationVariables, VariableLayout, selection_work};
 use assets::{MolangFunction, MolangOp, MolangSymbol, MolangSymbolKind};
 
 /// Builds many distinct predicates over large inherited and temporary layouts, with optional writes.
