@@ -51,9 +51,10 @@ fn entity_hover_held_item_change_reports_the_same_actor_again() {
 fn entity_hover_leaving_an_actor_clears_without_a_position() {
     let (mut app, mut captured) = hover_app();
     assert_eq!(hover_tick(&mut app, &mut captured, 102).len(), 1);
-    let mut origin = app.world_mut().resource_mut::<InteractionOriginSnapshot>();
-    origin.assist_direction(Vec3::X);
-    drop(origin);
+    {
+        let mut origin = app.world_mut().resource_mut::<InteractionOriginSnapshot>();
+        origin.assist_direction(Vec3::X);
+    }
     // Publish the look-away frame; the next local tick reads that retained pick.
     app.world_mut().run_schedule(Update);
     captured.drain();
