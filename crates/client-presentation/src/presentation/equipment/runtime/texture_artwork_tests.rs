@@ -96,8 +96,9 @@ fn pack_texture_lookup_does_not_scan_or_reuse_replaced_indices() {
     let startup_location = runtime.texture_location(path, false).unwrap();
     for count in [64, assets::equipment::MAX_EQUIPMENT_TEXTURES, 4] {
         let catalog = catalog(count);
-        let (_, mut locations) =
-            pages.with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
+        let (_, mut locations) = pages
+            .clone()
+            .with_equipment_rasters(&EquipmentRuntime::pack_rasters(&catalog));
         let index = count - 1;
         let location = locations[index].unwrap();
         // Missing placements must not compact the catalog indices.
