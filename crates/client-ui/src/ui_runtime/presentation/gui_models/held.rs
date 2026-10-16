@@ -259,22 +259,17 @@ fn authored(
     let (Some(main), Some(off)) = (channels(false), channels(true)) else {
         return None;
     };
-    let Some(index) = entities
+    let index = entities
         .geometries()
         .iter()
-        .position(|geometry| geometry.identifier == binding.geometry.identifier)
-    else {
-        return None;
-    };
+        .position(|geometry| geometry.identifier == binding.geometry.identifier)?;
     let Ok(bones) = render_model::resolve_geometry_bones(entities, index) else {
         return None;
     };
     let [root] = &*bones else {
         return None;
     };
-    let Some(texture) = equipment.texture(&binding.texture.identifier) else {
-        return None;
-    };
+    let texture = equipment.texture(&binding.texture.identifier)?;
     let Ok(geometry) = render_model::attachable_geometry(
         entities,
         index,
