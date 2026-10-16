@@ -96,13 +96,13 @@ pub(super) fn changed_span(
 
 /// Number of leading vertices whose bytes are equal in both lists.
 fn matching_prefix(left: &[BlockEntityVertex], right: &[BlockEntityVertex]) -> usize {
-    #[cfg(test)]
-    PREFIX_VERTICES.with(|count| count.set(count.get() + left.len().min(right.len())));
     let shared = left.len().min(right.len());
     let left: &[u8] = bytemuck::cast_slice(&left[..shared]);
     let right: &[u8] = bytemuck::cast_slice(&right[..shared]);
     let mut start = 0;
     while start < left.len() {
+        #[cfg(test)]
+        PREFIX_PAGES.with(|count| count.set(count.get() + 1));
         let end = (start + COMPARE_BLOCK_BYTES).min(left.len());
         if left[start..end] != right[start..end] {
             let byte = left[start..end]
@@ -178,7 +178,7 @@ fn changed_ranges(
 
 #[cfg(test)]
 thread_local! {
-    static PREFIX_VERTICES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PREFIX_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -191,9 +191,12 @@ mod tests {
         let mut next = original.clone();
         next[0].position[0] = 1.0;
         next[COMPARE_VERTICES * 11].position[0] = 1.0;
-        PREFIX_VERTICES.with(|count| count.set(0));
+        PREFIX_PAGES.with(|count| count.set(0));
         assert!(changed_ranges(&original, &next, &mut Vec::new()));
-        assert_eq!(PREFIX_VERTICES.with(std::cell::Cell::get), next.len());
+        assert_eq!(
+            PREFIX_PAGES.with(std::cell::Cell::get),
+            next.len().div_ceil(COMPARE_VERTICES)
+        );
     }
 
     #[test]
