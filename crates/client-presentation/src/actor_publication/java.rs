@@ -563,7 +563,7 @@ pub(super) fn hand_source(
         main: main.clone(),
         ..equipment_input.clone()
     };
-    let mut main_attachable_input = super::hand::attachable_hand_input(
+    let main_attachable_input = super::hand::attachable_hand_input(
         &retained_equipment,
         owner_equipment,
         actor_animation::AttachableAnimationInput {
@@ -573,14 +573,6 @@ pub(super) fn hand_source(
         },
         false,
     );
-    if retained == selected
-        && main
-            .as_ref()
-            .is_some_and(|item| java_draws_attachable(&item.identifier))
-    {
-        let (use_ticks, _) = use_clock(rig.hand[1].use_ticks, alpha, item_animation.as_ref());
-        main_attachable_input.animation_frame = java_bow_frame(use_ticks);
-    }
     let main_selection = main.as_ref().and_then(|item| {
         Some(equipment.select_held_item(
             item,
@@ -629,6 +621,12 @@ pub(super) fn hand_source(
         let attachable =
             (retained == selected && java_draws_attachable(&item.identifier)).then(|| {
                 item_animation?;
+                let (use_ticks, _) =
+                    use_clock(rig.hand[1].use_ticks, alpha, item_animation.as_ref());
+                let main_attachable_input = actor_animation::AttachableAnimationInput {
+                    animation_frame: java_bow_frame(use_ticks),
+                    ..main_attachable_input
+                };
                 let actor = stream.authority().actor(runtime_id)?;
                 cache.native_pose.apply(&mut inputs);
                 equipment.first_person_selected_attachable(

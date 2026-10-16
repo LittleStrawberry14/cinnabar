@@ -483,6 +483,34 @@ fn java_bow_hand_follows_the_owner_admitted_definition() {
 }
 
 #[test]
+fn authored_pack_bow_keeps_native_frame_inputs_in_java_mode() {
+    let (source, _) = source_with_equipment(
+        Some(BOW),
+        true,
+        9,
+        None,
+        Some(actor_animation::AttachableAnimationInput {
+            is_local_player: true,
+            use_elapsed_ticks: Some(9),
+            animation_frame: 2,
+            ..Default::default()
+        }),
+        equipment_fixture_with_bow_override(true, Some("1")),
+    );
+    let (item, atlas) = source.items[0].as_ref().unwrap();
+    assert!(item.java_camera.is_none());
+    let layer_start = item.presentation.location.layer() as usize
+        * usize::from(atlas.width)
+        * usize::from(atlas.height)
+        * 4;
+    assert_eq!(
+        atlas.rgba8[layer_start + 2],
+        170,
+        "the pack controller must receive native frame 2 at elapsed use tick 9"
+    );
+}
+
+#[test]
 fn published_java_bow_uses_local_draw_time_for_placement_and_artwork() {
     let mut previous = None;
     for alpha in [0.25, 0.75] {
