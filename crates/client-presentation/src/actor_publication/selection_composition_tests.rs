@@ -56,13 +56,13 @@ fn cape_composition_reuses_the_drawn_chest_selection_with_cold_and_warm_predicat
                 } else {
                     ARMOR_GEOMETRY
                 };
-                assert_category(
-                    &batch,
-                    Some(render_model::equipment_rig_id(
-                        render_model::find_geometry_index(&entities, geometry).unwrap(),
-                    )),
-                    wings,
-                );
+                let index = render_model::find_geometry_index(&entities, geometry).unwrap();
+                let expected = if from_pack {
+                    render_model::pack_equipment_rig_id(index)
+                } else {
+                    render_model::equipment_rig_id(index)
+                };
+                assert_category(&batch, Some(expected), wings);
             }
         }
     }

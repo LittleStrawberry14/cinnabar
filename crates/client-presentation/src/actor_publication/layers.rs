@@ -66,7 +66,7 @@ pub(super) fn attach(
     } = poses;
     let LayerCaches {
         layer_poses,
-        mut equipment,
+        equipment,
         cape_state,
         skin_layers,
         skin_rigs,
@@ -82,8 +82,7 @@ pub(super) fn attach(
                 .map(|layers| layers.render)
         }
     };
-    let wearing_elytra = if let (Some(equipment), Some(stream)) = (equipment.as_deref_mut(), stream)
-    {
+    let wearing_elytra = if let (Some(equipment), Some(stream)) = (equipment, stream) {
         equipment_layers::attach(
             batch,
             equipment,
