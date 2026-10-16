@@ -1,3 +1,24 @@
+## Hats wardrobe
+
+The wardrobe offers removable original bunny ears and a rigid jeweled gold crown independently of skins and capes.
+The crown rests on top of the head and uses short, broad stepped points.
+Its full silhouette, including jewels, fits within the head width and depth.
+Continuous ear meshes use a chain of small upper-half bends and ease upright when stopping;
+head transforms and the wind angle are shared by world and HUD presentation.
+The stepped pixel silhouettes attach directly to the head without a band; the gallery
+uses compact square preview tiles. The editable Blockbench project exports to the
+runtime geometry JSON, with conformance tests.
+Shared surface rings prevent visible joint gaps at rest or in motion.
+This is client-owned cosmetic behavior. The Linux wardrobe and in-world standing and forward-motion states were visually
+checked with software Vulkan. Hardware performance qualification remains incomplete.
+
+Nearby authenticated Cinnabar accounts exchange equipped hats on the same bounded
+subscription connection as custom emotes. Head attachments resolve only to current actor
+lifetimes, share one texture per cosmetic per frame, and retain independent ear wind.
+Unknown selections are ignored; unequip, world departure, visibility opt-out and lease
+expiry retire remote hats. Sharing requires deployment of the corresponding API extension;
+live authenticated multi-account acceptance and hardware qualification remain incomplete.
+
 ## Fence gate targeting
 
 Gate picking uses the same thin directional bounds as its outline for closed, open
@@ -584,6 +605,25 @@ server. Acceptance uses externally compiled carriers with production terrain
 consumers; runtime server-pack compilation and reported server-version placement
 remain unverified. No broader parity gate closes.
 
+## Redstone dust item sprite
+
+Redstone dust uses the pinned item-atlas sprite for its inventory icon and held
+item rather than the placed wire geometry. The reviewed default binding is
+checked against the pinned atlas and retail inventory. Original-sprite regressions
+cover entity/icon carrier roundtrips and preserve the redstone block's model.
+Other geometry reports and broader item-rendering parity remain incomplete.
+
+## Command-block terrain materials
+
+Command blocks select front, back and conditional side materials from their facing
+and conditional state, with full opaque boundary faces and oriented arrow UVs.
+Original-art compiler regressions cover all registered variants, side directions,
+cap orientation, neighbour culling, atlas-bound animation strips and carrier
+roundtrips. Local BDS rendered panels, arrows and animation phases pass against
+the official Android reference. Render admission remains provisional for broader
+pack and platform parity; hardware performance gates stay open. The command-block
+editor remains unimplemented.
+
 ## Lever terrain geometry
 
 Levers compile separate mounting bases and power-selected pitched handles for
@@ -633,6 +673,15 @@ and ordering, peer GUID generation, datagram batching, and outgoing split envelo
 Full transport parity remains incomplete. Host-resolver timing and address admission,
 absolute monotonic timestamp origin, and discovery-peer reuse remain provisional across
 platforms. These limits and the unresolved server-routing behavior remain open gates.
+
+## Liquid surfaces beneath opaque roofs
+
+Liquid tops below opaque roofs remain visible when any surface corner is below
+the roof boundary. Stacked compatible liquids and fully raised surfaces against
+opaque roofs retain their culling. Original-art meshing regressions cover water,
+lava, sloped surfaces and shared side insets. Local BDS rendering now matches the
+closed surfaces observed with the official Android client. Broader liquid parity
+and hardware performance gates remain open.
 
 ## Flowing water texels
 
@@ -702,6 +751,14 @@ Values are unchanged; compilation and test execution remain unverified until CI.
 - Login claims explicitly decline client-side chunk generation. The client relies on
   server-supplied terrain; FeatureRegistry consumption and client-side terrain generation
   remain unsupported and incomplete. Server-routing parity remains open.
+
+## Embedded-block overlay
+
+Eyes inside scaffolding keep a clear view instead of receiving the solid-block
+overlay. Submerged eyes still select the liquid medium before the scaffolding
+exception, and ordinary solid blocks retain their overlay. Eligibility for other
+nonopaque blocks, scaffolding interior-face rendering, and complete native
+screen-effect parity remain incomplete.
 
 ## Totem activation
 
@@ -1028,6 +1085,13 @@ Values are unchanged; compilation and test execution remain unverified until CI.
   Korean and Chinese labels, intact artwork, working modal Cancel and confirmed shutdown.
 
 ## Movement and input audit fixes
+
+Server-enabled flight also remains active in ordinary modes without MayFly;
+that permission still controls starting flight locally. A native Android
+1.26.50.4 Swim.gg post-death comparison verifies upward flight for this server
+combination. A fresh fixed-client death cycle also verifies ascent and hovering
+after jump release. Other toggle edges and the full movement parity gate remain
+incomplete.
 
 Spectator mode now keeps forced flight without the ordinary flight-toggle grant,
 passes through solid terrain without ground contact or anchor depenetration, and
@@ -1660,6 +1724,10 @@ not close a parity or visual acceptance gate.
 
 ## Block selection outlines and visual bounds
 
+- A nearer selectable actor suppresses the block outline behind it, using the
+  same rounded-intercept comparison as interactions. Blocks in front of actors
+  retain their outline. Local cow comparison matches Android Bedrock 1.26.50.4;
+  this bounded correction does not close the remaining outline parity gates.
 - Block shape compilation now belongs to `assets` and `asset-compiler`. The
   physics carrier stores final movement boxes, independent selection boxes,
   eligibility, outlines, tags, and typed context facts for both runtime ID spaces.
@@ -1792,6 +1860,21 @@ not close a parity or visual acceptance gate.
   has been captured. The reported SkyWars ban does not prove its cause.
   Pose selection with unavailable terrain retains the preceding inferred mode;
   exact native fallback and packet scheduling remain open parity details.
+
+## Windowed Metal presentation
+
+- macOS enables bounded asynchronous presentation for opaque, windowed Immediate
+  surfaces on macOS 14 and later. Three reusable color targets decouple rendering
+  from display drawable recycling; a separate queue copies the newest GPU-completed
+  image at the original resolution and format. Superseded completed images are
+  reusable, while pending writes and presentation reads retain ownership.
+- Surface reconfiguration cancels and joins the display consumer. Allocation or
+  worker setup failure uses the existing direct surface path. FIFO and native
+  fullscreen retain direct presentation.
+- The optimized build and live maximized-window rendering capture pass on M3 Pro;
+  the owner confirms uncapped windowed play. Pool ownership regressions are authored
+  but unrun at the owner's request. Mode transitions, broader hardware, sustained
+  pacing and latency acceptance remain open.
 
 ## Entity shadows
 
@@ -3165,9 +3248,10 @@ remain visible; native behavior for that resource limit is unverified. Full pack
 and multi-bone preview parity remains open.
 2026-10-07 non-cube block items (slabs, stairs, walls, fences) also draw as GUI geometry at
 display resolution instead of a 32x32 thumbnail (icon carrier v3 names each thumbnail's world
-state). Cut-out cubes (glass, leaves) draw all six alpha-tested faces, including rear faces
-visible through holes. Non-blended face alpha uses the thumbnail threshold; fractional blended
-faces (stained glass) retain their composed thumbnail. Chests (a cube of their inventory tiles)
+state). Cut-out cube previews (glass, leaves) draw their camera-facing surfaces, so rear
+faces do not show through front texel holes. Their thumbnails use the same face selection.
+Non-blended face alpha uses the thumbnail threshold; fractional blended faces (stained glass)
+retain their composed thumbnail. Chests (a cube of their inventory tiles)
 and blend-flagged art that is only opaque or cut out (anvils) draw as GUI geometry too. Overlapping
 meshes keep their thumbnail when faded. Optional sources follow required atlas pages and fall
 back to thumbnails when the atlas is full. Incomplete: layered translucent cube GUI geometry is
@@ -3809,6 +3893,11 @@ are authored but unrun at the user's request. Native
 `#item_name_text_offset` controller binding remains
 incomplete; this correction preserves the approved built-in pack geometry.
 
+Sulfur-cube body and shell material aliases retain their cutout and blended states.
+The pinned adult and baby shell rasters preserve fractional opacity through actor
+carrier admission. Incomplete: absorbed-block scale and attachment placement remain
+unverified; restoring the shell does not close the full sulfur-cube rendering gate.
+
 2026-10-05 custom actor lens materials: the Murder Mystery lens overrides its body's
 wildcard material with `slime_outer`. The compiler previously ignored bone-specific
 rules, drawing both coincident opposing lens faces with the body material. Per-bone
@@ -3906,6 +3995,9 @@ resource packs), rigs depending on vanilla clips are attributed as fallbacks; se
 
 Texture-only equipment overrides replace artwork at validated startup texture paths;
 startup bindings, controllers and geometry remain active without loose resource files.
+Startup and session equipment artwork maps bind each placed raster's catalog index once.
+Draws reuse that index, including after missing placements and pack replacement, while
+retaining pack precedence and startup fallback. Hardware frame budgets remain unverified.
 Artwork-only layers support item textures with no entity symbols, create no pack attachable
 bindings and need no sidecar rebuild. Each item's authored dependencies decide whether it
 uses this path. Mixed texture and geometry, controller or material overrides retain the
@@ -7159,6 +7251,11 @@ Source-water, source-lava, and powder-snow collection were observed against a
 local Bedrock server. Waterlogged-source acceptance remains unverified; this does
 not close the interaction parity gate.
 
+Middle-click picking includes mobs and paintings, and asks the server for the
+nearest eligible actor's item using its persistent ID. Mob spawn eggs remain
+server-authoritative; walls, reach, and mounted-actor exclusion still constrain
+the pick. This does not close the broader interaction parity gate.
+
 **Phase 5 roadmap (kept current as work lands):**
 
 **Approved gameplay-HUD presentation deviation (expanded 2026-07-19):** the
@@ -7171,6 +7268,14 @@ expose. Menus, inventories, containers, forms, controls, and resource-pack JSON
 UI remain Bedrock/resource-pack-driven. The current text/panel renderer is an
 incomplete scaffold until the full state matrix and native/live comparison gates
 below are green. See `AGENTS.md` for the repository-wide gameplay-HUD exception.
+
+Zero-timestamp local attribute updates may follow specified server ticks without
+ending the session or rewinding effect countdowns. The shared presentation clock
+preserves the last nonzero packet fence; FIFO, session, local-time and specified
+backward-tick rejection remain enforced. The captured CubeCraft failure sequence
+replays through its final zero-tick damage update without ending the session. A
+fresh live match remains pending; this bounded receive-path correction does not
+close the full HUD parity gate.
 
 Hunger shakes use renderer-local updates and neutral/upward offsets, independent of
 food packet ticks. The complete native HUD motion gallery, including heart timing,
@@ -7391,6 +7496,19 @@ reach, simultaneous-action priority, and repeat cadence are not yet established;
 generated encoder fixtures do not close those reference gaps. Server acceptance
 and a real chest interaction are required before shipping even this bounded path,
 and full native interaction parity remains open afterward.
+Generic server-container admission now retains nonempty inventories through the
+one-byte stack-request slot address range instead of requiring vanilla chest row
+counts. Storage artwork, hover-name capture, and JSON-UI collections use that same
+bound, including high-index custom menu controls. Jaya's 200-slot market has a
+native Android 1.26.50.4 witness: the menu stays open, while the earlier client
+requested an immediate close. The current client now retains that live menu;
+per-stack custom names also override localized item names in its collection data.
+Live input now opens the market with its authored title, search/sales controls,
+listing icons and pagination labels; the menu stays open until an explicit close.
+Price/quantity text, panel art and exact layout still differ from native.
+Incomplete: inventories beyond the retained address range, full custom binding and
+visual parity, and platform/version coverage beyond this witnessed server route.
+This does not close the storage or JSON-UI parity gates.
 Missing block-item artwork is a separate route gap: compiled block visuals exist,
 but the icon carrier emits only sprite routes and inventory publication reduces
 the canonical route to an identifier. Preserve the visual route and design a
@@ -8625,6 +8743,12 @@ does not close the broader native body-motion or live visual parity gate. See
 
 ## Server pack compatibility
 
+Manifest format numbers accept integral decimal and exponent notation, including
+`2.0`, within the existing supported range. Fractional and unsupported formats
+remain rejected. Native Android 1.26.50.4 admits the observed decimal-format pack;
+the fixed client reaches the Motaz world and the Veltrix rules form with their
+required packs applied. Broader admission and rendering parity remain pending.
+
 Resource-pack admission accepts corrected chunk-transfer sizes within its archive
 and selected-stack byte limits. Repeated offer identities consume the count and
 byte budgets once, retaining the first entry's size estimate. Required packs retain
@@ -8843,8 +8967,9 @@ Attacks at actors, air or blocks send the item-directed transaction with aim and
 allowing the server to apply damage and Lunge movement. Component, admission,
 catalog/reset and real-carrier animation regressions pass. Matched live captures
 show the jab, charged hold and default-Java third-person arm; server-confirmed
-Lunge moves the fixed client without movement input. The complete matched-version
-native comparison remains incomplete. See
+Lunge moves the fixed client without movement input. Hotbar shading now follows
+admitted attack-category cooldowns, including other displayed stacks in the same
+category. The complete matched-version native comparison remains incomplete. See
 [spear actions](docs/reference/spear-actions.md).
 
 ## Third-person held attachables
@@ -9700,3 +9825,15 @@ residency and idle demotion remain unimplemented. Windows-specific texture memor
 allowances, initial allocation policy and adapter pressure thresholds remain
 unverified. This recovery change does not close the streaming or hardware frame
 budget acceptance gates.
+
+## Cutout cube contact depth
+
+Two-sided cutout cubes use a small receding slope depth offset so their back
+faces do not fight coplanar opaque stair/slab faces seen through alpha holes.
+Ordinary and retained-unit draws share the policy. Opaque cubes, model geometry,
+blended terrain and liquids retain their existing depth state.
+
+Incomplete parity: the installed native cutout material supports this offset,
+but exact-current seasonal material selection remains unverified. Mixed model
+materials are outside this change. The raster and descriptor regressions are
+written but unrun; this does not close a renderer parity or frame-budget gate.

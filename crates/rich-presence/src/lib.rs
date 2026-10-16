@@ -76,6 +76,11 @@ pub struct Badge {
 /// Discord rejects longer image keys and URLs.
 const MAX_IMAGE_BYTES: usize = 256;
 
+pub const MINECRAFT_VERSION: &str = "Minecraft 26.52";
+
+/// Classic Minecraft 3D grass block icon for unknown servers and singleplayer worlds.
+pub const GRASS_BLOCK_ICON_URL: &str = "https://minecraft.wiki/images/Invicon_Grass_Block.png";
+
 impl State {
     /// `players` is how many are in the session now, for the party size.
     pub fn activity(
@@ -90,7 +95,19 @@ impl State {
             (Self::Joining, _) => "Joining a world".to_owned(),
             (Self::Playing, None) => "In a world".to_owned(),
             (Self::Playing, Some(Destination::Server(endpoint))) => {
-                format!("Playing on {endpoint}")
+                if let Some(badge) = target.and_then(|t| t.badge.as_ref()) {
+                    let badge_name = badge.name.trim();
+                    if !badge_name.is_empty()
+                        && badge_name != "Minecraft Bedrock"
+                        && !badge_name.contains(':')
+                    {
+                        format!("Playing on {badge_name}")
+                    } else {
+                        format!("Playing on {endpoint}")
+                    }
+                } else {
+                    format!("Playing on {endpoint}")
+                }
             }
             (Self::Playing, Some(Destination::Realm)) => "Playing on a Realm".to_owned(),
             (Self::Playing, Some(Destination::FriendWorld)) => {
@@ -109,6 +126,7 @@ impl State {
                 badge.image_url.starts_with("https://") && badge.image_url.len() <= MAX_IMAGE_BYTES
             });
         let activity = Activity::new()
+            .details(MINECRAFT_VERSION)
             .state(state)
             .assets(|assets| {
                 let assets = assets
@@ -126,7 +144,15 @@ impl State {
                             assets
                         }
                     }
-                    None => assets,
+                    None => {
+                        if self == Self::Playing {
+                            assets
+                                .small_image(GRASS_BLOCK_ICON_URL)
+                                .small_text("Minecraft Bedrock")
+                        } else {
+                            assets
+                        }
+                    }
                 }
             })
             .timestamps(|timestamps| timestamps.start(started_at));

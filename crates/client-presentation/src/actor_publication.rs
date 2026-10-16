@@ -3,6 +3,7 @@ mod commit;
 mod flames;
 mod geometry;
 mod hand_frame;
+mod hats;
 mod layers;
 mod occlusion;
 mod paintings;
@@ -53,6 +54,9 @@ pub struct ActorWorld<'a> {
 
 /// Gameplay and screen observations captured at the actor preparation boundary.
 pub struct ActorFrameInput {
+    pub hat: Option<render_api::Hat>,
+    /// Authenticated nearby hats bound to current actor lifetimes.
+    pub remote_hats: Vec<RemoteHat>,
     pub local_feed: Option<LocalPlayerFeed>,
     pub predicted_eye: Option<[f32; 3]>,
     pub predicted_feet: Option<[f32; 3]>,
@@ -72,6 +76,14 @@ pub struct RemoteEmote {
     pub spawn_revision: u64,
     pub emote: actor_animation::CustomEmote,
     pub elapsed: f64,
+}
+
+/// A built-in hat bound to one remote spawn, independent of server skin handling.
+#[derive(Clone, Copy, Debug)]
+pub struct RemoteHat {
+    pub runtime_id: u64,
+    pub spawn_revision: u64,
+    pub hat: render_api::Hat,
 }
 
 /// Presentation-owned resources that determine the avatar's current view.
@@ -268,6 +280,9 @@ pub fn prepare_actor_render_frame(
         ),
         &mut new_geometries,
     );
+    state
+        .hat_state
+        .attach(&mut batch, stream, &input.remote_hats, &mut params.scene);
     layers::apply_style_and_visibility(&mut batch, stream, params.actor_style.as_deref());
     state
         .body_scratch
