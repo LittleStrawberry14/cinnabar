@@ -172,7 +172,7 @@ pub fn player_auth_input(
 }
 
 /// Converts an app-owned movement snapshot plus the interactions of the same
-/// tick to the pinned protocol-2168 packet.
+/// tick to the current Bedrock packet.
 ///
 /// The block-action, item-interaction, and stack-request flags are derived
 /// exclusively from payload presence so the flag list and the optional
