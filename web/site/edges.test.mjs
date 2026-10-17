@@ -66,7 +66,7 @@ test("canvas preserves pixels on unchanged size and releases focus", () => {
   } finally { [globalThis.ResizeObserver, globalThis.requestAnimationFrame] = saved; }
 });
 
-test("owned retry timers register once and cancellation clears their deadline", async () => {
+test("owned retry timers register once and settle on cancellation or expiry", async () => {
   const { startTimer, timerPromise, cancelTimer } = await import("./edges.mjs");
   const previousSet = globalThis.setTimeout;
   const previousClear = globalThis.clearTimeout;
@@ -78,8 +78,12 @@ test("owned retry timers register once and cancellation clears their deadline", 
     const cancelled = startTimer(1250);
     assert.equal(timerPromise(cancelled), timerPromise(cancelled));
     assert.equal(active.size, 1);
+    let settled = false;
+    timerPromise(cancelled).then(() => { settled = true; });
     cancelTimer(cancelled); cancelTimer(cancelled);
     assert.equal(active.size, 0);
+    await Promise.resolve();
+    assert.equal(settled, true);
     const completed = startTimer(40);
     const { callback, ms } = active.get(sequence);
     assert.equal(ms, 40);

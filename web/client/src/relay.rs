@@ -55,21 +55,12 @@ pub(crate) async fn run<H: Host>(
     let mut requested: Option<play::Request<<H::Transport as RelayTransport>::Stream>> = None;
     let mut playing: Option<play::Active> = None;
     loop {
-        match refresh.replace(Refresh::None) {
-            Refresh::Fresh => {
-                session.fresh_session();
-                halted = false;
-            }
-            Refresh::Reconnect => {
-                session.restart_retries();
-                halted = false;
-            }
-            Refresh::None => {}
-        }
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
         let opening = requested.is_some();
-        let parked = paused.get() || (!ready && (halted || session.next_retry().is_err()));
+        let parked = paused.get()
+            || (!ready
+                && ((halted && !session.has_account_intent()) || session.next_retry().is_err()));
         enum Action<S> {
             Dispose,
             Lifecycle,
@@ -79,7 +70,9 @@ pub(crate) async fn run<H: Host>(
             Step(Result<(), CloseReason>),
         }
         let mut started = None;
+        let mut queued_account = None;
         let action = {
+            let handshaking = Cell::new(false);
             let step = async {
                 if parked {
                     return std::future::pending::<Result<(), CloseReason>>().await;
@@ -148,6 +141,7 @@ pub(crate) async fn run<H: Host>(
                         return Err(CloseReason::RetryAt(due));
                     }
                     let (quic, socket) = host.transports()?;
+                    handshaking.set(true);
                     web_transport::select(
                         &mut session,
                         quic,
@@ -162,23 +156,44 @@ pub(crate) async fn run<H: Host>(
                 Ok(())
             };
             futures::pin_mut!(step);
-            futures::select_biased! {
-                _ = cancelled => Action::Dispose,
-                signal = changed.next().fuse() => if signal.is_none() { Action::Dispose } else { Action::Lifecycle },
-                command = async {
-                if writing || opening { std::future::pending().await } else { pending.next().await }
-            }.fuse() => Action::Account(command),
-                request = async {
-                    if writing || opening { std::future::pending().await } else { joins.next().await }
-                }.fuse() => Action::Join(request),
-                _ = async {
-                    if writing { return std::future::pending().await; }
-                    match playing.as_mut() {
-                        Some(active) => { let _ = (&mut active.finished).await; }
-                        None => std::future::pending().await,
+            loop {
+                let action = futures::select_biased! {
+                    _ = cancelled => Action::Dispose,
+                    signal = changed.next().fuse() => if signal.is_none() { Action::Dispose } else { Action::Lifecycle },
+                    command = async {
+                        if writing || opening { std::future::pending().await } else { pending.next().await }
+                    }.fuse() => Action::Account(command),
+                    request = async {
+                        if writing || opening { std::future::pending().await } else { joins.next().await }
+                    }.fuse() => Action::Join(request),
+                    _ = async {
+                        if writing { return std::future::pending().await; }
+                        match playing.as_mut() {
+                            Some(active) => { let _ = (&mut active.finished).await; }
+                            None => std::future::pending().await,
+                        }
+                    }.fuse() => Action::PlayEnded,
+                    result = step.as_mut().fuse() => Action::Step(result),
+                };
+                match action {
+                    // Keep the Hello/Welcome future alive until its bearer has been stored.
+                    Action::Account(Some(operation)) if !ready && !parked => {
+                        queued_account = Some(operation);
                     }
-                }.fuse() => Action::PlayEnded,
-                result = step.fuse() => Action::Step(result),
+                    Action::Join(Some(request)) if !ready => {
+                        let _ = request.reply.send(Err(CloseReason::Protocol));
+                    }
+                    Action::Lifecycle
+                        if !paused.get()
+                            && matches!(refresh.get(), Refresh::Reconnect)
+                            && (ready || handshaking.get()) =>
+                    {
+                        while changed.try_recv().is_ok() {}
+                        refresh.set(Refresh::None);
+                        halted = false;
+                    }
+                    _ => break action,
+                }
             }
         };
         if let Some(finished) = started {
@@ -202,20 +217,20 @@ pub(crate) async fn run<H: Host>(
                 while changed.try_recv().is_ok() {}
                 session.close(CloseReason::Transport);
                 playing = None;
+                match refresh.replace(Refresh::None) {
+                    Refresh::Fresh => {
+                        session.fresh_session();
+                        queued_account = None;
+                        halted = false;
+                    }
+                    Refresh::Reconnect => {
+                        session.restart_retries();
+                        halted = false;
+                    }
+                    Refresh::None => {}
+                }
             }
-            Action::Account(Some(mut operation)) => {
-                while let Ok(next) = pending.try_recv() {
-                    operation = next;
-                }
-                halted = operation == AccountOperation::SignOut;
-                if halted && let Some(active) = playing.as_mut() {
-                    active.cancel.take();
-                }
-                session.desire_account(operation);
-                if matches!(session.state(), State::Connecting) {
-                    session.close(CloseReason::Transport);
-                }
-            }
+            Action::Account(Some(operation)) => queued_account = Some(operation),
             Action::Step(Ok(())) => {}
             Action::Step(Err(CloseReason::RetryAt(_))) => {}
             Action::Step(Err(reason)) => {
@@ -229,6 +244,16 @@ pub(crate) async fn run<H: Host>(
                     host.observe(serde_json::json!({"state": "disconnected"}));
                 }
             }
+        }
+        if let Some(mut operation) = queued_account {
+            while let Ok(next) = pending.try_recv() {
+                operation = next;
+            }
+            halted = operation == AccountOperation::SignOut;
+            if halted && let Some(active) = playing.as_mut() {
+                active.cancel.take();
+            }
+            session.desire_account(operation);
         }
     }
     session.close(CloseReason::Cancelled);
