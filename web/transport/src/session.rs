@@ -52,6 +52,7 @@ pub struct Session<T: RelayTransport> {
     state: State,
     bearers: [Option<(String, Duration)>; 2],
     desired: Option<AccountOperation>,
+    resumed_account: bool,
     attempts: u32,
     retry_at: Duration,
     refusal: Option<RefusalCode>,
@@ -66,6 +67,7 @@ impl<T: RelayTransport> Session<T> {
             state: State::Offline,
             bearers: [None, None],
             desired: None,
+            resumed_account: false,
             attempts: 0,
             retry_at: Duration::ZERO,
             refusal: None,
@@ -183,6 +185,7 @@ impl<T: RelayTransport> Session<T> {
         self.apply_capability(&welcome, now())?;
         self.state = State::Ready(welcome.generation);
         self.control = Some(control);
+        self.resumed_account = !resume.is_empty();
         self.attempts = 0;
         Ok(())
     }
@@ -195,6 +198,14 @@ impl<T: RelayTransport> Session<T> {
         self.desired.is_some()
     }
 
+    /// Whether the last successful control Hello resumed an existing relay account.
+    pub fn resumed_account(&self) -> bool {
+        self.resumed_account
+    }
+    /// The coalesced account operation still retained for the next flush.
+    pub fn pending_account(&self) -> Option<AccountOperation> {
+        self.desired
+    }
     /// Flushes one coalesced account request; failure leaves its intent available for reconnect.
     pub async fn flush_account(&mut self) -> Result<(), CloseReason> {
         if let Some(operation) = self.desired {

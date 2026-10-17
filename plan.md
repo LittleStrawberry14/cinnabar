@@ -23,6 +23,18 @@ They follow the posed bone and stop when the item is unequipped, hidden or despa
 Emitters run only in the world, with at most 128 alive at once; HUD and wardrobe previews show
 geometry without particles.
 
+Visible catalog tiles and menu character/paper-doll previews play authored repeating joint
+motion without a joined world. Preview playback starts after an optional world fly-in intro;
+the HUD continues to share the local actor's evaluated motion. Static poses and original
+texture pages stay cached. Tiles center the isolated cosmetic at a stable scale, and
+wardrobe fitting uses a worker-prepared, sampled motion envelope. Exact envelope coverage
+for arbitrary downloaded clips, live player-preview visual acceptance and hardware performance
+qualification remain incomplete.
+Visible thumbnail carriers take priority over optional gallery animation textures, and
+cosmetic atlas borders retain their original point-sampled edge texels.
+Equipped character geometry is admitted before optional tile meshes consume the frame budget.
+Each admitted rig revision prepares its motion bounds on the artwork worker, including texture-cache hits.
+
 The Cosmetics gallery offers All, Head, Face, Back, Body, Pet and Aura choices, one per schema
 slot, through a filter icon beside
 Remove all. Its menu closes on selection, outside click or Escape. Filtering preserves equipped
@@ -227,6 +239,12 @@ stale-result rejection, but browser playback is not wired. A wasm artifact build
 relay join/transfer acceptance, shader output comparisons on WebGPU and Metal, and indivisible
 job costs still require verification. Cached navigation retains page resources and restores
 relay controls with an unexpired capability. No browser release or parity gate closes here.
+
+The browser account adapter projects device-code prompts, refusals and identity into the shared
+menu. External services expose account intents and preference changes without native helper
+launches. Browser preferences bound saved servers and GUI scale; storage failures are reported.
+The sign-in gesture bridge validates links and removes listeners on teardown. Wiring these
+menu, gesture and persistence handoffs into the running browser host remains incomplete.
 
 ## Far terrain (LOD)
 
@@ -2026,7 +2044,7 @@ not close a parity or visual acceptance gate.
 - Provisional: no version-matched witness of the current engine's values is recorded, and the
   first-person crumb point (0.45 ahead, 0.15 below the camera) is an approximation.
 
-## Read-back terrain occlusion on direct-draw devices
+## Terrain occlusion on direct-draw devices
 
 - Metal (any direct-draw device with compute) never draws indirectly. While the view holds
   still and a verdict could change, solid terrain draws in its own pass ahead of other opaque
@@ -2049,7 +2067,33 @@ not close a parity or visual acceptance gate.
   ties and current-frame depth handles disocclusion. Missing depth or pipelines clears the
   flags. Metal indirect draws remain disabled. Native raster fixtures cover page tails,
   camera changes and one-sample/2× MSAA output equality. Performance and presentation
-  acceptance remain incomplete; this path does not change the default.
+  acceptance remain incomplete.
+- Opt-in Metal admission (`CINNABAR_TERRAIN_VISIBILITY=adaptive`) probes current-frame
+  visibility for views with at least 64 candidates. An inactive view probes once per 64 frames and remains active while completed feedback
+  hides at least half its candidates. Settled still views keep the cheaper readback path.
+  Feedback only chooses whether to do fresh work;
+  current depth supplies every visibility mask, including during motion. Falling back
+  clears masks before direct draws. The default and `CINNABAR_TERRAIN_VISIBILITY=0` keep
+  the legacy path; `1` forces the current-frame path. The admission thresholds are
+  provisional and do not close the hardware performance gate.
+
+## Video quality and repeated renderer work
+
+- Smooth Lighting now chooses corner interpolation/AO or one light sample per face.
+  Transparent Leaves now chooses exposed cutout leaves or opaque leaves with internal
+  shared faces removed. Runtime changes rebuild resident meshes, cancel old work and
+  invalidate resource-pack snapshots even after an A/B/A toggle. Existing defaults keep
+  full-quality rendering.
+- Native lightmap bytes are prepared once per upload. Sky fan lookup uses a bounded
+  search while preserving rim-edge rounding and the existing draw order. Uniform sky
+  colour conversions run at vertices. Actor readiness polls retained unique pipelines, and retained UI
+  layers reuse composite bindings across both scene ping-pong views.
+- Single-sample SMAA writes its filtered result directly into the shared scene, removing
+  the extra restoration copy. The main scene transfer still preserves encoded material
+  blending and post-processing colour ownership.
+- Incomplete: these bounded native fixtures and work-count checks do not establish the
+  MacBook Neo frame-rate gain or close the live frame, join, streaming or settings parity
+  gates. Simple Graphics precipitation and stock Fancy Skies behavior remain unverified.
 
 ## Bounded lighting CPU work
 
@@ -4160,7 +4204,7 @@ Codec, fixture and unit coverage only: no 1.26.50 server join, native visual, or
 vanilla acceptance gate has been run on this target yet. New 2193 fields are
 decoded but not yet consumed (MoveActorDelta interpolation ticks, PlaySound
 range bypass and playback offset, camera preset starting rotation, dimension
-default biome, SetPlayerFurnaceOptions, RecordStarted); that parity work is
+default biome, RecordStarted); that parity work is
 incomplete. The account/auth cache is keyed on the game version, so the first
 join re-authenticates.
 
@@ -9137,8 +9181,18 @@ result; repeat selection returns the ingredient before clearing the preview.
 Replacements return the previous
 ingredient to its source cells before other available inventory cells. Expanded
 ingredient groups, exact ghost rendering, saturated-inventory replacements,
-recipe discovery and server-persisted
-furnace UI options remain incomplete; the full furnace parity gate stays open.
+recipe discovery remain incomplete; the full furnace parity gate stays open.
+
+2026-10-17 furnace preferences: protocol 2193 furnace-option updates enter ordered
+inventory ingress and retain separate player choices for furnace, blast furnace
+and smoker. Each open controller snapshots its saved tab, filtering and layout;
+later server updates change retained preferences without replacing that snapshot.
+Changed controls save and queue one options packet, unchanged controls send none,
+and a full queue leaves the choice available to retry. Furnace filtering no
+longer uses the crafting filter, and the inventory tab is independent of layout.
+Stored unspecified layouts resolve to the recipe-book layout on opening. The
+profile-specific forced-layout branch, exact stable-client gameplay acceptance,
+recipe discovery, ghost rendering and other station rules remain incomplete.
 
 ## Entity interaction and emote starts
 
@@ -9922,6 +9976,18 @@ captures and measured renderer work remain outstanding; no speedup is claimed.
 Explicit default collision and selection components retain their bounds before state transformations. Empty pixel boxes remain empty instead of becoming full cubes, asymmetric X bounds follow the block coordinate convention, and collision boxes retain their supported taller Y range. Movement, targeting and outlines keep their independent component bounds in both palette modes.
 
 Incomplete parity: the original report does not identify the affected block definitions. In-world acceptance of the component cases remains open.
+
+## UI texture allocation recovery
+
+UI texture resizes keep unchanged dimension buckets. If replacement storage fails,
+superseded buckets are released before another attempt. Successfully allocated
+and uploaded pages remain drawable; unavailable pages are absent. An unchanged
+failed plan retries after 250 ms using time from the caller, while plan changes
+retry immediately. Residency changes invalidate retained UI pixels even when the
+publication revision stays the same.
+
+Hardware memory-pressure captures remain outstanding. This recovery does not
+close the texture streaming or hardware frame budget acceptance gates.
 
 ## Actor GPU allocation recovery
 

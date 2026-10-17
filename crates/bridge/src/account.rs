@@ -1,6 +1,4 @@
 use crate::contract::ConnectTarget;
-#[cfg(test)]
-use crate::{AuthState, ConnectStage};
 use std::path::Path;
 
 use bytes::Bytes;

@@ -90,10 +90,12 @@ impl Game {
 impl Game {
     /// Starts a fresh manual join, cancelling the previous play task and its writer.
     pub fn join(&mut self, page: &Page, address: &str) -> Result<(), JsError> {
-        let address = address.trim();
-        if address.is_empty() || address.len() > 255 || address.chars().any(char::is_whitespace) {
-            return Err(JsError::new("Enter a server address and optional port"));
-        }
+        let bridge::ConnectTarget::RakNet(address) =
+            crate::launcher::addressed_target(address).map_err(JsError::new)?
+        else {
+            unreachable!("addressed_target accepts only RakNet servers");
+        };
+        page.account.borrow_mut().begin_join();
         self.disconnect();
         self.play = Some(Task::spawn(drive(
             Rc::clone(&self.host),

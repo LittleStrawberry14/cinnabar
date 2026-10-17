@@ -3,7 +3,11 @@ use crate::relay::{self, Host, Refresh};
 use assets::carriers::startup::delivery::{DeliveryManifest, MemoryCarriers};
 use futures::channel::{mpsc, oneshot};
 use js_sys::Function;
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 use wasm_bindgen::prelude::{JsError, JsValue, wasm_bindgen};
 use wasm_bindgen_futures::spawn_local;
 use web_transport::{CloseReason, browser::BrowserTransport, session::AccountOperation};
@@ -22,6 +26,7 @@ struct BrowserHost {
     origin: String,
     observe: Function,
     ready: Rc<Cell<bool>>,
+    account: Rc<RefCell<crate::launcher::RelayAccount>>,
 }
 impl Host for BrowserHost {
     type Transport = BrowserTransport;
@@ -40,12 +45,28 @@ impl Host for BrowserHost {
             BrowserTransport::new(&self.origin, false)?,
         ))
     }
+    fn connected(&self, resumed: bool, pending: Option<AccountOperation>) {
+        if !resumed {
+            let mut account = self.account.borrow_mut();
+            account.fresh_session();
+            if let Some(operation) = pending {
+                account.restore_operation(operation);
+            }
+        }
+    }
+    fn account_operation(&self, operation: AccountOperation) {
+        self.account.borrow_mut().restore_operation(operation);
+    }
+    fn control(&self, event: &web_transport::session::ControlEvent) {
+        let _ = self.account.borrow_mut().observe(event);
+    }
     fn observe(&self, value: serde_json::Value) {
         if let Some(state) = value.get("state").and_then(serde_json::Value::as_str) {
             if state == "connected" {
                 self.ready.set(true);
             } else if matches!(state, "disconnected" | "refused" | "retry_exhausted") {
                 self.ready.set(false);
+                self.account.borrow_mut().disconnected();
             }
         }
         emit(&self.observe, value);
@@ -56,6 +77,7 @@ impl Host for BrowserHost {
 #[wasm_bindgen]
 pub struct Page {
     ready: Rc<Cell<bool>>,
+    account: Rc<RefCell<crate::launcher::RelayAccount>>,
     observe: Function,
     commands: mpsc::Sender<AccountOperation>,
     joins: mpsc::Sender<crate::play::Request<web_transport::browser::BrowserStream>>,
@@ -71,6 +93,7 @@ impl Page {
     #[wasm_bindgen(constructor)]
     pub fn new(origin: &str, observe: Function) -> Result<Page, JsError> {
         let ready = Rc::new(Cell::new(false));
+        let account = Rc::new(RefCell::new(crate::launcher::RelayAccount::default()));
         let (commands, pending) = mpsc::channel(4);
         let (joins, requests) = mpsc::channel(1);
         let (lifecycle, changed) = mpsc::channel(1);
@@ -82,6 +105,7 @@ impl Page {
                 origin: origin.to_owned(),
                 observe: observe.clone(),
                 ready: Rc::clone(&ready),
+                account: Rc::clone(&account),
             },
             pending,
             requests,
@@ -92,6 +116,7 @@ impl Page {
         ));
         Ok(Page {
             ready,
+            account,
             observe,
             commands,
             joins,
@@ -113,11 +138,16 @@ impl Page {
     }
     /// Coalesces sign-in intent in the shared controller after bounded command admission.
     pub fn sign_in(&mut self) -> Result<(), JsError> {
-        self.command(AccountOperation::SignIn)
+        self.account_intent(::launcher::menu::auth::AccountIntent::SignIn)
     }
     /// Signs out through the same relay control channel.
     pub fn sign_out(&mut self) -> Result<(), JsError> {
-        self.command(AccountOperation::SignOut)
+        self.account_intent(::launcher::menu::auth::AccountIntent::SignOut)
+    }
+
+    /// Cancels pending sign-in even if its device code has not arrived yet.
+    pub fn cancel_sign_in(&mut self) -> Result<(), JsError> {
+        self.account_intent(::launcher::menu::auth::AccountIntent::Cancel)
     }
 
     /// Retains resume capability while cached navigation closes the live relay transport.
@@ -140,6 +170,37 @@ impl Page {
             .try_send(crate::play::Request { reply })
             .map_err(|_| CloseReason::Transport)?;
         response.await.map_err(|_| CloseReason::Cancelled)?
+    }
+
+    /// Admits a menu intent before updating presentation; full queues remain visible failures.
+    pub fn account_intent(
+        &mut self,
+        intent: ::launcher::menu::auth::AccountIntent,
+    ) -> Result<(), JsError> {
+        let mut next = self.account.borrow().clone();
+        next.request(intent);
+        if let Some(operation) = next.take_operation() {
+            self.command(operation)?;
+        }
+        *self.account.borrow_mut() = next;
+        Ok(())
+    }
+
+    /// Supplies plain account data to the game host without putting JS handles in resources.
+    pub fn menu_account(
+        &self,
+    ) -> (
+        ::launcher::menu::auth::AuthState,
+        ::launcher::menu::view::MenuProfile,
+        Option<::launcher::menu::view::JoinStage>,
+    ) {
+        let account = self.account.borrow();
+        (account.state(), account.profile(), account.join_stage())
+    }
+
+    /// Reports operation failures without changing a confirmed signed-in identity.
+    pub fn menu_account_error(&self) -> Option<String> {
+        self.account.borrow().operation_error().map(str::to_owned)
     }
 
     /// Refuses additional UI actions while the controller's command slot is full.

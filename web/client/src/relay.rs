@@ -35,6 +35,12 @@ pub(crate) trait Host {
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()>;
     /// Creates candidates without performing a second account or gameplay implementation.
     fn transports(&self) -> Result<(Option<Self::Transport>, Self::Transport), CloseReason>;
+    /// Reconciles menu presentation after a fresh or resumed account handshake.
+    fn connected(&self, _resumed: bool, _pending: Option<AccountOperation>) {}
+    /// Mirrors the admitted coalesced account operation into menu presentation.
+    fn account_operation(&self, _operation: AccountOperation) {}
+    /// Supplies the menu's account owner with the same validated control observation.
+    fn control(&self, _event: &ControlEvent) {}
     /// Emits only typed, sanitized page observations.
     fn observe(&self, event: serde_json::Value);
 }
@@ -129,6 +135,7 @@ pub(crate) async fn run<H: Host>(
                     } else {
                         event.await?
                     };
+                    host.control(&event);
                     match event {
                         ControlEvent::Account(account) => {
                             if matches!(
@@ -169,6 +176,7 @@ pub(crate) async fn run<H: Host>(
                         || host.jitter(),
                     )
                     .await?;
+                    host.connected(session.resumed_account(), session.pending_account());
                     host.observe(serde_json::json!({"state": "connected"}));
                 }
                 Ok(())
@@ -274,6 +282,7 @@ pub(crate) async fn run<H: Host>(
             if halted && let Some(active) = playing.as_mut() {
                 active.cancel.take();
             }
+            host.account_operation(operation);
             session.desire_account(operation);
         }
     }

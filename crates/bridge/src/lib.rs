@@ -4,12 +4,11 @@
 mod account;
 mod account_data;
 mod player_identity;
-pub use player_identity::{valid_cinnabar_uuid, valid_cinnabar_xuid};
-mod account_state;
 pub use account_data::{
-    Artwork, MessageEvent, Person, ProfileAchievement, ProfileAchievements, ProfileStatistics,
+    Account, Artwork, ConnectProgress, MessageEvent, Person, ProfileAchievement,
+    ProfileAchievements, ProfileStatistics,
 };
-pub use account_state::{Account, ConnectProgress};
+pub use player_identity::{valid_cinnabar_uuid, valid_cinnabar_xuid};
 #[cfg(not(target_arch = "wasm32"))]
 mod cinnabar_api;
 #[cfg(not(target_arch = "wasm32"))]
