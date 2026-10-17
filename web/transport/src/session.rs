@@ -36,12 +36,18 @@ pub enum AccountOperation {
     SignIn,
     SignOut,
 }
+/// A request refusal keeps control ready and identifies the operation the player can retry.
+#[derive(Debug, PartialEq)]
+pub enum RequestRefusal {
+    RetrySignIn,
+    Refused(RefusalCode),
+}
 /// Control observations forwarded to the host's account and progress plumbing.
 #[derive(Debug, PartialEq)]
 pub enum ControlEvent {
     Account(bridge::Account),
     Connect(bridge::ConnectProgress),
-    Error(RefusalCode),
+    RequestRefused(RequestRefusal),
     Keepalive,
 }
 
@@ -259,7 +265,11 @@ impl<T: RelayTransport> Session<T> {
             }
             Event::Account { account } => Ok(Some(ControlEvent::Account(account))),
             Event::Connect { connect } => Ok(Some(ControlEvent::Connect(connect))),
-            Event::Error { error } => Ok(Some(ControlEvent::Error(error))),
+            Event::Error { error } => Ok(Some(ControlEvent::RequestRefused(match error {
+                // Only sign-in consumes admission within an established control session.
+                RefusalCode::AdmissionRefused => RequestRefusal::RetrySignIn,
+                code => RequestRefusal::Refused(code),
+            }))),
             Event::Unknown => {
                 self.unknown_events += 1;
                 tracing::debug!(

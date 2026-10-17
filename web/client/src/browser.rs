@@ -1,5 +1,5 @@
 //! Browser-local control driver and verified asset download admission.
-use crate::relay::{self, Host, Refresh};
+use crate::relay::{self, AccountCommand, Host, Intent, Refresh};
 use assets::carriers::startup::delivery::{DeliveryManifest, MemoryCarriers, startup_carriers};
 use futures::channel::{mpsc, oneshot};
 use js_sys::Function;
@@ -45,10 +45,10 @@ impl Host for BrowserHost {
 /// Owns bounded account commands; dropping the page cancels its controller.
 #[wasm_bindgen]
 pub struct Page {
-    commands: mpsc::Sender<AccountOperation>,
+    commands: mpsc::Sender<AccountCommand>,
     lifecycle: mpsc::Sender<()>,
     suspended: Rc<Cell<bool>>,
-    refresh: Rc<Cell<Refresh>>,
+    intent: Rc<Intent>,
     _cancel: oneshot::Sender<()>,
 }
 
@@ -60,7 +60,7 @@ impl Page {
         let (commands, pending) = mpsc::channel(4);
         let (lifecycle, changed) = mpsc::channel(1);
         let suspended = Rc::new(Cell::new(false));
-        let refresh = Rc::new(Cell::new(Refresh::None));
+        let intent = Rc::new(Intent::default());
         let (cancel, cancelled) = oneshot::channel();
         spawn_local(relay::run(
             BrowserHost {
@@ -70,25 +70,25 @@ impl Page {
             pending,
             changed,
             Rc::clone(&suspended),
-            Rc::clone(&refresh),
+            Rc::clone(&intent),
             cancelled,
         ));
         Ok(Page {
             commands,
             lifecycle,
             suspended,
-            refresh,
+            intent,
             _cancel: cancel,
         })
     }
     /// Retries control with this page's retained account capability.
     pub fn reconnect(&mut self) {
-        self.refresh.set(Refresh::Reconnect);
+        self.intent.request(Refresh::Reconnect);
         let _ = self.lifecycle.try_send(());
     }
     /// Starts an explicitly fresh account session after resume was refused or expired.
     pub fn fresh_session(&mut self) {
-        self.refresh.set(Refresh::Fresh);
+        self.intent.request(Refresh::Fresh);
         let _ = self.lifecycle.try_send(());
     }
     /// Coalesces sign-in intent in the shared controller after bounded command admission.
@@ -114,7 +114,7 @@ impl Page {
     /// Refuses additional UI actions while the controller's command slot is full.
     fn command(&mut self, operation: AccountOperation) -> Result<(), JsError> {
         self.commands
-            .try_send(operation)
+            .try_send(self.intent.account(operation))
             .map_err(|_| JsError::new("relay busy or disconnected"))
     }
 

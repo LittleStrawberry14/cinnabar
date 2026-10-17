@@ -6,8 +6,8 @@ use futures::{
 use std::{cell::Cell, future::Future, rc::Rc, time::Duration};
 use web_transport::{
     CloseReason, RelayTransport,
-    control::refusal_message,
-    session::{AccountOperation, ControlEvent, Session, State},
+    control::connection_refusal_message,
+    session::{AccountOperation, ControlEvent, RequestRefusal, Session, State},
 };
 
 /// Bounds control opening and account writes with the same host-owned deadline.
@@ -20,6 +20,43 @@ pub(crate) enum Refresh {
     None,
     Reconnect,
     Fresh,
+}
+
+/// Tags account intent at issuance, before the driver can observe a lifecycle change.
+#[derive(Default)]
+pub(crate) struct Intent {
+    refresh: Cell<Refresh>,
+    generation: Cell<u64>,
+}
+
+impl Intent {
+    /// Invalidates old commands immediately when the page requests a fresh session.
+    pub(crate) fn request(&self, refresh: Refresh) {
+        if matches!(refresh, Refresh::Fresh) {
+            self.generation.set(
+                self.generation
+                    .get()
+                    .checked_add(1)
+                    .expect("session generation exhausted"),
+            );
+        }
+        self.refresh.set(refresh);
+    }
+
+    /// Associates one account command with the session selected by the page.
+    pub(crate) fn account(&self, operation: AccountOperation) -> AccountCommand {
+        AccountCommand {
+            generation: self.generation.get(),
+            operation,
+        }
+    }
+}
+
+/// Account commands stay bound to their issuing session through every queue.
+#[derive(Debug)]
+pub(crate) struct AccountCommand {
+    generation: u64,
+    operation: AccountOperation,
 }
 
 /// Browser services supplied only at composition, keeping the driver testable without JS.
@@ -40,15 +77,16 @@ pub(crate) trait Host {
 /// Runs selection, backoff and account control on one retained session until disposal.
 pub(crate) async fn run<H: Host>(
     host: H,
-    mut pending: mpsc::Receiver<AccountOperation>,
+    mut pending: mpsc::Receiver<AccountCommand>,
     mut changed: mpsc::Receiver<()>,
     paused: Rc<Cell<bool>>,
-    refresh: Rc<Cell<Refresh>>,
+    intent: Rc<Intent>,
     cancelled: oneshot::Receiver<()>,
 ) {
     let mut session = Session::new();
     let mut cancelled = cancelled.fuse();
     let mut halted = false;
+    let mut generation = 0;
     loop {
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
@@ -58,7 +96,7 @@ pub(crate) async fn run<H: Host>(
         enum Action {
             Dispose,
             Lifecycle,
-            Account(Option<AccountOperation>),
+            Account(Option<AccountCommand>),
             Step(Result<(), CloseReason>),
         }
         let mut queued_account = None;
@@ -82,9 +120,18 @@ pub(crate) async fn run<H: Host>(
                         ControlEvent::Connect(connect) => {
                             host.observe(serde_json::json!({"connect": connect}))
                         }
-                        ControlEvent::Error(code) => host.observe(
-                            serde_json::json!({"code": code, "error": refusal_message(code)}),
-                        ),
+                        ControlEvent::RequestRefused(refusal) => {
+                            let (code, message) = match refusal {
+                                RequestRefusal::RetrySignIn => (
+                                    bridge::contract::RefusalCode::AdmissionRefused,
+                                    "The relay cannot accept sign-in right now. Use Sign in to retry.",
+                                ),
+                                RequestRefusal::Refused(code) => {
+                                    (code, "The relay refused this request.")
+                                }
+                            };
+                            host.observe(serde_json::json!({"code": code, "error": message}));
+                        }
                         ControlEvent::Keepalive => {}
                     }
                 } else {
@@ -121,17 +168,19 @@ pub(crate) async fn run<H: Host>(
                     result = step.as_mut().fuse() => Action::Step(result),
                 };
                 match action {
+                    Action::Account(Some(command)) if command.generation != generation => {}
                     // Keep the Hello/Welcome future alive until its bearer has been stored.
                     Action::Account(Some(operation)) if !ready && !parked => {
                         queued_account = Some(operation);
                     }
                     Action::Lifecycle
                         if !paused.get()
-                            && matches!(refresh.get(), Refresh::Reconnect)
+                            && matches!(intent.refresh.get(), Refresh::Reconnect)
+                            && intent.generation.get() == generation
                             && (ready || handshaking.get()) =>
                     {
                         while changed.try_recv().is_ok() {}
-                        refresh.set(Refresh::None);
+                        intent.refresh.set(Refresh::None);
                         halted = false;
                     }
                     _ => break action,
@@ -143,17 +192,19 @@ pub(crate) async fn run<H: Host>(
             Action::Lifecycle => {
                 while changed.try_recv().is_ok() {}
                 session.close(CloseReason::Transport);
-                match refresh.replace(Refresh::None) {
-                    Refresh::Fresh => {
-                        session.fresh_session();
-                        queued_account = None;
-                        halted = false;
+                let refresh = intent.refresh.replace(Refresh::None);
+                if generation != intent.generation.get() {
+                    generation = intent.generation.get();
+                    session.fresh_session();
+                    halted = false;
+                } else {
+                    match refresh {
+                        Refresh::Reconnect => {
+                            session.restart_retries();
+                            halted = false;
+                        }
+                        Refresh::None | Refresh::Fresh => {}
                     }
-                    Refresh::Reconnect => {
-                        session.restart_retries();
-                        halted = false;
-                    }
-                    Refresh::None => {}
                 }
             }
             Action::Account(Some(operation)) => queued_account = Some(operation),
@@ -162,7 +213,7 @@ pub(crate) async fn run<H: Host>(
             Action::Step(Err(reason)) => {
                 session.close(reason);
                 if let Some(code) = session.refusal() {
-                    host.observe(serde_json::json!({"state": "refused", "code": code, "error": refusal_message(code)}));
+                    host.observe(serde_json::json!({"state": "refused", "code": code, "error": connection_refusal_message(code)}));
                 } else if session.next_retry() == Err(CloseReason::RetryExhausted) {
                     host.observe(serde_json::json!({"state": "retry_exhausted", "error": "Reconnect attempts exhausted. Connect relay to retry."}));
                 } else {
@@ -170,12 +221,15 @@ pub(crate) async fn run<H: Host>(
                 }
             }
         }
-        if let Some(mut operation) = queued_account {
-            while let Ok(next) = pending.try_recv() {
-                operation = next;
+        if let Some(command) = queued_account {
+            let latest = std::iter::once(command)
+                .chain(std::iter::from_fn(|| pending.try_recv().ok()))
+                .filter(|command| command.generation == generation)
+                .last();
+            if let Some(command) = latest {
+                halted = command.operation == AccountOperation::SignOut;
+                session.desire_account(command.operation);
             }
-            halted = operation == AccountOperation::SignOut;
-            session.desire_account(operation);
         }
     }
     session.close(CloseReason::Cancelled);
