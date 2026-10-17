@@ -13,9 +13,9 @@ use std::{
 
 use bytes::Bytes;
 use protocol::{
-    BlobCacheStats, ClientBlobCache, CustomBlocks, InventoryEvent, ItemRegistryEvent,
-    LoginSequence, Packet, PacketIdTraceSnapshot, PlayerGameMode, ServerDisconnectEvent,
-    WorldBootstrap, WorldEnvironmentBootstrap, WorldEvent,
+    BlobCacheStats, ClientBlobCache, CustomBlocks, InventoryEvent, ItemRegistryEvent, Packet,
+    PacketIdTraceSnapshot, PlayerGameMode, ServerDisconnectEvent, WorldBootstrap,
+    WorldEnvironmentBootstrap, WorldEvent,
 };
 use tokio::sync::{mpsc, watch};
 use world::ChunkKey;
@@ -664,11 +664,15 @@ impl<P> Drop for NetworkHandle<P> {
     }
 }
 
+pub(crate) mod execution;
 mod start;
+pub use execution::{NetworkExecutor, SessionRead};
+#[cfg(not(target_arch = "wasm32"))]
 pub use start::spawn_network;
+pub use start::{PreparedLogin, prepare_network};
 
 /// The inbound half of a play session; its write half runs on its own task.
-trait NetworkSession: Send {
+trait NetworkSession: execution::SessionOwner {
     type Error: std::fmt::Display + Send;
     type Outbound: OutboundSession;
 
@@ -678,12 +682,12 @@ trait NetworkSession: Send {
     fn receive_world_event(
         &mut self,
         current_dimension: i32,
-    ) -> impl Future<Output = Result<WorldEvent, Self::Error>> + Send;
+    ) -> impl execution::SessionFuture<Output = Result<WorldEvent, Self::Error>>;
 
     fn receive_world_ingress(
         &mut self,
         current_dimension: i32,
-    ) -> impl Future<Output = Result<InboundWorldEvent, Self::Error>> + Send {
+    ) -> impl execution::SessionFuture<Output = Result<InboundWorldEvent, Self::Error>> {
         async move {
             self.receive_world_event(current_dimension)
                 .await
@@ -694,13 +698,13 @@ trait NetworkSession: Send {
     fn decode_error_count(&self) -> u64;
 
     /// Buffers bounded raw input without decoding world events while their consumer is full.
-    fn read_ahead(&mut self) -> impl Future<Output = ()> + Send {
+    fn read_ahead(&mut self) -> impl execution::SessionFuture<Output = ()> {
         std::future::pending()
     }
 
     /// Reads inbound until it ends, so a Transfer or Disconnect the core sent before closing is
     /// retained when a write fails first; the caller bounds the wait.
-    fn drain_to_boundary(&mut self) -> impl Future<Output = ()> + Send {
+    fn drain_to_boundary(&mut self) -> impl execution::SessionFuture<Output = ()> {
         async move { while self.receive_world_ingress(0).await.is_ok() {} }
     }
 
@@ -736,7 +740,7 @@ trait NetworkSession: Send {
     }
 }
 
-impl NetworkSession for protocol::PlaySession {
+impl<R: execution::SessionRead> NetworkSession for protocol::PlaySession<R> {
     type Error = protocol::ProtocolError;
     type Outbound = protocol::PlayOutbound;
 
@@ -747,14 +751,14 @@ impl NetworkSession for protocol::PlaySession {
     fn receive_world_event(
         &mut self,
         current_dimension: i32,
-    ) -> impl Future<Output = Result<WorldEvent, Self::Error>> + Send {
+    ) -> impl execution::SessionFuture<Output = Result<WorldEvent, Self::Error>> {
         self.recv_world_event(current_dimension)
     }
 
     fn receive_world_ingress(
         &mut self,
         current_dimension: i32,
-    ) -> impl Future<Output = Result<InboundWorldEvent, Self::Error>> + Send {
+    ) -> impl execution::SessionFuture<Output = Result<InboundWorldEvent, Self::Error>> {
         self.recv_world_event_mapped(
             current_dimension,
             InboundWorldEvent::Event,
@@ -767,11 +771,11 @@ impl NetworkSession for protocol::PlaySession {
     }
 
     /// Reads into the play session's bounded raw transport buffer.
-    fn read_ahead(&mut self) -> impl Future<Output = ()> + Send {
+    fn read_ahead(&mut self) -> impl execution::SessionFuture<Output = ()> {
         protocol::PlaySession::read_ahead(self)
     }
 
-    fn drain_to_boundary(&mut self) -> impl Future<Output = ()> + Send {
+    fn drain_to_boundary(&mut self) -> impl execution::SessionFuture<Output = ()> {
         protocol::PlaySession::drain_to_boundary(self)
     }
 

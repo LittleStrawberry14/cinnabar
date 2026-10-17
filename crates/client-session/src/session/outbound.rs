@@ -64,15 +64,6 @@ pub(super) struct OutboundRuntime<O, P, F, W> {
     pub(super) fast_transfer_action_marker: Option<&'static str>,
 }
 
-/// Aborts the outbound task when the pump ends on any path.
-pub(super) struct OutboundTask(pub(super) tokio::task::JoinHandle<()>);
-
-impl Drop for OutboundTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 struct QueuedPacket {
     packet: Packet,
     sub_chunk: Option<SubChunkRequestSend>,
