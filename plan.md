@@ -239,10 +239,13 @@ errors asynchronously; recoverable browser GPU exhaustion remains incomplete.
 
 Incomplete: interactive inventory/chat/forms controls, sound-bank range fetching and audio
 playback remain pending. The shared audio bank has bounded host-driven decode admission and
-stale-result rejection, but browser playback is not wired. A wasm artifact builds; browser boot,
-relay join/transfer acceptance, shader output comparisons on WebGPU and Metal, and indivisible
-job costs still require verification. Cached navigation retains page resources and restores
-relay controls with an unexpired capability. No browser release or parity gate closes here.
+stale-result rejection, but browser playback is not wired. Native owner checks and a wasm artifact
+pass. Headless Chrome with Metal WebGPU boots, joins an offline world, renders terrain and HUD,
+and moves the player through canvas input. A WebSocket fixture covers transfer, disconnect and
+rejoin. Initial terrain can remain absent while browser jobs drain; startup latency, shader output
+comparisons and indivisible job costs remain unverified. Cached navigation retains page resources
+and restores relay controls with an unexpired capability. No browser release or parity gate closes
+here.
 
 The browser account adapter projects device-code prompts, refusals and identity into the shared
 menu. External services expose account intents and preference changes without native helper

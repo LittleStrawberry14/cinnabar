@@ -3,9 +3,11 @@
 ## Browser host composition
 
 The browser host uses verified memory carriers, the shared game frame and HUD, injected
-session I/O and canvas input. A wasm artifact builds. Browser boot and join/transfer acceptance
-remain unverified; interactive UI controls, audio delivery/playback and hardware budgets remain
-incomplete. This adds no completed parity or browser-release gate.
+session I/O and canvas input. Native owner checks and a wasm artifact pass. Headless Chrome with
+Metal WebGPU boots, renders an offline world's terrain and HUD, and moves its player. WebSocket
+transfer, disconnect and rejoin pass. Initial terrain latency, interactive UI controls, audio
+delivery/playback and hardware budgets remain incomplete. This adds no completed parity or
+browser-release gate.
 
 ## Redstone dust item sprite
 
