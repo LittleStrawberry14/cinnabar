@@ -17,6 +17,7 @@ struct Observations {
     opens: Cell<usize>,
     refused: Cell<bool>,
     live: Cell<bool>,
+    hold_welcome: Cell<bool>,
     failed: Cell<bool>,
     cancelled_timers: Cell<usize>,
     output: RefCell<Vec<u8>>,
@@ -35,6 +36,9 @@ impl AsyncRead for Stream {
         _: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if !self.input.is_empty() && self.host.hold_welcome.get() {
+            return Poll::Pending;
+        }
         if self.input.is_empty() && self.host.live.get() {
             return Poll::Pending;
         }
@@ -269,6 +273,87 @@ fn account_writes_leave_the_command_lane_available_and_sign_out_stops_retries() 
     assert_eq!(written[2]["op"], "sign_out");
     host.live.set(false);
     assert!(task.as_mut().poll(&mut cx).is_pending());
+    host.now.set(Duration::from_secs(50));
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.opens.get(), 1);
+    cancel.send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_ready());
+}
+
+#[test]
+fn sign_out_during_connection_setup_is_sent_before_retries_stop() {
+    for restored in [false, true] {
+        let host = Rc::new(Observations::default());
+        host.live.set(true);
+        host.hold_welcome.set(!restored);
+        let (mut commands, pending) = mpsc::channel(4);
+        let (mut lifecycle, changed) = mpsc::channel(1);
+        let paused = Rc::new(Cell::new(false));
+        let (cancel, cancelled) = oneshot::channel();
+        let mut task = Box::pin(run(
+            FakeHost(Rc::clone(&host)),
+            pending,
+            changed,
+            Rc::clone(&paused),
+            Rc::new(Cell::new(Refresh::None)),
+            cancelled,
+        ));
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        if restored {
+            paused.set(true);
+            lifecycle.try_send(()).unwrap();
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            host.hold_welcome.set(true);
+            host.now.set(Duration::from_secs(2));
+            paused.set(false);
+            lifecycle.try_send(()).unwrap();
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(requests(&host)[1]["resume"], "retained");
+        }
+        commands.try_send(AccountOperation::SignOut).unwrap();
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        host.hold_welcome.set(false);
+        host.now.set(Duration::from_secs(10));
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        let written = requests(&host);
+        assert_eq!(written.last().unwrap()["op"], "sign_out");
+        assert_eq!(written.iter().filter(|r| r["op"] == "sign_out").count(), 1);
+        if restored {
+            assert_eq!(written[2]["resume"], "retained");
+        }
+        let opens = host.opens.get();
+        host.live.set(false);
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        host.now.set(Duration::from_secs(50));
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(host.opens.get(), opens);
+        cancel.send(()).unwrap();
+        assert!(task.as_mut().poll(&mut cx).is_ready());
+    }
+}
+
+#[test]
+fn sign_out_queued_before_opening_is_sent_before_retries_stop() {
+    let host = Rc::new(Observations::default());
+    let (mut commands, pending) = mpsc::channel(4);
+    commands.try_send(AccountOperation::SignOut).unwrap();
+    let (_lifecycle, changed) = mpsc::channel(1);
+    let (cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::new(Cell::new(Refresh::None)),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(
+        requests(&host).last().map(|r| r["op"].clone()),
+        Some(json!("sign_out"))
+    );
     host.now.set(Duration::from_secs(50));
     assert!(task.as_mut().poll(&mut cx).is_pending());
     assert_eq!(host.opens.get(), 1);

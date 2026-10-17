@@ -63,7 +63,9 @@ pub(crate) async fn run<H: Host>(
         }
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
-        let parked = paused.get() || (!ready && (halted || session.next_retry().is_err()));
+        let parked = paused.get()
+            || (!ready
+                && ((halted && !session.has_account_intent()) || session.next_retry().is_err()));
         enum Action {
             Dispose,
             Lifecycle,
