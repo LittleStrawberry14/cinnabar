@@ -15,6 +15,7 @@ use web_transport::Channel;
 struct Observations {
     now: Cell<Duration>,
     opens: Cell<usize>,
+    closes: Cell<usize>,
     refused: Cell<bool>,
     live: Cell<bool>,
     hold_welcome: Cell<bool>,
@@ -96,7 +97,9 @@ impl RelayTransport for Transport {
     async fn recv_datagram(&mut self) -> Result<Option<Vec<u8>>, CloseReason> {
         Ok(None)
     }
-    fn close(&mut self, _: CloseReason) {}
+    fn close(&mut self, _: CloseReason) {
+        self.0.closes.set(self.0.closes.get() + 1);
+    }
 }
 
 /// A manually advanced timer with observable cancellation, without sleeping or spawning.
@@ -281,55 +284,112 @@ fn account_writes_leave_the_command_lane_available_and_sign_out_stops_retries() 
 }
 
 #[test]
-fn sign_out_during_connection_setup_is_sent_before_retries_stop() {
+fn account_commands_during_setup_preserve_the_handshake_and_coalesce() {
     for restored in [false, true] {
+        for operation in [AccountOperation::SignIn, AccountOperation::SignOut] {
+            let host = Rc::new(Observations::default());
+            host.live.set(true);
+            host.hold_welcome.set(!restored);
+            let (mut commands, pending) = mpsc::channel(4);
+            let (mut lifecycle, changed) = mpsc::channel(1);
+            let paused = Rc::new(Cell::new(false));
+            let (cancel, cancelled) = oneshot::channel();
+            let mut task = Box::pin(run(
+                FakeHost(Rc::clone(&host)),
+                pending,
+                changed,
+                Rc::clone(&paused),
+                Rc::new(Cell::new(Refresh::None)),
+                cancelled,
+            ));
+            let mut cx = Context::from_waker(std::task::Waker::noop());
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            if restored {
+                paused.set(true);
+                lifecycle.try_send(()).unwrap();
+                assert!(task.as_mut().poll(&mut cx).is_pending());
+                host.hold_welcome.set(true);
+                host.now.set(Duration::from_secs(2));
+                paused.set(false);
+                lifecycle.try_send(()).unwrap();
+                assert!(task.as_mut().poll(&mut cx).is_pending());
+                assert_eq!(requests(&host)[1]["resume"], "retained");
+            }
+            let opens = host.opens.get();
+            let closes = host.closes.get();
+            for next in [
+                AccountOperation::SignIn,
+                AccountOperation::SignOut,
+                operation,
+            ] {
+                commands.try_send(next).unwrap();
+                assert!(task.as_mut().poll(&mut cx).is_pending());
+                assert_eq!(host.opens.get(), opens);
+                assert_eq!(host.closes.get(), closes);
+            }
+            host.hold_welcome.set(false);
+            host.now.set(Duration::from_secs(3));
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            let written = requests(&host);
+            let expected = match operation {
+                AccountOperation::SignIn => "sign_in",
+                AccountOperation::SignOut => "sign_out",
+            };
+            assert_eq!(written.len(), opens + 1);
+            assert_eq!(written.last().unwrap()["op"], expected);
+            host.hold_welcome.set(true);
+            host.live.set(false);
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            host.now.set(Duration::from_secs(6));
+            assert!(task.as_mut().poll(&mut cx).is_pending());
+            match operation {
+                AccountOperation::SignIn => {
+                    assert_eq!(host.opens.get(), opens + 1);
+                    assert_eq!(requests(&host).last().unwrap()["resume"], "retained");
+                }
+                AccountOperation::SignOut => assert_eq!(host.opens.get(), opens),
+            }
+            cancel.send(()).unwrap();
+            assert!(task.as_mut().poll(&mut cx).is_ready());
+        }
+    }
+}
+
+#[test]
+fn explicit_reconnect_retains_the_current_controller() {
+    for handshaking in [false, true] {
         let host = Rc::new(Observations::default());
         host.live.set(true);
-        host.hold_welcome.set(!restored);
+        host.hold_welcome.set(handshaking);
         let (mut commands, pending) = mpsc::channel(4);
         let (mut lifecycle, changed) = mpsc::channel(1);
-        let paused = Rc::new(Cell::new(false));
+        let refresh = Rc::new(Cell::new(Refresh::None));
         let (cancel, cancelled) = oneshot::channel();
         let mut task = Box::pin(run(
             FakeHost(Rc::clone(&host)),
             pending,
             changed,
-            Rc::clone(&paused),
-            Rc::new(Cell::new(Refresh::None)),
+            Rc::new(Cell::new(false)),
+            Rc::clone(&refresh),
             cancelled,
         ));
         let mut cx = Context::from_waker(std::task::Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending());
-        if restored {
-            paused.set(true);
+        for _ in 0..3 {
+            refresh.set(Refresh::Reconnect);
+            lifecycle.try_send(()).unwrap();
             lifecycle.try_send(()).unwrap();
             assert!(task.as_mut().poll(&mut cx).is_pending());
-            host.hold_welcome.set(true);
-            host.now.set(Duration::from_secs(2));
-            paused.set(false);
-            lifecycle.try_send(()).unwrap();
-            assert!(task.as_mut().poll(&mut cx).is_pending());
-            assert_eq!(requests(&host)[1]["resume"], "retained");
+            assert_eq!(host.opens.get(), 1);
+            assert_eq!(host.closes.get(), 0);
         }
-        commands.try_send(AccountOperation::SignOut).unwrap();
-        assert!(task.as_mut().poll(&mut cx).is_pending());
         host.hold_welcome.set(false);
-        host.now.set(Duration::from_secs(10));
+        commands.try_send(AccountOperation::SignIn).unwrap();
         assert!(task.as_mut().poll(&mut cx).is_pending());
-        let written = requests(&host);
-        assert_eq!(written.last().unwrap()["op"], "sign_out");
-        assert_eq!(written.iter().filter(|r| r["op"] == "sign_out").count(), 1);
-        if restored {
-            assert_eq!(written[2]["resume"], "retained");
-        }
-        let opens = host.opens.get();
-        host.live.set(false);
-        assert!(task.as_mut().poll(&mut cx).is_pending());
-        host.now.set(Duration::from_secs(50));
-        assert!(task.as_mut().poll(&mut cx).is_pending());
-        assert_eq!(host.opens.get(), opens);
+        assert_eq!(requests(&host)[1]["op"], "sign_in");
         cancel.send(()).unwrap();
         assert!(task.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(host.closes.get(), 1);
     }
 }
 

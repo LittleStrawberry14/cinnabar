@@ -50,17 +50,6 @@ pub(crate) async fn run<H: Host>(
     let mut cancelled = cancelled.fuse();
     let mut halted = false;
     loop {
-        match refresh.replace(Refresh::None) {
-            Refresh::Fresh => {
-                session.fresh_session();
-                halted = false;
-            }
-            Refresh::Reconnect => {
-                session.restart_retries();
-                halted = false;
-            }
-            Refresh::None => {}
-        }
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
         let parked = paused.get()
@@ -72,7 +61,9 @@ pub(crate) async fn run<H: Host>(
             Account(Option<AccountOperation>),
             Step(Result<(), CloseReason>),
         }
+        let mut queued_account = None;
         let action = {
+            let handshaking = Cell::new(false);
             let step = async {
                 if parked {
                     return std::future::pending::<Result<(), CloseReason>>().await;
@@ -105,6 +96,7 @@ pub(crate) async fn run<H: Host>(
                         return Err(CloseReason::RetryAt(due));
                     }
                     let (quic, socket) = host.transports()?;
+                    handshaking.set(true);
                     web_transport::select(
                         &mut session,
                         quic,
@@ -119,13 +111,31 @@ pub(crate) async fn run<H: Host>(
                 Ok(())
             };
             futures::pin_mut!(step);
-            futures::select_biased! {
-                _ = cancelled => Action::Dispose,
-                signal = changed.next().fuse() => if signal.is_none() { Action::Dispose } else { Action::Lifecycle },
-                command = async {
-                if writing { std::future::pending().await } else { pending.next().await }
-            }.fuse() => Action::Account(command),
-                result = step.fuse() => Action::Step(result),
+            loop {
+                let action = futures::select_biased! {
+                    _ = cancelled => Action::Dispose,
+                    signal = changed.next().fuse() => if signal.is_none() { Action::Dispose } else { Action::Lifecycle },
+                    command = async {
+                        if writing { std::future::pending().await } else { pending.next().await }
+                    }.fuse() => Action::Account(command),
+                    result = step.as_mut().fuse() => Action::Step(result),
+                };
+                match action {
+                    // Keep the Hello/Welcome future alive until its bearer has been stored.
+                    Action::Account(Some(operation)) if !ready && !parked => {
+                        queued_account = Some(operation);
+                    }
+                    Action::Lifecycle
+                        if !paused.get()
+                            && matches!(refresh.get(), Refresh::Reconnect)
+                            && (ready || handshaking.get()) =>
+                    {
+                        while changed.try_recv().is_ok() {}
+                        refresh.set(Refresh::None);
+                        halted = false;
+                    }
+                    _ => break action,
+                }
             }
         };
         match action {
@@ -133,17 +143,19 @@ pub(crate) async fn run<H: Host>(
             Action::Lifecycle => {
                 while changed.try_recv().is_ok() {}
                 session.close(CloseReason::Transport);
-            }
-            Action::Account(Some(mut operation)) => {
-                while let Ok(next) = pending.try_recv() {
-                    operation = next;
+                match refresh.replace(Refresh::None) {
+                    Refresh::Fresh => {
+                        session.fresh_session();
+                        halted = false;
+                    }
+                    Refresh::Reconnect => {
+                        session.restart_retries();
+                        halted = false;
+                    }
+                    Refresh::None => {}
                 }
-                halted = operation == AccountOperation::SignOut;
-                session.desire_account(operation);
-                if matches!(session.state(), State::Connecting) {
-                    session.close(CloseReason::Transport);
-                }
             }
+            Action::Account(Some(operation)) => queued_account = Some(operation),
             Action::Step(Ok(())) => {}
             Action::Step(Err(CloseReason::RetryAt(_))) => {}
             Action::Step(Err(reason)) => {
@@ -156,6 +168,13 @@ pub(crate) async fn run<H: Host>(
                     host.observe(serde_json::json!({"state": "disconnected"}));
                 }
             }
+        }
+        if let Some(mut operation) = queued_account {
+            while let Ok(next) = pending.try_recv() {
+                operation = next;
+            }
+            halted = operation == AccountOperation::SignOut;
+            session.desire_account(operation);
         }
     }
     session.close(CloseReason::Cancelled);
