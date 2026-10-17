@@ -44,13 +44,27 @@ pub(super) fn geometry(spec: GeometrySpec) -> Result<Geometry, DrawError> {
             distances.push(distance);
         }
     }
-    Ok(Geometry {
+    let bounds = std::array::from_fn(|side| {
+        std::array::from_fn(|axis| {
+            vertices
+                .iter()
+                .map(|v| v.position[axis])
+                .reduce(if side == 0 { f32::min } else { f32::max })
+                .expect("validated nonempty geometry")
+        })
+    });
+    let geometry = Geometry {
+        bounds,
         vertices: vertices.into(),
         indices: indices.into(),
         distances: distances.into(),
         closed,
         polyline,
-    })
+    };
+    if mesh::expanded_vertices(&geometry) > MAX_DRAW_EXPANDED_VERTICES {
+        return Err(error(ErrorCode::BudgetExceeded, "expanded vertices"));
+    }
+    Ok(geometry)
 }
 
 /// Measures admitted immutable payloads; shared instances never multiply geometry charges.
@@ -71,6 +85,11 @@ pub(super) fn budget(resources: &Resources, retired: &[Arc<Geometry>]) -> Result
         }))
         .collect();
     for (amount, limit, label) in [
+        (
+            geometries.iter().map(|g| mesh::expanded_vertices(g)).sum(),
+            MAX_DRAW_EXPANDED_VERTICES,
+            "expanded vertices",
+        ),
         (geometries.len(), MAX_DRAW_GEOMETRIES, "geometries"),
         (resources.instances.len(), MAX_DRAW_INSTANCES, "instances"),
         (
@@ -129,22 +148,23 @@ pub(super) fn instance(
         || !instance.width.is_finite()
         || instance.width <= 0.
         || instance.width > MAX_PRIMITIVE_EXTENT_BLOCKS
-        || geometry.vertices.iter().any(|vertex| {
-            vertex
-                .position
+        || (0..3)
+            .map(|axis| {
+                (geometry.bounds[0][axis]
+                    .abs()
+                    .max(geometry.bounds[1][axis].abs())
+                    * transform.scale[axis])
+                    .powi(2)
+            })
+            .sum::<f32>()
+            .sqrt()
+            + transform
+                .translation
                 .iter()
-                .zip(transform.scale)
-                .map(|(v, s)| (v * s).powi(2))
+                .map(|v| v * v)
                 .sum::<f32>()
                 .sqrt()
-                + transform
-                    .translation
-                    .iter()
-                    .map(|v| v * v)
-                    .sum::<f32>()
-                    .sqrt()
-                > MAX_PRIMITIVE_EXTENT_BLOCKS
-        })
+            > MAX_PRIMITIVE_EXTENT_BLOCKS
     {
         return Err(error(
             ErrorCode::Invalid,

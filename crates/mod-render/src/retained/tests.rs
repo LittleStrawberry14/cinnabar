@@ -263,3 +263,26 @@ fn instance_overflow_has_a_typed_error_and_does_not_truncate() {
         mod_api::MAX_DRAW_INSTANCES
     );
 }
+
+#[test]
+fn triangle_expansion_preserves_indices_and_zero_length_lines_emit_nothing() {
+    let mut store = Store::default();
+    let triangle = store.create_geometry(mesh()).unwrap();
+    let vertex = Vertex {
+        position: [0.; 3],
+        color: [1.; 4],
+        uv: [0.; 2],
+        data: [0.; 4],
+    };
+    let line = store
+        .create_geometry(GeometrySpec::Polyline {
+            vertices: vec![vertex; 3],
+            closed: false,
+        })
+        .unwrap();
+    store.commit();
+    let expanded = super::mesh::build(&store.snapshot().geometry[&triangle]);
+    assert_eq!(expanded.len(), 3);
+    assert_eq!(expanded[1].a[..3], [1., 0., 0.]);
+    assert!(super::mesh::build(&store.snapshot().geometry[&line]).is_empty());
+}

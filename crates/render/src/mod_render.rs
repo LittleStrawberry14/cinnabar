@@ -9,6 +9,7 @@ mod passes;
 pub(crate) use passes::PassGpu;
 
 mod primitives;
+mod retained;
 #[cfg(test)]
 mod tests;
 
@@ -38,6 +39,7 @@ struct Installed;
 
 fn install(app: &mut App) {
     app.init_resource::<ModRenderScene>();
+    app.init_resource::<render_scene::mod_scene::retained::DrawingFrame>();
     crate::pipeline_warmup::register_pending::<passes::PassGpu>(app);
     let Some(render_app) = app.get_sub_app(RenderApp) else {
         return;
@@ -48,6 +50,7 @@ fn install(app: &mut App) {
     }
     app.add_plugins(ExtractResourcePlugin::<ModRenderScene>::default());
     primitives::install(app);
+    retained::install(app);
     app.sub_app_mut(RenderApp).insert_resource(Installed);
     passes::install(app.sub_app_mut(RenderApp));
 }
