@@ -10,6 +10,9 @@ use web_transport::{
     session::{AccountOperation, ControlEvent, Session, State},
 };
 
+/// Bounds control opening and account writes with the same host-owned deadline.
+const CONTROL_DEADLINE: Duration = Duration::from_secs(10);
+
 /// Explicit UI intent; restoring a page retains its account capability.
 #[derive(Clone, Copy, Default)]
 pub(crate) enum Refresh {
@@ -75,7 +78,7 @@ pub(crate) async fn run<H: Host>(
                 if writing {
                     bridge::tasks::until(
                         session.flush_account(),
-                        host.sleep(Duration::from_secs(10)),
+                        host.sleep(CONTROL_DEADLINE),
                     )
                     .await
                     .unwrap_or(Err(CloseReason::Transport))?;
@@ -108,7 +111,7 @@ pub(crate) async fn run<H: Host>(
                         quic,
                         || socket,
                         || host.now(),
-                        || host.sleep(Duration::from_secs(10)),
+                        || host.sleep(CONTROL_DEADLINE),
                         || host.jitter(),
                     )
                     .await?;
