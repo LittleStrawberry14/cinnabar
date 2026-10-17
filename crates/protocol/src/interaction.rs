@@ -19,15 +19,46 @@ use thiserror::Error;
 
 use crate::{InventoryPacketError, VerifiedNetworkItemStack};
 
-/// All authoritative state needed to encode one protocol-2168 click-block transaction.
+/// The logical hand using an item, independent of the selected hotbar slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemUseHand {
+    Mainhand,
+    Offhand,
+}
+
+impl ItemUseHand {
+    /// Selects the transaction slot, validating the hotbar only for the main hand.
+    fn transaction_slot(self, selected_slot: u8) -> Result<u8, BlockUsePacketError> {
+        match self {
+            Self::Mainhand if selected_slot >= crate::HOTBAR_SLOT_COUNT => {
+                Err(BlockUsePacketError::InvalidSelectedSlot(selected_slot))
+            }
+            Self::Mainhand => Ok(selected_slot),
+            Self::Offhand => Ok(0),
+        }
+    }
+
+    /// Converts the logical hand to the packet codec's hand enum.
+    const fn vendor(self) -> HandSlot {
+        match self {
+            Self::Mainhand => HandSlot::Mainhand,
+            Self::Offhand => HandSlot::Offhand,
+        }
+    }
+}
+
+/// All authoritative state needed to encode one click-block transaction.
 ///
 /// Reach, ray selection, block identity, and selected-item authority belong to the caller. This
 /// type deliberately does not infer or mutate any of them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockUseRequest {
+    pub hand: ItemUseHand,
     pub block_position: [i32; 3],
     pub face: u8,
+    /// The selected hotbar slot; offhand transactions use slot zero instead.
     pub selected_slot: u8,
+    /// The authoritative stack in `hand`, supplied by the caller.
     pub selected_item: VerifiedNetworkItemStack,
     pub player_position: [f32; 3],
     pub relative_hit: [f32; 3],
@@ -61,6 +92,10 @@ pub enum BlockUsePacketError {
     InvalidFace(u8),
     #[error("selected hotbar slot {0} is outside 0..=8")]
     InvalidSelectedSlot(u8),
+    #[error("predicted offhand slot changes are not implemented")]
+    UnsupportedOffhandPrediction,
+    #[error("offhand item release is not implemented")]
+    UnsupportedOffhandRelease,
     #[error("player position must contain only finite values")]
     NonFinitePlayerPosition,
     #[error("relative hit position must contain only finite values")]
@@ -107,6 +142,7 @@ pub enum ItemUseTrigger {
 
 /// Builds a standalone click-block transaction carrying its trigger and whether the
 /// local use succeeded.
+/// Offhand requests require `change` to be absent until offhand prediction is implemented.
 pub fn click_block_transaction_packet(
     request: BlockUseRequest,
     trigger: ItemUseTrigger,
@@ -114,6 +150,7 @@ pub fn click_block_transaction_packet(
     change: Option<PredictedSlotChange>,
 ) -> Result<crate::Packet, BlockUsePacketError> {
     let slot = request.selected_slot;
+    let hand = request.hand;
     let mut transaction =
         item_use_transaction(request, ItemUseInventoryTransactionActionType::Place)?;
     transaction.trigger_type = match trigger {
@@ -128,7 +165,7 @@ pub fn click_block_transaction_packet(
         legacy_request_id,
         legacy_set_item_slots,
         actions,
-    } = slot_change_parts(slot, change)?;
+    } = slot_change_parts(hand, slot, change)?;
     transaction.actions.actions = actions;
     Ok(crate::Packet::new(InventoryTransaction {
         legacy_request_id: ItemStackLegacyRequestID(legacy_request_id),
@@ -169,7 +206,7 @@ fn block_use_packet(
 /// Validates one block-use request and encodes it as the shared item-use
 /// transaction body used by both the standalone `InventoryTransaction` packet
 /// and the transaction embedded in `PlayerAuthInput`.
-/// The action list is always empty and the hand is always the main hand.
+/// The action list is empty. The caller supplies the hand's authoritative stack.
 pub(crate) fn item_use_transaction(
     request: BlockUseRequest,
     action_type: ItemUseInventoryTransactionActionType,
@@ -177,11 +214,7 @@ pub(crate) fn item_use_transaction(
     if request.face > 5 {
         return Err(BlockUsePacketError::InvalidFace(request.face));
     }
-    if request.selected_slot >= 9 {
-        return Err(BlockUsePacketError::InvalidSelectedSlot(
-            request.selected_slot,
-        ));
-    }
+    let slot = request.hand.transaction_slot(request.selected_slot)?;
     if !request.player_position.into_iter().all(f32::is_finite) {
         return Err(BlockUsePacketError::NonFinitePlayerPosition);
     }
@@ -213,8 +246,8 @@ pub(crate) fn item_use_transaction(
         },
         position: block_pos(request.block_position),
         face: wire::U8(request.face),
-        slot: wire::ZigZag32(i32::from(request.selected_slot)),
-        hand: HandSlot::Mainhand,
+        slot: wire::ZigZag32(i32::from(slot)),
+        hand: request.hand.vendor(),
         item,
         from_position: request.player_position.into(),
         click_position: if destroying {
@@ -231,7 +264,10 @@ pub(crate) fn item_use_transaction(
 /// The held stack and pose one air use or release reports.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeldItemRequest {
+    pub hand: ItemUseHand,
+    /// The selected hotbar slot; offhand transactions use slot zero instead.
     pub selected_slot: u8,
+    /// The authoritative stack in `hand`, supplied by the caller.
     pub selected_item: VerifiedNetworkItemStack,
     pub player_position: [f32; 3],
 }
@@ -291,21 +327,15 @@ fn block_pos([x, y, z]: [i32; 3]) -> BlockPos {
     }
 }
 
+/// Validates the held pose and resolves the slot for the requested hand.
 fn held_item_parts(
     request: &HeldItemRequest,
 ) -> Result<(wire::ZigZag32, [f32; 3]), BlockUsePacketError> {
-    if request.selected_slot >= 9 {
-        return Err(BlockUsePacketError::InvalidSelectedSlot(
-            request.selected_slot,
-        ));
-    }
+    let slot = request.hand.transaction_slot(request.selected_slot)?;
     if !request.player_position.into_iter().all(f32::is_finite) {
         return Err(BlockUsePacketError::NonFinitePlayerPosition);
     }
-    Ok((
-        wire::ZigZag32(i32::from(request.selected_slot)),
-        request.player_position,
-    ))
+    Ok((wire::ZigZag32(i32::from(slot)), request.player_position))
 }
 
 struct SlotChangeParts {
@@ -316,9 +346,13 @@ struct SlotChangeParts {
 
 /// Records the inventory delta and the legacy request for a changed, nonempty result.
 fn slot_change_parts(
+    hand: ItemUseHand,
     slot: u8,
     change: Option<PredictedSlotChange>,
 ) -> Result<SlotChangeParts, BlockUsePacketError> {
+    if hand == ItemUseHand::Offhand && change.is_some() {
+        return Err(BlockUsePacketError::UnsupportedOffhandPrediction);
+    }
     let mut legacy_request_id = 0;
     let mut legacy_set_item_slots = None;
     let mut actions = Vec::new();
@@ -352,6 +386,7 @@ fn slot_change_parts(
 /// Builds the click-air transaction vanilla sends on an air use: zero block and
 /// click positions, face 255, unset trigger and a failure prediction. A `change` becomes the
 /// inventory action and legacy set-slot request vanilla records while the use runs.
+/// Offhand requests require `change` to be absent until offhand prediction is implemented.
 pub fn click_air_packet(
     request: HeldItemRequest,
     change: Option<PredictedSlotChange>,
@@ -362,7 +397,7 @@ pub fn click_air_packet(
         legacy_request_id,
         legacy_set_item_slots,
         actions,
-    } = slot_change_parts(request.selected_slot, change)?;
+    } = slot_change_parts(request.hand, request.selected_slot, change)?;
     Ok(crate::Packet::new(InventoryTransaction {
         legacy_request_id: ItemStackLegacyRequestID(legacy_request_id),
         legacy_set_item_slots,
@@ -374,7 +409,7 @@ pub fn click_air_packet(
                 position: block_pos([0; 3]),
                 face: wire::U8(u8::MAX),
                 slot,
-                hand: HandSlot::Mainhand,
+                hand: request.hand.vendor(),
                 item,
                 from_position: from_position.into(),
                 click_position: [0.0; 3].into(),
@@ -443,7 +478,11 @@ pub fn is_aim_assist_rotation_action(packet: &crate::Packet) -> bool {
 
 /// Builds the release-item transaction vanilla sends when the use button
 /// goes up; a use that runs out completes without a packet from the client.
+/// Only main-hand releases are currently supported.
 pub fn release_item_packet(request: HeldItemRequest) -> Result<crate::Packet, BlockUsePacketError> {
+    if request.hand == ItemUseHand::Offhand {
+        return Err(BlockUsePacketError::UnsupportedOffhandRelease);
+    }
     let (slot, from_position) = held_item_parts(&request)?;
     let item = request.selected_item.into_vendor_item()?;
     Ok(crate::Packet::new(InventoryTransaction {
