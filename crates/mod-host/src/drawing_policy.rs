@@ -120,7 +120,7 @@ mod tests {
         use server_experience::manifest::Permission;
         for &name in DrawingPermissions::NAMES {
             let grants: ModGrants =
-                serde_json::from_value(serde_json::json!({name: true})).unwrap();
+                serde_json::from_value(serde_json::json!({(name): true})).unwrap();
             let descriptor = ModGrants::CAPABILITIES
                 .iter()
                 .find(|capability| capability.name == name)

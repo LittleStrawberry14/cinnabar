@@ -7,7 +7,7 @@ use wasmtime::{
 
 impl Instance {
     /// Revokes previously published drawing and installs the current admission ceiling.
-    pub(super) fn bind_drawing_policy(
+    pub(crate) fn bind_drawing_policy(
         &mut self,
         grants: ModGrants,
         session: mod_api::drawing::DrawingSession,
@@ -20,12 +20,12 @@ impl Instance {
     }
 
     /// Returns current effective grants rather than the retained loader consent.
-    pub(super) fn grants(&self) -> &ModGrants {
+    pub(crate) fn grants(&self) -> &ModGrants {
         &self.store.data().grants
     }
 
     /// Compiles a component and checks its imports and callbacks without running guest code.
-    pub(super) fn check(engine: &Engine, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn check(engine: &Engine, bytes: &[u8]) -> Result<()> {
         let component = Component::new(engine, bytes)?;
         let mut linker = Linker::new(engine);
         PlayerMod::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)?;
@@ -35,7 +35,7 @@ impl Instance {
     /// Initializes a candidate store without changing the published instance. An `extension`
     /// component's instantiation and `init` share `FRAME_FUEL`; a `player-mod` component's
     /// `init`, which may read the whole session, gets `LOAD_FUEL`.
-    pub(super) fn new(
+    pub(crate) fn new(
         engine: &Engine,
         bytes: &[u8],
         grants: ModGrants,
@@ -110,7 +110,7 @@ impl Instance {
     }
 
     /// Initializes a replacement through the bounded loading lane with its full guest limits.
-    pub(super) fn replacement(
+    pub(crate) fn replacement(
         &self,
         engine: &Engine,
         bytes: &[u8],
@@ -141,7 +141,7 @@ impl Instance {
     }
 
     /// Defers an on-frame hot reload when earlier callbacks have consumed the allowance.
-    pub(super) fn can_reload(&self) -> bool {
+    pub(crate) fn can_reload(&self) -> bool {
         self.callback_budget
             .as_ref()
             .is_none_or(|budget| budget.can_load())
