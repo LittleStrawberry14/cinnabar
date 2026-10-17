@@ -88,3 +88,12 @@ pub(super) fn run_session_runtime(
     runtime.block_on(session);
     runtime.shutdown_background();
 }
+
+/// Runs `work` unless the session is already cancelled, without borrowing the channel meanwhile.
+pub(super) fn unless_cancelled<T>(
+    cancelled: &watch::Receiver<bool>,
+    work: impl FnOnce() -> T,
+) -> Option<T> {
+    let cancelled = *cancelled.borrow();
+    (!cancelled).then(work)
+}

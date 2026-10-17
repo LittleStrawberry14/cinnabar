@@ -3,10 +3,10 @@ use simulation_clock::identity::PositionAuthorityGeneration;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(test)]
-use native::run_session_runtime;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::spawn_network;
+#[cfg(test)]
+use native::{run_session_runtime, unless_cancelled};
 
 /// Shared login result carrying startup facts and the presentation owner's prepared payload.
 pub type PreparedLogin<R, P> = Result<
