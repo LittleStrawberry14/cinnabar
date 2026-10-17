@@ -76,12 +76,9 @@ pub(crate) async fn run<H: Host>(
                     return std::future::pending::<Result<(), CloseReason>>().await;
                 }
                 if writing {
-                    bridge::tasks::until(
-                        session.flush_account(),
-                        host.sleep(CONTROL_DEADLINE),
-                    )
-                    .await
-                    .unwrap_or(Err(CloseReason::Transport))?;
+                    bridge::tasks::until(session.flush_account(), host.sleep(CONTROL_DEADLINE))
+                        .await
+                        .unwrap_or(Err(CloseReason::Transport))?;
                     return Ok(());
                 }
                 if ready {
