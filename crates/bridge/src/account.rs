@@ -1,5 +1,4 @@
 use crate::contract::ConnectTarget;
-use crate::{Account, ConnectProgress};
 #[cfg(test)]
 use crate::{AuthState, ConnectStage};
 use std::path::Path;
@@ -12,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::contract::{CONTROL_MAX_FRAME_LEN, MAX_PING_TARGETS};
 use crate::endpoint::EndpointKind;
 use crate::status::{RpcError, TransferPending, invalid};
-use crate::{BridgeError, FramedStream};
+use crate::{
+    Account, Artwork, BridgeError, ConnectProgress, FramedStream, MessageEvent, Person,
+    ProfileAchievements, ProfileStatistics,
+};
 
 const REQUEST_ID: u64 = 1;
 
@@ -41,15 +43,6 @@ pub struct Realm {
     /// Joined as a member rather than owned.
     #[serde(default)]
     pub member: bool,
-}
-
-/// Remote HTTPS artwork and a local copy once one is cached; the core fills `path` only for art it renders.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct Artwork {
-    #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub path: String,
 }
 
 /// One activity a featured server or gathering advertises.
@@ -127,40 +120,6 @@ pub struct Profile {
     pub statistics: Option<ProfileStatistics>,
     #[serde(default)]
     pub achievements: Option<ProfileAchievements>,
-}
-
-/// The four Xbox title statistics vanilla requests for a player profile.
-/// Numeric strings preserve the service's precision; absent values are unavailable.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct ProfileStatistics {
-    pub minutes_played: Option<String>,
-    pub blocks_broken: Option<String>,
-    pub mobs_defeated: Option<String>,
-    pub distance_travelled: Option<String>,
-}
-
-/// The account's achievement summary for the authenticated Minecraft title.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct ProfileAchievements {
-    pub unlocked: u32,
-    pub total: u32,
-    pub current_gamerscore: Option<i64>,
-    pub max_gamerscore: Option<i64>,
-    pub entries: Vec<ProfileAchievement>,
-}
-
-/// Xbox achievement data; game-specific suggested order remains optional.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct ProfileAchievement {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub image: Artwork,
-    pub gamerscore: Option<i64>,
-    pub locked: bool,
-    #[serde(default)]
-    pub date_unlocked: String,
-    pub suggested_order: Option<u32>,
 }
 
 /// The start screen's service data: messaging surfaces, inbox counts,
@@ -286,18 +245,6 @@ pub struct LiveEvent {
     pub event_image: Artwork,
 }
 
-/// A messaging report: `event_type` is Click, Dismiss, Delete, Impression, ControlImpression or ReadAll.
-#[derive(Clone, Debug, Default, Serialize, Eq, PartialEq)]
-pub struct MessageEvent {
-    pub event_type: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub instance_id: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub report_id: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub button_id: String,
-}
-
 #[derive(Deserialize)]
 struct HomeBody {
     #[serde(default)]
@@ -344,17 +291,6 @@ pub struct Friend {
     pub handle_id: Option<String>,
     #[serde(default)]
     pub address: Option<String>,
-}
-
-/// One Xbox friend of the signed-in account; `xuid` addresses their game invite.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct Person {
-    pub xuid: String,
-    pub gamertag: String,
-    #[serde(default)]
-    pub online: bool,
-    #[serde(default)]
-    pub gamerpic: Artwork,
 }
 
 /// The server's own reason for ending a session; `sequence` grows with every disconnect.
@@ -648,6 +584,7 @@ pub async fn profile(socket_dir: &Path) -> Result<Profile, BridgeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AuthState, ConnectStage};
 
     #[test]
     fn connect_params_match_the_wire_contract() {
