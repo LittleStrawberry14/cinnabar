@@ -546,6 +546,9 @@ pub enum AuthState {
 /// Join progress stage reported by the core.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ConnectStage {
+    /// No join is being prepared.
+    #[serde(rename = "")]
+    Idle,
     /// The Realm lookup.
     #[serde(rename = "realm")]
     Realm,

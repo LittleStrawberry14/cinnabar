@@ -333,6 +333,8 @@ const (
 	AuthSignedIn = "signed_in"
 	// AuthFailed: Sign-in state of the core. Failed.
 	AuthFailed = "failed"
+	// ConnectStageIdle: Join progress stage reported by the core. Idle.
+	ConnectStageIdle = ""
 	// ConnectStageRealm: Join progress stage reported by the core. Realm.
 	ConnectStageRealm = "realm"
 	// ConnectStagePacks: Join progress stage reported by the core. Packs.

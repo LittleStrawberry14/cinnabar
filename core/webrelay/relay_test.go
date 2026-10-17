@@ -201,6 +201,7 @@ func TestControlFramingAndContractConformance(t *testing.T) {
 		controlRequest{Op: bridgecontract.RelayOpSignOut},
 		controlEvent{Type: bridgecontract.RelayEventAccount, Account: &control.AuthV1{State: bridgecontract.AuthAwaitingCode, VerificationURI: "https://example.test/verify", UserCode: "TEST-CODE"}},
 		controlEvent{Type: bridgecontract.RelayEventConnect, Connect: &proxy.ConnectProgress{Stage: proxy.ConnectStagePacks, PacksDone: 1, PacksTotal: 2, ReceivedBytes: 3, TotalBytes: 4}},
+		controlEvent{Type: bridgecontract.RelayEventConnect, Connect: &proxy.ConnectProgress{}},
 		controlEvent{Type: bridgecontract.RelayEventError, Error: bridgecontract.RelayRefusalResume},
 		controlEvent{Type: bridgecontract.RelayEventError, Error: bridgecontract.RelayRefusalAdmission},
 		controlEvent{Type: bridgecontract.RelayEventError, Error: bridgecontract.RelayRefusalSessionBusy},
