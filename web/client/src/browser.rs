@@ -3,7 +3,11 @@ use crate::relay::{self, AccountCommand, Host, Intent, Refresh};
 use assets::carriers::startup::delivery::{DeliveryManifest, MemoryCarriers, startup_carriers};
 use futures::channel::{mpsc, oneshot};
 use js_sys::Function;
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_transport::{CloseReason, browser::BrowserTransport, session::AccountOperation};
@@ -19,6 +23,7 @@ fn now() -> Duration {
 struct BrowserHost {
     origin: String,
     observe: Function,
+    account: Rc<RefCell<crate::launcher::RelayAccount>>,
 }
 impl Host for BrowserHost {
     type Transport = BrowserTransport;
@@ -40,6 +45,9 @@ impl Host for BrowserHost {
     fn observe(&self, value: serde_json::Value) {
         emit(&self.observe, value);
     }
+    fn account(&self) -> &RefCell<crate::launcher::RelayAccount> {
+        &self.account
+    }
 }
 
 /// Owns bounded account commands; dropping the page cancels its controller.
@@ -49,6 +57,7 @@ pub struct Page {
     lifecycle: mpsc::Sender<()>,
     suspended: Rc<Cell<bool>>,
     intent: Rc<Intent>,
+    account: Rc<RefCell<crate::launcher::RelayAccount>>,
     _cancel: oneshot::Sender<()>,
 }
 
@@ -62,10 +71,12 @@ impl Page {
         let suspended = Rc::new(Cell::new(false));
         let intent = Rc::new(Intent::default());
         let (cancel, cancelled) = oneshot::channel();
+        let account = Rc::new(RefCell::new(crate::launcher::RelayAccount::default()));
         spawn_local(relay::run(
             BrowserHost {
                 origin: origin.to_owned(),
                 observe,
+                account: Rc::clone(&account),
             },
             pending,
             changed,
@@ -78,6 +89,7 @@ impl Page {
             lifecycle,
             suspended,
             intent,
+            account,
             _cancel: cancel,
         })
     }
@@ -88,16 +100,22 @@ impl Page {
     }
     /// Starts an explicitly fresh account session after resume was refused or expired.
     pub fn fresh_session(&mut self) {
+        self.account.borrow_mut().fresh_session();
         self.intent.request(Refresh::Fresh);
         let _ = self.lifecycle.try_send(());
     }
     /// Coalesces sign-in intent in the shared controller after bounded command admission.
     pub fn sign_in(&mut self) -> Result<(), JsError> {
-        self.command(AccountOperation::SignIn)
+        self.account_intent(::launcher::menu::auth::AccountIntent::SignIn)
     }
     /// Signs out through the same relay control channel.
     pub fn sign_out(&mut self) -> Result<(), JsError> {
-        self.command(AccountOperation::SignOut)
+        self.account_intent(::launcher::menu::auth::AccountIntent::SignOut)
+    }
+
+    /// Cancels pending sign-in even if its device code has not arrived yet.
+    pub fn cancel_sign_in(&mut self) -> Result<(), JsError> {
+        self.account_intent(::launcher::menu::auth::AccountIntent::Cancel)
     }
 
     /// Retains resume capability while cached navigation closes the live relay transport.
@@ -111,6 +129,37 @@ impl Page {
     }
 }
 impl Page {
+    /// Admits a menu intent before updating presentation; full queues remain visible failures.
+    pub fn account_intent(
+        &mut self,
+        intent: ::launcher::menu::auth::AccountIntent,
+    ) -> Result<(), JsError> {
+        let mut next = self.account.borrow().clone();
+        next.request(intent);
+        if let Some(operation) = next.take_operation() {
+            self.command(operation)?;
+        }
+        *self.account.borrow_mut() = next;
+        Ok(())
+    }
+
+    /// Supplies plain account data to the game host without putting JS handles in resources.
+    pub fn menu_account(
+        &self,
+    ) -> (
+        ::launcher::menu::auth::AuthState,
+        ::launcher::menu::view::MenuProfile,
+        Option<::launcher::menu::view::JoinStage>,
+    ) {
+        let account = self.account.borrow();
+        (account.state(), account.profile(), account.join_stage())
+    }
+
+    /// Reports operation failures without changing a confirmed signed-in identity.
+    pub fn menu_account_error(&self) -> Option<String> {
+        self.account.borrow().operation_error().map(str::to_owned)
+    }
+
     /// Refuses additional UI actions while the controller's command slot is full.
     fn command(&mut self, operation: AccountOperation) -> Result<(), JsError> {
         self.commands
@@ -175,6 +224,20 @@ fn error(error: assets::carriers::startup::delivery::DeliveryError) -> JsError {
 #[wasm_bindgen]
 pub fn manifest_limit() -> usize {
     assets::carriers::startup::delivery::MAX_DELIVERY_MANIFEST_BYTES
+}
+
+/// Supplies the storage ceiling from the same owner that validates the document.
+#[wasm_bindgen]
+pub fn preference_limit() -> usize {
+    crate::launcher::preferences::MAX_PREFERENCE_BYTES
+}
+
+/// Returns a canonical validated preference document for the browser storage edge.
+#[wasm_bindgen]
+pub fn validate_preferences(json: &str) -> Result<String, JsError> {
+    crate::launcher::preferences::Preferences::decode(json)
+        .and_then(|preferences| preferences.encode())
+        .map_err(JsError::new)
 }
 
 impl Carriers {

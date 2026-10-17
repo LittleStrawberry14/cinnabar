@@ -1,9 +1,15 @@
 //! The page's single relay driver. Host observations own clocks, timers and presentation.
+use crate::launcher::RelayAccount;
 use futures::{
     FutureExt, StreamExt,
     channel::{mpsc, oneshot},
 };
-use std::{cell::Cell, future::Future, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    future::Future,
+    rc::Rc,
+    time::Duration,
+};
 use web_transport::{
     CloseReason, RelayTransport,
     control::connection_refusal_message,
@@ -72,6 +78,8 @@ pub(crate) trait Host {
     fn transports(&self) -> Result<(Option<Self::Transport>, Self::Transport), CloseReason>;
     /// Emits only typed, sanitized page observations.
     fn observe(&self, event: serde_json::Value);
+    /// Shares the menu's account presentation with the retained session driver.
+    fn account(&self) -> &RefCell<RelayAccount>;
 }
 
 /// Runs selection, backoff and account control on one retained session until disposal.
@@ -113,7 +121,9 @@ pub(crate) async fn run<H: Host>(
                     return Ok(());
                 }
                 if ready {
-                    match session.next_event(|| host.now()).await? {
+                    let event = session.next_event(|| host.now()).await?;
+                    host.account().borrow_mut().observe(&event);
+                    match event {
                         ControlEvent::Account(account) => host.observe(
                             serde_json::json!({"state": account.state, "account": account}),
                         ),
@@ -121,16 +131,15 @@ pub(crate) async fn run<H: Host>(
                             host.observe(serde_json::json!({"connect": connect}))
                         }
                         ControlEvent::RequestRefused(refusal) => {
-                            let (code, message) = match refusal {
-                                RequestRefusal::RetrySignIn => (
-                                    bridge::contract::RefusalCode::AdmissionRefused,
-                                    "The relay cannot accept sign-in right now. Use Sign in to retry.",
-                                ),
-                                RequestRefusal::Refused(code) => {
-                                    (code, "The relay refused this request.")
+                            let code = match refusal {
+                                RequestRefusal::RetrySignIn => {
+                                    bridge::contract::RefusalCode::AdmissionRefused
                                 }
+                                RequestRefusal::Refused(code) => code,
                             };
-                            host.observe(serde_json::json!({"code": code, "error": message}));
+                            host.observe(
+                                serde_json::json!({"code": code, "error": refusal.message()}),
+                            );
                         }
                         ControlEvent::Keepalive => {}
                     }
@@ -153,6 +162,13 @@ pub(crate) async fn run<H: Host>(
                         || host.jitter(),
                     )
                     .await?;
+                    if !session.resumed_account() {
+                        let mut account = host.account().borrow_mut();
+                        account.fresh_session();
+                        if let Some(operation) = session.pending_account() {
+                            account.restore_operation(operation);
+                        }
+                    }
                     host.observe(serde_json::json!({"state": "connected"}));
                 }
                 Ok(())
@@ -196,8 +212,10 @@ pub(crate) async fn run<H: Host>(
                 if generation != intent.generation.get() {
                     generation = intent.generation.get();
                     session.fresh_session();
+                    host.account().borrow_mut().fresh_session();
                     halted = false;
                 } else {
+                    host.account().borrow_mut().disconnected();
                     match refresh {
                         Refresh::Reconnect => {
                             session.restart_retries();
@@ -212,6 +230,7 @@ pub(crate) async fn run<H: Host>(
             Action::Step(Err(CloseReason::RetryAt(_))) => {}
             Action::Step(Err(reason)) => {
                 session.close(reason);
+                host.account().borrow_mut().disconnected();
                 if let Some(code) = session.refusal() {
                     host.observe(serde_json::json!({"state": "refused", "code": code, "error": connection_refusal_message(code)}));
                 } else if session.next_retry() == Err(CloseReason::RetryExhausted) {
@@ -229,10 +248,14 @@ pub(crate) async fn run<H: Host>(
             if let Some(command) = latest {
                 halted = command.operation == AccountOperation::SignOut;
                 session.desire_account(command.operation);
+                host.account()
+                    .borrow_mut()
+                    .restore_operation(command.operation);
             }
         }
     }
     session.close(CloseReason::Cancelled);
+    host.account().borrow_mut().disconnected();
 }
 
 #[cfg(test)]

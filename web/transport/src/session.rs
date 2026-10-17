@@ -42,6 +42,16 @@ pub enum RequestRefusal {
     RetrySignIn,
     Refused(RefusalCode),
 }
+impl RequestRefusal {
+    /// Describes the available request recovery without exposing provider errors.
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::RetrySignIn => "The relay cannot accept sign-in right now. Use Sign in to retry.",
+            Self::Refused(RefusalCode::SessionBusy) => "Leave the server before signing in or out.",
+            Self::Refused(_) => "The relay refused this request.",
+        }
+    }
+}
 /// Control observations forwarded to the host's account and progress plumbing.
 #[derive(Debug, PartialEq)]
 pub enum ControlEvent {
@@ -58,6 +68,7 @@ pub struct Session<T: RelayTransport> {
     state: State,
     bearers: [Option<(String, Duration)>; 2],
     desired: Option<AccountOperation>,
+    resumed_account: bool,
     attempts: u32,
     retry_at: Duration,
     refusal: Option<RefusalCode>,
@@ -72,6 +83,7 @@ impl<T: RelayTransport> Session<T> {
             state: State::Offline,
             bearers: [None, None],
             desired: None,
+            resumed_account: false,
             attempts: 0,
             retry_at: Duration::ZERO,
             refusal: None,
@@ -188,6 +200,7 @@ impl<T: RelayTransport> Session<T> {
         };
         self.apply_capability(&welcome, now())?;
         self.state = State::Ready(welcome.generation);
+        self.resumed_account = !resume.is_empty();
         self.control = Some(control);
         self.attempts = 0;
         Ok(())
@@ -201,6 +214,14 @@ impl<T: RelayTransport> Session<T> {
         self.desired.is_some()
     }
 
+    /// Whether the last successful control Hello resumed an existing relay account.
+    pub fn resumed_account(&self) -> bool {
+        self.resumed_account
+    }
+    /// The coalesced account operation still retained for the next flush.
+    pub fn pending_account(&self) -> Option<AccountOperation> {
+        self.desired
+    }
     /// Flushes one coalesced account request; failure leaves its intent available for reconnect.
     pub async fn flush_account(&mut self) -> Result<(), CloseReason> {
         if let Some(operation) = self.desired {

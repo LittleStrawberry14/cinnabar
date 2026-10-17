@@ -13,6 +13,7 @@ use web_transport::Channel;
 
 #[derive(Default)]
 struct Observations {
+    account: RefCell<RelayAccount>,
     now: Cell<Duration>,
     opens: Cell<usize>,
     closes: Cell<usize>,
@@ -158,6 +159,9 @@ impl Host for FakeHost {
     fn observe(&self, event: Value) {
         self.0.events.borrow_mut().push(event);
     }
+    fn account(&self) -> &RefCell<RelayAccount> {
+        &self.0.account
+    }
 }
 
 /// Reads complete client Hello frames so reconnect assertions cover the real wire output.
@@ -171,6 +175,155 @@ fn requests(host: &Observations) -> Vec<Value> {
         bytes = &bytes[4 + len..];
     }
     requests
+}
+
+/// Delivers one relay event through the production framing and typed decoder.
+fn deliver(host: &Observations, event: Value) {
+    let frame = serde_json::to_vec(&event).unwrap();
+    host.incoming
+        .borrow_mut()
+        .extend((frame.len() as u32).to_be_bytes());
+    host.incoming.borrow_mut().extend(frame);
+}
+
+#[test]
+fn menu_tracks_typed_events_across_suspend_and_resume() {
+    use ::launcher::menu::auth::AuthState;
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    host.hold_welcome.set(true);
+    let (mut commands, pending) = mpsc::channel(4);
+    let (mut lifecycle, changed) = mpsc::channel(1);
+    let refresh = Rc::new(Intent::default());
+    let paused = Rc::new(Cell::new(false));
+    let (cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        changed,
+        Rc::clone(&paused),
+        Rc::clone(&refresh),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    commands
+        .try_send(refresh.account(AccountOperation::SignIn))
+        .unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    host.hold_welcome.set(false);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.account.borrow().state(), AuthState::Checking);
+    deliver(
+        &host,
+        json!({"type":"account", "account":{"state":"awaiting_code", "verification_uri":"https://example.invalid/device", "user_code":"TEST-CODE"}}),
+    );
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(
+        host.account.borrow().state(),
+        AuthState::AwaitingCode { .. }
+    ));
+    deliver(&host, json!({"type":"error", "error":"admission_refused"}));
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(
+        host.account
+            .borrow()
+            .operation_error()
+            .unwrap()
+            .contains("Use Sign in to retry")
+    );
+    commands
+        .try_send(refresh.account(AccountOperation::SignIn))
+        .unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(host.account.borrow().operation_error().is_none());
+    deliver(
+        &host,
+        json!({"type":"connect", "connect":{"stage":"packs", "packs_done":1, "packs_total":2}}),
+    );
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(host.account.borrow().join_stage().is_some());
+    deliver(&host, json!({"type":"connect", "connect":{"stage":""}}));
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(host.account.borrow().join_stage().is_none());
+    deliver(
+        &host,
+        json!({"type":"account", "account":{"state":"signed_in", "gamertag":"Fixture"}}),
+    );
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.account.borrow().state(), AuthState::Authenticated);
+    paused.set(true);
+    lifecycle.try_send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(host.account.borrow().profile().gamertag.is_empty());
+    host.now.set(Duration::from_secs(2));
+    paused.set(false);
+    lifecycle.try_send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(requests(&host).last().unwrap()["resume"], "retained");
+    deliver(
+        &host,
+        json!({"type":"account", "account":{"state":"signed_in", "gamertag":"Fixture"}}),
+    );
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.account.borrow().state(), AuthState::Authenticated);
+    cancel.send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_ready());
+    assert!(host.account.borrow().profile().gamertag.is_empty());
+}
+
+#[test]
+fn menu_fresh_session_restores_only_the_current_generation_command() {
+    use ::launcher::menu::auth::AuthState;
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    let (mut commands, pending) = mpsc::channel(4);
+    let (mut lifecycle, changed) = mpsc::channel(1);
+    let refresh = Rc::new(Intent::default());
+    let (cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::clone(&refresh),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    commands
+        .try_send(refresh.account(AccountOperation::SignIn))
+        .unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    host.hold_writes.set(true);
+    commands
+        .try_send(refresh.account(AccountOperation::SignOut))
+        .unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    commands
+        .try_send(refresh.account(AccountOperation::SignOut))
+        .unwrap();
+    refresh.request(Refresh::Fresh);
+    commands
+        .try_send(refresh.account(AccountOperation::SignIn))
+        .unwrap();
+    lifecycle.try_send(()).unwrap();
+    host.hold_writes.set(false);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let written = requests(&host);
+    assert_eq!(written.len(), 4);
+    assert!(written[2].get("resume").is_none());
+    assert_eq!(written[3]["op"], "sign_in");
+    assert_eq!(host.account.borrow().state(), AuthState::Checking);
+    host.account
+        .borrow_mut()
+        .request(::launcher::menu::auth::AccountIntent::Cancel);
+    assert_eq!(
+        host.account.borrow_mut().take_operation(),
+        Some(AccountOperation::SignOut)
+    );
+    cancel.send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_ready());
 }
 
 #[test]
