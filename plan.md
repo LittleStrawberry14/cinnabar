@@ -10017,6 +10017,6 @@ written but unrun; this does not close a renderer parity or frame-budget gate.
 ### Retained mod drawing
 
 Drawing permissions and connection fences cover legacy post effects, block highlights and
-unfiltered world observations. The retained drawing ABI is versioned separately. Geometry,
-renderer integration and entity anchors are incomplete; no rendering parity or performance
+unfiltered world observations. The retained drawing ABI is versioned separately. Retained indexed meshes, polylines, shared instances and callback groups are admitted
+transactionally with per-owner quotas. Renderer integration and entity anchors are incomplete; no rendering parity or performance
 gate is closed by these contracts.

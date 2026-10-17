@@ -34,6 +34,8 @@ mod block_highlights;
 mod camera;
 #[path = "controls.rs"]
 mod controls;
+#[path = "drawing.rs"]
+mod drawing;
 mod exports;
 #[path = "gameplay.rs"]
 mod gameplay;
