@@ -394,6 +394,45 @@ fn explicit_reconnect_retains_the_current_controller() {
 }
 
 #[test]
+fn fresh_session_discards_account_intent_queued_during_setup() {
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    host.hold_welcome.set(true);
+    let (mut commands, pending) = mpsc::channel(4);
+    let (mut lifecycle, changed) = mpsc::channel(1);
+    let refresh = Rc::new(Cell::new(Refresh::None));
+    let (cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::clone(&refresh),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    commands.try_send(AccountOperation::SignOut).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    refresh.set(Refresh::Fresh);
+    lifecycle.try_send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.opens.get(), 2);
+    assert_eq!(host.closes.get(), 1);
+    host.hold_welcome.set(false);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let written = requests(&host);
+    assert_eq!(written.len(), 2);
+    assert!(
+        written
+            .iter()
+            .all(|request| request.get("resume").is_none())
+    );
+    cancel.send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_ready());
+}
+
+#[test]
 fn sign_out_queued_before_opening_is_sent_before_retries_stop() {
     let host = Rc::new(Observations::default());
     let (mut commands, pending) = mpsc::channel(4);

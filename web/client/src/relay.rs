@@ -146,6 +146,7 @@ pub(crate) async fn run<H: Host>(
                 match refresh.replace(Refresh::None) {
                     Refresh::Fresh => {
                         session.fresh_session();
+                        queued_account = None;
                         halted = false;
                     }
                     Refresh::Reconnect => {
