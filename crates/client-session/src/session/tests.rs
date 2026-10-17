@@ -529,7 +529,7 @@ fn final_cache_telemetry_flush_uses_the_host_deadline_when_control_queue_stays_f
         })
         .unwrap();
     let timers = bridge::tasks::Timers(|duration| {
-        assert_eq!(duration, FINAL_CONTROL_FLUSH_TIMEOUT);
+        assert_eq!(duration, super::FINAL_CONTROL_FLUSH_TIMEOUT);
         Box::pin(std::future::ready(()))
     });
     let mut delivered = std::pin::pin!(send_final_blob_cache_telemetry(&session, &events, timers));
