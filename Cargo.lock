@@ -2241,6 +2241,7 @@ dependencies = [
  "client-state",
  "client-ui",
  "client-world",
+ "cosmetics",
  "crash-monitor",
  "crash-report",
  "crossbeam-channel",
@@ -2308,6 +2309,7 @@ dependencies = [
  "ui",
  "ui-engine",
  "ui-screens",
+ "update-installer",
  "update-manifest",
  "url",
  "uuid",
@@ -2530,6 +2532,7 @@ dependencies = [
  "chunk-pipeline",
  "client-ui",
  "client-world",
+ "cosmetics",
  "diagnostics",
  "glam",
  "image",
@@ -2627,6 +2630,7 @@ dependencies = [
  "client-state",
  "client-ui",
  "client-world",
+ "cosmetics",
  "crossbeam-channel",
  "developer-control",
  "image",
@@ -2680,6 +2684,7 @@ dependencies = [
  "bridge",
  "chunk-pipeline",
  "client-world",
+ "cosmetics",
  "crossbeam-channel",
  "env-compat",
  "glam",
@@ -2963,6 +2968,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmetics"
+version = "0.1.20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "cpal"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3199,6 +3213,7 @@ dependencies = [
  "tiny-skia",
  "tracing",
  "ui",
+ "update-installer",
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
@@ -4176,6 +4191,7 @@ dependencies = [
  "client-world",
  "env-compat",
  "inventory 0.1.20",
+ "meshing",
  "player-state",
  "protocol",
  "protocol-ids",
@@ -5064,6 +5080,7 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "bridge",
+ "cosmetics",
  "json-ui",
  "render-api",
  "resource-pack",
@@ -5084,6 +5101,7 @@ dependencies = [
  "anyhow",
  "async-io",
  "bridge",
+ "cosmetics",
  "crash-handler",
  "crash-report",
  "crossbeam-channel",
@@ -6504,6 +6522,7 @@ version = "0.1.20"
 dependencies = [
  "assets",
  "bridge",
+ "cosmetics",
  "image",
  "launcher",
  "protocol",
@@ -7495,6 +7514,7 @@ dependencies = [
  "assets",
  "block-transform",
  "bytemuck",
+ "cosmetics",
  "foldhash 0.2.0",
  "glam",
  "hashbrown 0.16.1",
@@ -7503,6 +7523,7 @@ dependencies = [
  "pack-compiler",
  "pack-entity-compiler",
  "render-api",
+ "serde",
  "serde_json",
  "sha2",
  "simulation-clock",
@@ -9004,6 +9025,7 @@ name = "ui-snapshot"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "cosmetics",
  "image",
  "inventory 0.1.20",
  "json-ui",
