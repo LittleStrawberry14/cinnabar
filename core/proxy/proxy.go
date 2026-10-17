@@ -323,18 +323,11 @@ func newUpstreamDialerForAdmission(
 // continues even when the upstream required bit is set.
 func ignoreResourcePack(_ uuid.UUID, _ string, _, _ int) bool { return false }
 
-// resourcePackRequestWindow is how many chunk requests a pack's download may hold
-// outstanding. A pack with more chunks than this window would otherwise defer its
-// overflow to one request per response, so a 123-chunk pack requested through a
-// 100-chunk window tricksles its last 23 chunks one at a time.
-const resourcePackRequestWindow = 1024
-
-// boundedResourcePackDownload keeps every chunk of a pack in flight at once: a pack's
-// chunk count is bounded by the server's own declaration, so the window only has to
-// stay large enough that no pack's requests are serialized behind its data.
+// boundedResourcePackDownload uses the shared request window and replenishes it
+// as chunks arrive, without requesting a large pack's entire tail up front.
 func boundedResourcePackDownload() minecraft.ResourcePackDownloadConfig {
 	return minecraft.ResourcePackDownloadConfig{
-		MaxInFlightChunks: max(resourcePackRequestWindow, minecraft.DefaultResourcePackMaxInFlightChunks),
+		MaxInFlightChunks: minecraft.DefaultResourcePackMaxInFlightChunks,
 	}
 }
 

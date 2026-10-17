@@ -10013,3 +10013,10 @@ Incomplete parity: the installed native cutout material supports this offset,
 but exact-current seasonal material selection remains unverified. Mixed model
 materials are outside this change. The raster and descriptor regressions are
 written but unrun; this does not close a renderer parity or frame-budget gate.
+
+### Keep pack download requests within the shared window
+
+Large pack downloads now retain the protocol owner's bounded request window and
+replenish requests as responses arrive. The initial request batch preserves pack
+identity and increasing chunk indices. Full pack negotiation, cache, cancellation,
+batch and timing parity remain incomplete.
