@@ -115,15 +115,16 @@ func (relay *Relay) allow(client netip.Addr) bool {
 	return relay.allowLocked(client, time.Now())
 }
 
-// openControl creates or resumes an account, rotates its bearer and claims its sole controller.
-func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) (*webSession, func(time.Time), error) {
+// openControl creates or resumes an account and replaces its previous controller.
+// A valid bearer retires the old controller before the new generation becomes available.
+func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) (*sessionController, func(time.Time), error) {
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
 	if relay.ctx.Err() != nil {
 		return nil, nil, net.ErrClosed
 	}
 	session := relay.resumeLocked(token, now)
-	if token != "" && (session == nil || session.controlOpen) {
+	if token != "" && session == nil {
 		return nil, nil, errResume
 	}
 	if session == nil {
@@ -152,9 +153,13 @@ func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) 
 	if err != nil {
 		return nil, nil, err
 	}
-	session.controlOpen = true
-	session.controlCtx, session.controlCancel = context.WithCancel(relay.ctx)
+	if session.controller != nil {
+		session.controller.cancel()
+	}
 	session.generation++
+	ctx, cancel := context.WithCancel(relay.ctx)
+	controller := &sessionController{session: session, ctx: ctx, cancel: cancel, generation: session.generation}
+	session.controller = controller
 	relay.rotateLocked(session, token, now)
 	// A fresh account has no earlier capability to protect. Its first ping may replace
 	// the welcome while retaining it; a resume must first confirm its replacement welcome.
@@ -162,44 +167,56 @@ func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) 
 		session.tokenPending = false
 	}
 	var once sync.Once
-	return session, func(now time.Time) {
+	return controller, func(now time.Time) {
 		once.Do(func() {
 			relay.mu.Lock()
-			session.controlOpen = false
-			session.controlCancel()
+			controller.cancel()
+			if session.controller == controller {
+				session.controller = nil
+			}
 			detach(now)
 			relay.mu.Unlock()
 		})
 	}, nil
 }
 
-// welcome refreshes acknowledged capabilities and repeats outstanding ones at their original expiry.
-func (relay *Relay) welcome(session *webSession, refresh bool, now time.Time) controlEvent {
+// welcome refreshes current capabilities; a retired controller gets no capability to publish.
+func (relay *Relay) welcome(controller *sessionController, refresh bool, now time.Time) (controlEvent, error) {
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
+	session := controller.session
+	if session.controller != controller || controller.ctx.Err() != nil {
+		return controlEvent{}, net.ErrClosed
+	}
 	if refresh && !session.tokenPending {
 		relay.rotateLocked(session, session.token, now)
 	}
 	expires := relay.tokens[session.token].expires.Sub(now)
 	return controlEvent{Type: bridgecontract.RelayEventWelcome, Version: bridgecontract.RelayVersion,
-		Resume: session.token, Generation: session.generation, ExpiresSeconds: max(0, int((expires+time.Second-1)/time.Second))}
+		Resume: session.token, Generation: controller.generation, ExpiresSeconds: max(0, int((expires+time.Second-1)/time.Second))}, nil
 }
 
 // playSession checks a fallback bearer or the authenticated QUIC account and its generation.
-func (relay *Relay) playSession(bound *webSession, hello hello, now time.Time) (*webSession, context.Context, error) {
+func (relay *Relay) playSession(bound *sessionController, hello hello, now time.Time) (*webSession, context.Context, error) {
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
-	session := bound
-	if session == nil {
+	var session *webSession
+	if bound == nil {
 		session = relay.resumeLocked(hello.Resume, now)
 		if session == nil {
 			return nil, nil, errResume
 		}
+	} else {
+		session = bound.session
+		if session.controller != bound {
+			return nil, nil, errResume
+		}
 	}
-	if !session.controlOpen || hello.Generation != session.generation {
+	controller := session.controller
+	if controller == nil || controller.ctx.Err() != nil || hello.Generation != controller.generation {
 		return nil, nil, errResume
 	}
-	return session, session.controlCtx, nil
+	return session, controller.ctx, nil
 }
 
 // expire forgets detached accounts and old address limiters using caller time.

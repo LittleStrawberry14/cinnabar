@@ -41,9 +41,7 @@ type webSession struct {
 	previousToken string
 	tokenPending  bool
 	generation    uint64
-	controlOpen   bool
-	controlCtx    context.Context
-	controlCancel context.CancelFunc
+	controller    *sessionController
 	client        netip.Addr
 	relay         *Relay
 
@@ -63,6 +61,15 @@ type webSession struct {
 	// connect is the join's latest progress; connectChanged closes when it changes.
 	connect        proxy.ConnectProgress
 	connectChanged chan struct{}
+}
+
+// sessionController owns one immutable control generation and cancels all of its channels.
+// Relay.mu protects which controller is current; retiring one never changes its replacement.
+type sessionController struct {
+	session    *webSession
+	ctx        context.Context
+	cancel     context.CancelFunc
+	generation uint64
 }
 
 // newWebSession prepares one signed-out account without persistent storage.

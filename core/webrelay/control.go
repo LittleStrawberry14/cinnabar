@@ -114,9 +114,15 @@ func readHello(conn net.Conn, channel string) (hello, error) {
 }
 
 // runControl coalesces account/progress changes and bounds queued errors and silent peers.
-func (relay *Relay) runControl(ctx context.Context, conn net.Conn, client netip.Addr, session *webSession) {
-	ctx, cancel := context.WithCancel(ctx)
+func (relay *Relay) runControl(transportCtx context.Context, conn net.Conn, client netip.Addr, controller *sessionController) {
+	ctx, cancel := context.WithCancel(controller.ctx)
 	defer cancel()
+	stopTransport := context.AfterFunc(transportCtx, cancel)
+	defer stopTransport()
+	if transportCtx.Err() != nil || ctx.Err() != nil {
+		return
+	}
+	session := controller.session
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 	defer stop()
 	events := make(chan controlEvent, 4)
@@ -138,16 +144,10 @@ func (relay *Relay) runControl(ctx context.Context, conn net.Conn, client netip.
 			}
 			var err error
 			switch request.Op {
-			case bridgecontract.RelayOpSignIn:
-				if !relay.allow(client) {
-					err = errAdmission
-				} else {
-					err = session.SignIn()
-				}
-			case bridgecontract.RelayOpSignOut:
-				err = session.SignOut()
+			case bridgecontract.RelayOpSignIn, bridgecontract.RelayOpSignOut:
+				err = relay.applyAccount(controller, client, request.Op, time.Now())
 			case bridgecontract.RelayOpPong:
-				if relay.acknowledge(session, request.Resume, time.Now()) &&
+				if relay.acknowledge(controller, request.Resume, time.Now()) &&
 					conn.SetReadDeadline(time.Now().Add(2*keepAliveInterval)) != nil {
 					return
 				}
@@ -165,7 +165,8 @@ func (relay *Relay) runControl(ctx context.Context, conn net.Conn, client netip.
 		}
 	}()
 	defer func() { cancel(); _ = conn.SetDeadline(time.Now()); <-readerDone }()
-	if writeJSON(ctx, conn, relay.welcome(session, false, time.Now())) != nil {
+	welcome, err := relay.welcome(controller, false, time.Now())
+	if err != nil || writeJSON(ctx, conn, welcome) != nil {
 		return
 	}
 	state, changed := session.Auth()
@@ -197,7 +198,11 @@ func (relay *Relay) runControl(ctx context.Context, conn net.Conn, client netip.
 			event = controlEvent{Type: bridgecontract.RelayEventConnect, Connect: &progress}
 		case event = <-events:
 		case <-keepAlive.C:
-			event = relay.welcome(session, true, time.Now())
+			var err error
+			event, err = relay.welcome(controller, true, time.Now())
+			if err != nil {
+				return
+			}
 			event.Type = bridgecontract.RelayEventPing
 		}
 		if writeJSON(ctx, conn, event) != nil {
@@ -206,8 +211,24 @@ func (relay *Relay) runControl(ctx context.Context, conn net.Conn, client netip.
 	}
 }
 
+// applyAccount orders account commands with controller takeover so retired readers cannot mutate it.
+func (relay *Relay) applyAccount(controller *sessionController, client netip.Addr, op string, now time.Time) error {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	if controller.session.controller != controller || controller.ctx.Err() != nil {
+		return net.ErrClosed
+	}
+	if op == bridgecontract.RelayOpSignIn {
+		if !relay.allowLocked(client, now) {
+			return errAdmission
+		}
+		return controller.session.SignIn()
+	}
+	return controller.session.SignOut()
+}
+
 // runPlay claims one generation and preserves the core's reliable bridge byte stream.
-func (relay *Relay) runPlay(ctx context.Context, conn net.Conn, client netip.Addr, bound *webSession, request hello) {
+func (relay *Relay) runPlay(ctx context.Context, conn net.Conn, client netip.Addr, bound *sessionController, request hello) {
 	defer conn.Close()
 	session, controlCtx, err := relay.playSession(bound, request, time.Now())
 	if err != nil || !relay.allow(client) {

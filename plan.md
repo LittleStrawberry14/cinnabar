@@ -225,6 +225,8 @@ on suspension or disposal. Explicit retries retain the account after admission o
 refusals; expired or refused resume requires a new session. Typed control payloads share
 Go/Rust wire fixtures, including idle join progress. Play opening has a host deadline;
 finishing a join retires control so the next login obtains a new generation.
+A valid resume replaces the prior relay controller and cancels its channels even during
+transport teardown. New play waits for the old handler to finish while retaining the account.
 
 The browser entry preview supplies relay account controls, a browser deadline and verified memory carriers.
 Memory startup requires the same bounded item-glint artwork as native startup. Cached
