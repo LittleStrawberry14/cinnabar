@@ -43,6 +43,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+web-time.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 bedrock-protocol-1-26-51 = { path = "vendor/bedrock-protocol-1-26-51" }

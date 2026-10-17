@@ -10,10 +10,10 @@ mod session;
 #[cfg(any(test, feature = "test-support"))]
 pub use session::handle_state::CapturedPackets;
 pub use session::{
-    BatchSendError, CONTROL_EVENT_CAPACITY, NetworkConfig, NetworkControlEvent, NetworkExecutor,
+    BatchSendError, CONTROL_EVENT_CAPACITY, NetworkControlEvent, NetworkExecutor,
     NetworkFailureOrigin, NetworkHandle, PacketSendError, PreparedLogin, PreparedSession,
     SequencedWorldEvent, SessionRead, SessionTransferTarget, WORLD_EVENT_CAPACITY, WorldIngress,
-    packet_log, prepare_network, session_failure_display,
+    prepare_network, session_failure_display,
 };
 
 /// Optional observations at the original transport publication boundaries.
@@ -45,4 +45,4 @@ impl Default for SessionTrace {
 static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use session::spawn_network;
+pub use session::{NetworkConfig, packet_log, spawn_network};

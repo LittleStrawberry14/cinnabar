@@ -339,8 +339,8 @@ async fn publish_receipt<P, W: FnMut(&str)>(
     if let Some(marker) = receipt.chat.and_then(|chat| {
         let marker_name = fast_transfer_action_marker?;
         chat.fast_transfer_action.map(|action| {
-            let sent_unix_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            let sent_unix_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
                 .unwrap_or(0);
             action.marker(marker_name, chat.session, chat.sequence, sent_unix_ms)

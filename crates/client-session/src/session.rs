@@ -2,20 +2,19 @@ use protocol::identity::FifoSequence;
 use simulation_clock::identity::{PositionAuthorityGeneration, SessionGeneration};
 use std::{
     io::Write,
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 use bytes::Bytes;
 use protocol::{
-    BlobCacheStats, ClientBlobCache, CustomBlocks, InventoryEvent, ItemRegistryEvent, Packet,
-    PacketIdTraceSnapshot, PlayerGameMode, ServerDisconnectEvent, WorldBootstrap,
-    WorldEnvironmentBootstrap, WorldEvent,
+    BlobCacheStats, CustomBlocks, InventoryEvent, ItemRegistryEvent, Packet, PacketIdTraceSnapshot,
+    PlayerGameMode, ServerDisconnectEvent, WorldBootstrap, WorldEnvironmentBootstrap, WorldEvent,
 };
 use tokio::sync::{mpsc, watch};
 use world::ChunkKey;
@@ -31,15 +30,16 @@ const COMMAND_CAPACITY: usize = 64;
 const FINAL_CONTROL_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 const NETWORK_PUMP_TERMINAL_MARKER: &str = "CINNABAR_NETWORK_PUMP_TERMINAL";
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
     pub session_generation: SessionGeneration,
-    pub socket_dir: PathBuf,
+    pub socket_dir: std::path::PathBuf,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
     /// Verified blobs outlive a Play session; each login creates a fresh resolver around this cache.
-    pub client_blob_cache: ClientBlobCache,
+    pub client_blob_cache: protocol::ClientBlobCache,
     /// The client's own skin, uploaded in the ClientData login payload.
     pub player_skin: protocol::ClientSkin,
     /// The player's language, input mode and GUI scale, reported at login.
@@ -927,6 +927,7 @@ mod frame_flush;
 pub(crate) mod handle_state;
 mod latency_reply;
 mod outbound;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod packet_log;
 use bootstrap::{send_startup_failure, start_game_inventory_authority, start_game_item_registry};
 use outbound::*;
