@@ -195,7 +195,6 @@ pub(super) fn install(
     }
     crate::block_entities::configure(app, font);
     crate::block_selection::configure(app);
-    crate::primitive_shapes::configure(app);
     crate::particles::configure_particles(app);
     Ok(host)
 }

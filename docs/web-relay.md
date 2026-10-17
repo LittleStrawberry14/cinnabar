@@ -77,10 +77,13 @@ Build the wasm entry with `cargo build -p web-client --lib --target wasm32-unkno
 then run `wasm-bindgen --target web --out-dir web/site/pkg target/wasm32-unknown-unknown/debug/web_client.wasm`.
 Generate the delivery index with `cargo run -p web-client --bin manifest -- .local/assets/compiled > .local/assets/compiled/manifest.json`.
 Serve `web/site` and the compiled asset directory through an HTTPS static server; allow the page origin through CORS for assets and the relay.
-Open the page, connect the relay, sign in, enter an HTTPS asset directory, then choose **Verify assets**.
-The preview supports relay account controls and validates the required startup carriers in memory.
-Gameplay startup, server joining, sound-bank range downloads and playback still need client composition.
-There is no persistent pack import or Dressing Room.
+Enter an HTTPS asset directory and choose **Start client**. Startup validates the required
+carriers and opens the shared game renderer on the canvas. Connect the relay, sign in if the
+server requires an account, enter a server address, and choose **Join server**. Click the
+canvas for gameplay input; Escape releases the mouse. **Disconnect** retires the active
+world, and server transfers start a fresh play session through the same relay controls.
+The preview has a gameplay HUD. Interactive inventory, chat and form controls, sound-bank
+downloads and playback, persistent pack import, and the Dressing Room remain incomplete.
 
 The menu integration exposes relay sign-in, cancellation, sign-out and join progress to
 the game's existing screens. Addressed servers get the default Bedrock port when omitted;
@@ -88,8 +91,8 @@ Realms, friends' worlds and featured experiences are unavailable in browsers. It
 preference document stores at most 32 addressed servers and the GUI scale modifier, with
 a 32 KiB limit and visible read/write failures. It stores no account credentials. The
 click and keyboard link bridge validates HTTPS links and owns its listener teardown.
-These adapters still require the playable browser host; the current preview does not yet
-render the game's menu or persist those menu preferences.
+Wiring these adapters into the canvas remains incomplete; the preview does not yet render
+the game's menu or persist those menu preferences.
 
 Back/forward-cache navigation suspends input and audio while retaining the page's wasm
 objects and canvas listeners. Returning reopens relay control with any unexpired resume

@@ -232,6 +232,8 @@ one relay play lease through the existing login and packet pump. Disconnect reti
 authority; bounded server transfers open fresh play generations. Canvas input enters the same
 semantic router. Native pacing, processes, signing, disk caches and menu services remain native.
 Renderer, geometry, UI preparation and retired snapshots use bounded browser job slots.
+Pending cloud windows yield until their exact geometry is ready. WebGPU reports allocation
+errors asynchronously; recoverable browser GPU exhaustion remains incomplete.
 
 Incomplete: interactive inventory/chat/forms controls, sound-bank range fetching and audio
 playback remain pending. The shared audio bank has bounded host-driven decode admission and
