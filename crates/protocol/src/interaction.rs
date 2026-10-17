@@ -65,14 +65,14 @@ pub struct BlockUseRequest {
     pub block_runtime_id: u64,
 }
 
-/// The two public protocol-2168 item-use-on-actor actions supported by this builder.
+/// The two public Bedrock item-use-on-actor actions supported by this builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActorUseAction {
     Attack,
     Interact,
 }
 
-/// Authoritative wire inputs for one protocol-2168 item-use-on-actor transaction.
+/// Authoritative wire inputs for one Bedrock item-use-on-actor transaction.
 ///
 /// Actor selection, reach, hit testing, abilities, and selected-item authority belong to the
 /// caller. This protocol layer only validates and encodes supplied state.
@@ -102,7 +102,7 @@ pub enum BlockUsePacketError {
     NonFiniteRelativeHit,
     #[error("relative hit position must be within the unit block for destruction")]
     RelativeHitOutOfRange,
-    #[error("block runtime ID {0} exceeds protocol-2168's uint32 wire range")]
+    #[error("block runtime ID {0} exceeds the uint32 wire range")]
     BlockRuntimeIdOutOfRange(u64),
     #[error(transparent)]
     InvalidSelectedItem(#[from] InventoryPacketError),
@@ -122,7 +122,7 @@ pub enum ActorUsePacketError {
     InvalidSelectedItem(#[from] InventoryPacketError),
 }
 
-/// Builds a protocol-2168 player-input click-block transaction.
+/// Builds a Bedrock player-input click-block transaction.
 ///
 /// The packet carries no legacy slot records and no inventory actions. The required transaction
 /// and action presence markers are set, prediction is `Failure`, and cooldown is `Off`, matching
@@ -176,7 +176,7 @@ pub fn click_block_transaction_packet(
     }))
 }
 
-/// Builds a protocol-2168 destroy-block transaction.
+/// Builds a Bedrock destroy-block transaction.
 ///
 /// The packet carries no legacy slot records and no inventory actions. Its wire action is the
 /// public break-block semantic (discriminant 2), prediction is `Failure`, and cooldown is `Off`.
@@ -500,7 +500,7 @@ pub fn release_item_packet(request: HeldItemRequest) -> Result<crate::Packet, Bl
     }))
 }
 
-/// Builds a protocol-2168 attack or interact transaction for an already-selected actor.
+/// Builds a Bedrock attack or interact transaction for an already-selected actor.
 ///
 /// The packet carries a zero legacy request ID, no legacy slots, and no inventory actions. Both
 /// required presence markers are set. Runtime IDs preserve the complete public `u64` varlong wire
