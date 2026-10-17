@@ -4,6 +4,9 @@ use gameplay::movement::MovementEffectSource;
 use protocol_ids::ActorDataKey;
 use {super::*, client_presentation::actor_publication::ActorFramePartialTick};
 
+#[path = "pick_positions/paused_motion.rs"]
+mod paused_motion;
+
 #[derive(Resource, Default)]
 struct Picked(Option<u64>);
 
