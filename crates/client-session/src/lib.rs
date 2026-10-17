@@ -3,6 +3,7 @@
 //! Control and world channels retain separate bounded FIFOs. Prepared presentation data is
 //! an opaque generic payload: the session publishes it only at the original bootstrap point.
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod connection;
 pub mod markers;
 mod session;
