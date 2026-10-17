@@ -213,18 +213,23 @@ func (relay *Relay) runControl(transportCtx context.Context, conn net.Conn, clie
 
 // applyAccount orders account commands with controller takeover so retired readers cannot mutate it.
 func (relay *Relay) applyAccount(controller *sessionController, client netip.Addr, op string, now time.Time) error {
+	session := controller.session
+	session.commands.Lock()
+	defer session.commands.Unlock()
 	relay.mu.Lock()
-	defer relay.mu.Unlock()
-	if controller.session.controller != controller || controller.ctx.Err() != nil {
+	current := session.controller == controller && controller.ctx.Err() == nil
+	allowed := current && (op != bridgecontract.RelayOpSignIn || relay.allowLocked(client, now))
+	relay.mu.Unlock()
+	if !current {
 		return net.ErrClosed
 	}
-	if op == bridgecontract.RelayOpSignIn {
-		if !relay.allowLocked(client, now) {
-			return errAdmission
-		}
-		return controller.session.SignIn()
+	if !allowed {
+		return errAdmission
 	}
-	return controller.session.SignOut()
+	if op == bridgecontract.RelayOpSignIn {
+		return session.SignIn()
+	}
+	return session.SignOut()
 }
 
 // runPlay claims one generation and preserves the core's reliable bridge byte stream.

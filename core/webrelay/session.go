@@ -36,6 +36,7 @@ var errSessionBusy = errors.New("webrelay: session is already playing")
 
 // webSession is one browser's state: its Microsoft account, held only in memory, and the
 // handler its play connections join through. Relay.mu owns capability fields; mu owns account state.
+// commands orders account commands with takeover. Never acquire it while holding Relay.mu.
 type webSession struct {
 	token         string
 	previousToken string
@@ -44,6 +45,7 @@ type webSession struct {
 	controller    *sessionController
 	client        netip.Addr
 	relay         *Relay
+	commands      sync.Mutex
 
 	mu           sync.Mutex
 	auth         control.AuthV1

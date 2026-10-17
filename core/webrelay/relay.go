@@ -118,40 +118,38 @@ func (relay *Relay) allow(client netip.Addr) bool {
 // openControl creates or resumes an account and replaces its previous controller.
 // A valid bearer retires the old controller before the new generation becomes available.
 func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) (*sessionController, func(time.Time), error) {
+	session, err := relay.controlSession(client, token, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	session.commands.Lock()
+	defer session.commands.Unlock()
+	// Account cleanup may hold the session lock. Wait before taking the shared map lock.
+	detach, err := session.attach()
+	if err != nil {
+		return nil, nil, err
+	}
 	relay.mu.Lock()
-	defer relay.mu.Unlock()
 	if relay.ctx.Err() != nil {
-		return nil, nil, net.ErrClosed
+		err = net.ErrClosed
+	} else if _, exists := relay.sessions[session]; !exists || token != "" && relay.resumeLocked(token, now) != session {
+		// The bearer or session may have expired while this controller waited.
+		err = errResume
+	} else if session.client != client && relay.perIP[client] >= maxPerIP {
+		err = errAdmission
 	}
-	session := relay.resumeLocked(token, now)
-	if token != "" && session == nil {
-		return nil, nil, errResume
+	if err != nil {
+		relay.mu.Unlock()
+		detach(now)
+		return nil, nil, err
 	}
-	if session == nil {
-		if len(relay.sessions) >= maxSessions || relay.perIP[client] >= maxPerIP {
-			return nil, nil, errAdmission
-		}
-		var err error
-		session, err = newWebSession(relay, client, now)
-		if err != nil {
-			return nil, nil, err
-		}
-		relay.sessions[session] = struct{}{}
-		relay.perIP[client]++
-	} else if session.client != client {
-		if relay.perIP[client] >= maxPerIP {
-			return nil, nil, errAdmission
-		}
+	if session.client != client {
 		relay.perIP[session.client]--
 		if relay.perIP[session.client] == 0 {
 			delete(relay.perIP, session.client)
 		}
 		session.client = client
 		relay.perIP[client]++
-	}
-	detach, err := session.attach()
-	if err != nil {
-		return nil, nil, err
 	}
 	if session.controller != nil {
 		session.controller.cancel()
@@ -166,6 +164,7 @@ func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) 
 	if token == "" {
 		session.tokenPending = false
 	}
+	relay.mu.Unlock()
 	var once sync.Once
 	return controller, func(now time.Time) {
 		once.Do(func() {
@@ -174,10 +173,35 @@ func (relay *Relay) openControl(client netip.Addr, token string, now time.Time) 
 			if session.controller == controller {
 				session.controller = nil
 			}
-			detach(now)
 			relay.mu.Unlock()
+			detach(now)
 		})
 	}, nil
+}
+
+// controlSession finds or creates an account without waiting for existing session work.
+func (relay *Relay) controlSession(client netip.Addr, token string, now time.Time) (*webSession, error) {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	if relay.ctx.Err() != nil {
+		return nil, net.ErrClosed
+	}
+	if token != "" {
+		if session := relay.resumeLocked(token, now); session != nil {
+			return session, nil
+		}
+		return nil, errResume
+	}
+	if len(relay.sessions) >= maxSessions || relay.perIP[client] >= maxPerIP {
+		return nil, errAdmission
+	}
+	session, err := newWebSession(relay, client, now)
+	if err != nil {
+		return nil, err
+	}
+	relay.sessions[session] = struct{}{}
+	relay.perIP[client]++
+	return session, nil
 }
 
 // welcome refreshes current capabilities; a retired controller gets no capability to publish.
@@ -222,18 +246,9 @@ func (relay *Relay) playSession(bound *sessionController, hello hello, now time.
 // expire forgets detached accounts and old address limiters using caller time.
 func (relay *Relay) expire(now time.Time) {
 	relay.mu.Lock()
-	var expired []*webSession
+	sessions := make([]*webSession, 0, len(relay.sessions))
 	for session := range relay.sessions {
-		if session.expired(now, idleTTL) {
-			delete(relay.sessions, session)
-			delete(relay.tokens, session.token)
-			delete(relay.tokens, session.previousToken)
-			relay.perIP[session.client]--
-			if relay.perIP[session.client] == 0 {
-				delete(relay.perIP, session.client)
-			}
-			expired = append(expired, session)
-		}
+		sessions = append(sessions, session)
 	}
 	for client, entry := range relay.limiters {
 		if now.Sub(entry.lastSeen) > idleTTL {
@@ -241,8 +256,25 @@ func (relay *Relay) expire(now time.Time) {
 		}
 	}
 	relay.mu.Unlock()
-	for _, session := range expired {
-		session.close()
+	for _, session := range sessions {
+		session.commands.Lock()
+		expired := session.expired(now, idleTTL)
+		relay.mu.Lock()
+		_, exists := relay.sessions[session]
+		if expired && exists {
+			delete(relay.sessions, session)
+			delete(relay.tokens, session.token)
+			delete(relay.tokens, session.previousToken)
+			relay.perIP[session.client]--
+			if relay.perIP[session.client] == 0 {
+				delete(relay.perIP, session.client)
+			}
+		}
+		relay.mu.Unlock()
+		session.commands.Unlock()
+		if expired && exists {
+			session.close()
+		}
 	}
 }
 
