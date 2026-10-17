@@ -239,6 +239,14 @@ const (
 	DisconnectKeyInvalidName = "disconnectionScreen.invalidName"
 	// DisconnectKeyDeviceClock: Core disconnect message: The sign-in token was rejected because this device's clock is behind.
 	DisconnectKeyDeviceClock = "cinnabar.disconnect.deviceClock"
+	// RelayRefusalResume: A safe relay refusal code; unrecognized codes use the generic refusal. ResumeRefused.
+	RelayRefusalResume = "resume_refused"
+	// RelayRefusalAdmission: A safe relay refusal code; unrecognized codes use the generic refusal. AdmissionRefused.
+	RelayRefusalAdmission = "admission_refused"
+	// RelayRefusalSessionBusy: A safe relay refusal code; unrecognized codes use the generic refusal. SessionBusy.
+	RelayRefusalSessionBusy = "session_busy"
+	// RelayRefusalUnknown: A safe relay refusal code; unrecognized codes use the generic refusal. Refused.
+	RelayRefusalUnknown = "refused"
 	// GameModeSurvival: Game mode a world starts players in. Survival.
 	GameModeSurvival = "survival"
 	// GameModeCreative: Game mode a world starts players in. Creative.
