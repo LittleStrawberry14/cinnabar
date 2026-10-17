@@ -32,6 +32,7 @@ mod chunk;
 
 mod cloud_render;
 mod device_poll;
+pub mod device_settings;
 
 mod enhanced;
 mod entity_shadow_render;

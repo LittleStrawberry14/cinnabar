@@ -1,6 +1,7 @@
 //! Admits fresh input after frame handoff using the requested cadence and predicted CPU/GPU work.
 
 use bevy::prelude::IntoScheduleConfigs;
+use web_time::Instant;
 mod frame_time;
 #[cfg(any(target_os = "macos", test))]
 mod gpu;
@@ -11,7 +12,7 @@ use std::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(test)]

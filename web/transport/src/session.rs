@@ -281,7 +281,7 @@ impl<T: RelayTransport> Session<T> {
         (
             bridge::FramedReader<tokio::io::ReadHalf<T::Stream>>,
             bridge::FrameQueue,
-            impl std::future::Future<Output = ()> + use<T, N, D>,
+            impl std::future::Future<Output = ()> + use<T>,
         ),
         CloseReason,
     > {

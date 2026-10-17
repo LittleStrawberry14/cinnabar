@@ -13,6 +13,8 @@ use web_transport::{
 /// Bounds control opening and account writes with the same host-owned deadline.
 const CONTROL_DEADLINE: Duration = Duration::from_secs(10);
 
+use crate::play;
+
 /// Explicit UI intent; restoring a page retains its account capability.
 #[derive(Clone, Copy, Default)]
 pub(crate) enum Refresh {
@@ -24,7 +26,7 @@ pub(crate) enum Refresh {
 
 /// Browser services supplied only at composition, keeping the driver testable without JS.
 pub(crate) trait Host {
-    type Transport: RelayTransport;
+    type Transport: RelayTransport<Stream: 'static> + 'static;
     /// Samples the host monotonic clock.
     fn now(&self) -> Duration;
     /// Supplies one bounded retry offset.
@@ -41,6 +43,7 @@ pub(crate) trait Host {
 pub(crate) async fn run<H: Host>(
     host: H,
     mut pending: mpsc::Receiver<AccountOperation>,
+    mut joins: mpsc::Receiver<play::Request<<H::Transport as RelayTransport>::Stream>>,
     mut changed: mpsc::Receiver<()>,
     paused: Rc<Cell<bool>>,
     refresh: Rc<Cell<Refresh>>,
@@ -49,6 +52,8 @@ pub(crate) async fn run<H: Host>(
     let mut session = Session::new();
     let mut cancelled = cancelled.fuse();
     let mut halted = false;
+    let mut requested: Option<play::Request<<H::Transport as RelayTransport>::Stream>> = None;
+    let mut playing: Option<play::Active> = None;
     loop {
         match refresh.replace(Refresh::None) {
             Refresh::Fresh => {
@@ -63,13 +68,17 @@ pub(crate) async fn run<H: Host>(
         }
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
+        let opening = requested.is_some();
         let parked = paused.get() || (!ready && (halted || session.next_retry().is_err()));
-        enum Action {
+        enum Action<S> {
             Dispose,
             Lifecycle,
             Account(Option<AccountOperation>),
+            Join(Option<play::Request<S>>),
+            PlayEnded,
             Step(Result<(), CloseReason>),
         }
+        let mut started = None;
         let action = {
             let step = async {
                 if parked {
@@ -79,6 +88,42 @@ pub(crate) async fn run<H: Host>(
                     bridge::tasks::until(session.flush_account(), host.sleep(CONTROL_DEADLINE))
                         .await
                         .unwrap_or(Err(CloseReason::Transport))?;
+                    return Ok(());
+                }
+                if let Some(request) = requested.take() {
+                    if request.reply.is_canceled() {
+                        return Ok(());
+                    }
+                    if !matches!(session.state(), State::Ready(_)) {
+                        let _ = request.reply.send(Err(CloseReason::Protocol));
+                        return Ok(());
+                    }
+                    match session
+                        .open_play(|| host.now(), host.sleep(CONTROL_DEADLINE))
+                        .await
+                    {
+                        Ok((reader, frames, writer)) => {
+                            let (ended, finished) = oneshot::channel();
+                            let (cancel, cancelled) = oneshot::channel();
+                            started = Some(play::Active {
+                                finished,
+                                cancel: Some(cancel),
+                            });
+                            let _ = request.reply.send(Ok(play::Lease {
+                                io: play::Io {
+                                    reader,
+                                    frames,
+                                    writer: Box::pin(writer),
+                                },
+                                ended,
+                                cancelled,
+                            }));
+                        }
+                        Err(reason) => {
+                            let _ = request.reply.send(Err(reason));
+                            return Err(reason);
+                        }
+                    }
                     return Ok(());
                 }
                 if ready {
@@ -121,22 +166,51 @@ pub(crate) async fn run<H: Host>(
                 _ = cancelled => Action::Dispose,
                 signal = changed.next().fuse() => if signal.is_none() { Action::Dispose } else { Action::Lifecycle },
                 command = async {
-                if writing { std::future::pending().await } else { pending.next().await }
+                if writing || opening { std::future::pending().await } else { pending.next().await }
             }.fuse() => Action::Account(command),
+                request = async {
+                    if writing || opening { std::future::pending().await } else { joins.next().await }
+                }.fuse() => Action::Join(request),
+                _ = async {
+                    if writing { return std::future::pending().await; }
+                    match playing.as_mut() {
+                        Some(active) => { let _ = (&mut active.finished).await; }
+                        None => std::future::pending().await,
+                    }
+                }.fuse() => Action::PlayEnded,
                 result = step.fuse() => Action::Step(result),
             }
         };
+        if let Some(finished) = started {
+            playing = Some(finished);
+        }
         match action {
             Action::Dispose | Action::Account(None) => break,
+            Action::Join(None) => break,
+            Action::Join(Some(request)) => {
+                if matches!(session.state(), State::Ready(_)) && playing.is_none() {
+                    requested = Some(request);
+                } else {
+                    let _ = request.reply.send(Err(CloseReason::Protocol));
+                }
+            }
+            Action::PlayEnded => {
+                playing = None;
+                let _ = session.finish_play();
+            }
             Action::Lifecycle => {
                 while changed.try_recv().is_ok() {}
                 session.close(CloseReason::Transport);
+                playing = None;
             }
             Action::Account(Some(mut operation)) => {
                 while let Ok(next) = pending.try_recv() {
                     operation = next;
                 }
                 halted = operation == AccountOperation::SignOut;
+                if halted && let Some(active) = playing.as_mut() {
+                    active.cancel.take();
+                }
                 session.desire_account(operation);
                 if matches!(session.state(), State::Connecting) {
                     session.close(CloseReason::Transport);
@@ -146,6 +220,7 @@ pub(crate) async fn run<H: Host>(
             Action::Step(Err(CloseReason::RetryAt(_))) => {}
             Action::Step(Err(reason)) => {
                 session.close(reason);
+                playing = None;
                 if let Some(code) = session.refusal() {
                     host.observe(serde_json::json!({"state": "refused", "code": code, "error": refusal_message(code)}));
                 } else if session.next_retry() == Err(CloseReason::RetryExhausted) {

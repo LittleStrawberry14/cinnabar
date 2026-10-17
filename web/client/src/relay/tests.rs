@@ -164,10 +164,12 @@ fn driver_reconnects_with_the_same_bearer_and_cancels_backoff_on_navigation() {
     let (mut lifecycle, changed) = mpsc::channel(1);
     let paused = Rc::new(Cell::new(false));
     let refresh = Rc::new(Cell::new(Refresh::None));
+    let (_joins, join_requests) = mpsc::channel(1);
     let (cancel, cancelled) = oneshot::channel();
     let task = run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::clone(&paused),
         refresh,
@@ -209,10 +211,12 @@ fn refusal_requires_an_explicit_fresh_session() {
     let (_commands, pending) = mpsc::channel(4);
     let (mut lifecycle, changed) = mpsc::channel(1);
     let refresh = Rc::new(Cell::new(Refresh::None));
+    let (_joins, join_requests) = mpsc::channel(1);
     let (cancel, cancelled) = oneshot::channel();
     let task = run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::new(Cell::new(false)),
         Rc::clone(&refresh),
@@ -248,10 +252,12 @@ fn account_writes_leave_the_command_lane_available_and_sign_out_stops_retries() 
     host.live.set(true);
     let (mut commands, pending) = mpsc::channel(4);
     let (_lifecycle, changed) = mpsc::channel(1);
+    let (_joins, join_requests) = mpsc::channel(1);
     let (cancel, cancelled) = oneshot::channel();
     let task = run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::new(Cell::new(false)),
         Rc::new(Cell::new(Refresh::None)),
@@ -282,10 +288,12 @@ fn repeated_transport_loss_stops_at_the_shared_retry_ceiling() {
     host.failed.set(true);
     let (_commands, pending) = mpsc::channel(4);
     let (_lifecycle, changed) = mpsc::channel(1);
+    let (_joins, join_requests) = mpsc::channel(1);
     let (cancel, cancelled) = oneshot::channel();
     let task = run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::new(Cell::new(false)),
         Rc::new(Cell::new(Refresh::None)),
@@ -306,4 +314,86 @@ fn repeated_transport_loss_stops_at_the_shared_retry_ceiling() {
     );
     cancel.send(()).unwrap();
     assert!(task.as_mut().poll(&mut cx).is_ready());
+}
+
+#[test]
+fn play_lease_uses_the_account_session_and_retires_before_the_next_join() {
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    let (_commands, pending) = mpsc::channel(4);
+    let (mut joins, join_requests) = mpsc::channel(1);
+    let (_lifecycle, changed) = mpsc::channel(1);
+    let (_cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        join_requests,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::new(Cell::new(Refresh::None)),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let (reply, response) = oneshot::channel();
+    joins.try_send(play::Request { reply }).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let lease = response.now_or_never().unwrap().unwrap().unwrap();
+    assert_eq!(host.opens.get(), 2);
+    let hello = requests(&host);
+    assert_eq!(hello[1]["channel"], "play");
+    assert_eq!(hello[1]["resume"], "retained");
+    assert_eq!(hello[1]["generation"], 1);
+    let (reply, response) = oneshot::channel();
+    joins.try_send(play::Request { reply }).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(
+        response.now_or_never(),
+        Some(Ok(Err(CloseReason::Protocol)))
+    ));
+    assert_eq!(host.opens.get(), 2);
+    drop(lease);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    host.now.set(Duration::from_millis(1250));
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.opens.get(), 3);
+    let hello = requests(&host);
+    assert_eq!(hello[2]["resume"], "retained");
+}
+
+#[test]
+fn navigation_cancels_the_game_task_without_waiting_for_play_io() {
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    let (_commands, pending) = mpsc::channel(4);
+    let (mut joins, join_requests) = mpsc::channel(1);
+    let (mut lifecycle, changed) = mpsc::channel(1);
+    let paused = Rc::new(Cell::new(false));
+    let (_cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        join_requests,
+        changed,
+        Rc::clone(&paused),
+        Rc::new(Cell::new(Refresh::None)),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let (reply, response) = oneshot::channel();
+    joins.try_send(play::Request { reply }).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let (_, mut guard) = response
+        .now_or_never()
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_parts();
+    assert!(guard.cancelled().now_or_never().is_none());
+    paused.set(true);
+    lifecycle.try_send(()).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(guard.cancelled().now_or_never().is_some());
+    assert_eq!(host.opens.get(), 2);
 }

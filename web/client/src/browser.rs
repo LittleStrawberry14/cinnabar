@@ -46,6 +46,7 @@ impl Host for BrowserHost {
 #[wasm_bindgen]
 pub struct Page {
     commands: mpsc::Sender<AccountOperation>,
+    joins: mpsc::Sender<crate::play::Request<web_transport::browser::BrowserStream>>,
     lifecycle: mpsc::Sender<()>,
     suspended: Rc<Cell<bool>>,
     refresh: Rc<Cell<Refresh>>,
@@ -58,6 +59,7 @@ impl Page {
     #[wasm_bindgen(constructor)]
     pub fn new(origin: &str, observe: Function) -> Result<Page, JsError> {
         let (commands, pending) = mpsc::channel(4);
+        let (joins, requests) = mpsc::channel(1);
         let (lifecycle, changed) = mpsc::channel(1);
         let suspended = Rc::new(Cell::new(false));
         let refresh = Rc::new(Cell::new(Refresh::None));
@@ -68,6 +70,7 @@ impl Page {
                 observe,
             },
             pending,
+            requests,
             changed,
             Rc::clone(&suspended),
             Rc::clone(&refresh),
@@ -75,6 +78,7 @@ impl Page {
         ));
         Ok(Page {
             commands,
+            joins,
             lifecycle,
             suspended,
             refresh,
@@ -111,6 +115,17 @@ impl Page {
     }
 }
 impl Page {
+    /// Requests ordered play I/O from the page's one account and reconnect driver.
+    pub async fn open_play(
+        &mut self,
+    ) -> Result<crate::play::Lease<web_transport::browser::BrowserStream>, CloseReason> {
+        let (reply, response) = oneshot::channel();
+        self.joins
+            .try_send(crate::play::Request { reply })
+            .map_err(|_| CloseReason::Transport)?;
+        response.await.map_err(|_| CloseReason::Cancelled)?
+    }
+
     /// Refuses additional UI actions while the controller's command slot is full.
     fn command(&mut self, operation: AccountOperation) -> Result<(), JsError> {
         self.commands
@@ -164,6 +179,12 @@ impl Carriers {
     /// Runs all authoritative carrier and cross-carrier startup validators.
     pub fn validate(&self) -> Result<(), JsError> {
         self.source.decode_startup().map(|_| ()).map_err(error)
+    }
+
+    /// Transfers verified startup carriers to the game host and starts the existing canvas.
+    pub fn boot(self, canvas: String) -> Result<(), JsError> {
+        let startup = self.into_startup().map_err(error)?;
+        cinnabar::browser::run(startup, canvas).map_err(|error| JsError::new(&error.to_string()))
     }
 }
 /// Presents a carrier validation failure with the canonical rebuild hint.

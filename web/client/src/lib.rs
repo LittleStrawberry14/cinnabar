@@ -2,6 +2,7 @@
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser;
+pub mod play;
 #[cfg(any(target_arch = "wasm32", test))]
 mod relay;
 

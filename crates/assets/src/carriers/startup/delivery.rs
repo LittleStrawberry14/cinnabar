@@ -212,9 +212,10 @@ impl MemoryCarriers {
                 protocol,
             )?;
             Ok(StartupCarriers {
-                world,
+                world: Arc::new(world),
                 item_facts,
-                atmosphere,
+                atmosphere: Arc::new(atmosphere),
+                atmosphere_identity: Sha256::digest(self.read(&carriers::ATMOSPHERE)?).into(),
                 entities,
                 actors,
                 language,
@@ -241,9 +242,10 @@ impl MemoryCarriers {
 }
 /// Validated domain data for client composition; no browser objects escape the web host.
 pub struct StartupCarriers {
-    pub world: RuntimeAssets,
+    pub world: Arc<RuntimeAssets>,
     pub item_facts: Arc<crate::facts::ItemFacts>,
-    pub atmosphere: RuntimeAtmosphereAssets,
+    pub atmosphere: Arc<RuntimeAtmosphereAssets>,
+    pub atmosphere_identity: [u8; 32],
     pub entities: RuntimeEntityAssets,
     pub actors: RuntimeActorCatalog,
     pub language: RuntimeLangCatalog,
