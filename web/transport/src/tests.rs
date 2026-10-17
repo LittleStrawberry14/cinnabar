@@ -546,3 +546,52 @@ async fn expired_resume_requires_a_deliberate_fresh_session() {
     session.fresh_session();
     assert_eq!(session.next_retry(), Ok(Duration::ZERO));
 }
+
+#[tokio::test]
+async fn admission_refusal_keeps_the_account_for_an_explicit_retry() {
+    let mut session = Session::new();
+    let transport = fake(wire(capability(RELAY_EVENT_WELCOME, "account", 120)), false);
+    select(
+        &mut session,
+        None,
+        || transport,
+        || Duration::ZERO,
+        std::future::pending,
+        || Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    session.close(CloseReason::Transport);
+    let transport = fake(
+        wire(json!({"type":"error", "error":"admission_refused"})),
+        false,
+    );
+    assert_eq!(
+        select(
+            &mut session,
+            None,
+            || transport,
+            || Duration::from_secs(1),
+            std::future::pending,
+            || Duration::ZERO
+        )
+        .await,
+        Err(CloseReason::Refused)
+    );
+    assert_eq!(session.resume(Duration::from_secs(1)), "account");
+    assert_eq!(session.next_retry(), Err(CloseReason::Refused));
+    session.restart_retries();
+    let transport = fake(wire(capability(RELAY_EVENT_WELCOME, "rotated", 120)), false);
+    let output = transport.written.clone();
+    select(
+        &mut session,
+        None,
+        || transport,
+        || Duration::from_secs(2),
+        std::future::pending,
+        || Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sent(&output)[0]["resume"], "account");
+}

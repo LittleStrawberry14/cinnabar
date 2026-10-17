@@ -90,8 +90,12 @@ pub fn refusal_message(code: RefusalCode) -> &'static str {
         RefusalCode::ResumeRefused => {
             "Session expired or refused. Start a new session to sign in again."
         }
-        RefusalCode::AdmissionRefused => "The relay cannot accept another connection right now.",
-        RefusalCode::SessionBusy => "This session is already in use.",
+        RefusalCode::AdmissionRefused => {
+            "The relay cannot accept another connection right now. Use Connect relay to retry."
+        }
+        RefusalCode::SessionBusy => {
+            "This session is already in use. Retry when the other connection closes."
+        }
         RefusalCode::Refused => "The relay refused this request.",
     }
 }

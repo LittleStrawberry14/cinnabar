@@ -120,9 +120,15 @@ impl<T: RelayTransport> Session<T> {
         *self = Self::new();
     }
 
-    /// Restarts a deliberate retry cycle without clearing the account or bypassing refusal.
+    /// Restarts an explicit transport/admission retry without bypassing a resume refusal.
     pub fn restart_retries(&mut self) {
-        if self.state == State::Offline {
+        if matches!(
+            self.state,
+            State::Offline
+                | State::Refused(RefusalCode::AdmissionRefused | RefusalCode::SessionBusy)
+        ) {
+            self.state = State::Offline;
+            self.refusal = None;
             self.attempts = 0;
             self.retry_at = Duration::ZERO;
         }
@@ -332,7 +338,7 @@ impl<T: RelayTransport> Session<T> {
             transport.close(reason);
         }
         self.control = None;
-        if reason == CloseReason::Refused {
+        if reason == CloseReason::Refused && self.refusal == Some(RefusalCode::ResumeRefused) {
             self.bearers = [None, None];
         }
         self.state = match (self.state, reason) {
