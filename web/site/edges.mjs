@@ -1,7 +1,17 @@
 /** Samples the browser clock for relay capability expiry. */
 export const milliseconds = () => performance.now();
-/** Gives the shared selector a browser-owned deadline. */
-export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Owns a timeout registration until the driver drops or completes its wait. */
+export function startTimer(ms) {
+  const handle = { id: undefined, promise: undefined };
+  handle.promise = new Promise((resolve) => {
+    handle.id = setTimeout(() => { handle.id = undefined; resolve(); }, ms);
+  });
+  return handle;
+}
+/** Returns the existing promise without registering another timeout on each poll. */
+export const timerPromise = (handle) => handle.promise;
+/** Cancels a suspended, superseded or disposed driver's pending registration. */
+export const cancelTimer = (handle) => { if (handle.id !== undefined) clearTimeout(handle.id); handle.id = undefined; };
 
 /** Reads an exact, bounded response; cancels surplus bytes before retaining them. */
 export async function boundedBytes(response, maximum, exact = true) {
