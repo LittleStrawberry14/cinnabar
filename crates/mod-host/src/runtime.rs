@@ -95,6 +95,7 @@ struct State {
     item_use_policy: item_use::ItemUsePolicy,
     player_state: player_state::PlayerState,
     render: render::RenderState,
+    drawing_policy: Option<mod_api::drawing::DrawingSession>,
     declared: Declared,
     layout: Option<HostLayout>,
     session: Arc<SessionData>,
@@ -163,6 +164,7 @@ impl State {
             item_use_policy: item_use::ItemUsePolicy::default(),
             player_state: player_state::PlayerState::default(),
             render: render::RenderState::new(),
+            drawing_policy: None,
             declared,
             layout: None,
             session: Arc::default(),
@@ -290,6 +292,24 @@ pub(super) struct Instance {
 }
 
 impl Instance {
+    /// Revokes previously published drawing and installs the current admission ceiling.
+    pub(super) fn bind_drawing_policy(
+        &mut self,
+        grants: ModGrants,
+        session: mod_api::drawing::DrawingSession,
+    ) {
+        let state = self.store.data_mut();
+        state.render.revoke();
+        state.block_highlights.revoke();
+        state.grants = grants;
+        state.drawing_policy = Some(session);
+    }
+
+    /// Returns current effective grants rather than the retained loader consent.
+    pub(super) fn grants(&self) -> &ModGrants {
+        &self.store.data().grants
+    }
+
     /// Compiles a component and checks its imports and callbacks without running guest code.
     pub(super) fn check(engine: &Engine, bytes: &[u8]) -> Result<()> {
         let component = Component::new(engine, bytes)?;
@@ -309,10 +329,36 @@ impl Instance {
         declared: Declared,
         panel_bundle: Option<Arc<ui::mod_panel::PanelBundle>>,
     ) -> Result<Self> {
+        Self::new_with_drawing_policy(
+            engine,
+            bytes,
+            grants,
+            settings,
+            declared,
+            panel_bundle,
+            None,
+        )
+    }
+
+    /// Installs session limits before instantiation and init can call any import.
+    fn new_with_drawing_policy(
+        engine: &Engine,
+        bytes: &[u8],
+        grants: ModGrants,
+        settings: String,
+        declared: Declared,
+        panel_bundle: Option<Arc<ui::mod_panel::PanelBundle>>,
+        policy: Option<mod_api::drawing::DrawingSession>,
+    ) -> Result<Self> {
+        let grants = policy.map_or_else(
+            || grants.clone(),
+            |session| grants.for_drawing_session(session),
+        );
         let component = Component::new(engine, bytes)?;
         let mut linker = Linker::new(engine);
         PlayerMod::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)?;
         let mut state = State::new(grants, settings, declared);
+        state.drawing_policy = policy;
         if let Some(bundle) = panel_bundle.filter(|_| state.grants.controls) {
             state.controls.panel = Some(bundle.panel.clone());
             state.controls.bundle = Some(bundle);
@@ -366,7 +412,15 @@ impl Instance {
                 "loading callback deferred"
             );
         }
-        let mut candidate = Self::new(engine, bytes, grants, settings, declared, panel_bundle)?;
+        let mut candidate = Self::new_with_drawing_policy(
+            engine,
+            bytes,
+            grants,
+            settings,
+            declared,
+            panel_bundle,
+            self.store.data().drawing_policy,
+        )?;
         candidate.callback_budget = budget;
         candidate.store.data_mut().exclusive = self.store.data().exclusive.clone();
         Ok(candidate)

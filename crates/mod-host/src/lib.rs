@@ -1,6 +1,7 @@
 //! Experimental component host. Only the explicit WIT imports carry authority.
 
 mod declarations;
+mod drawing_policy;
 mod grants;
 pub use declarations::{Declarations, REQUESTED_GRANTS_SECTION, declarations};
 pub mod helper;
@@ -122,6 +123,7 @@ pub struct ModHost {
     panel_bundle_override: Option<Arc<ui::mod_panel::PanelBundle>>,
     source: Source,
     attempted: [u8; 32],
+    admitted_digest: [u8; 32],
     grants: ModGrants,
     /// The loader's authorization before the manifest narrows package permissions.
     authorized_grants: ModGrants,
@@ -131,6 +133,7 @@ pub struct ModHost {
     package: Option<LoadedPackage>,
     layout: Option<ScreenLayout>,
     session: Arc<SessionData>,
+    drawing_session: Option<mod_api::drawing::DrawingSession>,
 }
 
 /// Builds an empty, unfocused control snapshot for a frame with no routed input.

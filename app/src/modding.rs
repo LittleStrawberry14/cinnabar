@@ -32,6 +32,7 @@ const DEMO_KEY: KeyCode = KeyCode::F8;
 const RELOAD_INTERVAL: Duration = Duration::from_millis(500);
 
 mod admission;
+mod drawing_policy;
 mod environment_loader;
 mod hud_editor;
 mod library;
@@ -369,8 +370,13 @@ fn configure_systems(app: &mut App, watching: bool) {
 }
 
 /// Starts the shared callback allowance before any input or event reaches a guest.
-fn begin_mod_frame(extension: Option<ResMut<ModRuntime>>) {
+fn begin_mod_frame(
+    extension: Option<ResMut<ModRuntime>>,
+    gameplay: gameplay::GameplayContext,
+    ui: Res<UiRuntimeResource>,
+) {
     if let Some(mut extension) = extension {
+        drawing_policy::bind(&mut extension.hosts, &gameplay, &ui);
         extension.hosts.begin_frame();
     }
 }
@@ -508,6 +514,7 @@ fn drive_mod(
         gameplay.synchronize_jump_scope(false, &ui);
         gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed, &ui);
     }
+    drawing_policy::bind(&mut extension.hosts, &gameplay, &ui);
     // Reconcile screen departures before frame callbacks retry deferred edits.
     let cursor = windows
         .single()

@@ -116,6 +116,15 @@ impl ModHost {
         declared: Declared,
         digest: [u8; 32],
     ) -> Result<Self> {
+        let grants = if matches!(source, Source::Component(_)) {
+            let request = crate::declarations::declarations_snapshot(bytes)?
+                .requested?
+                .map(|request| request.drawing_permissions())
+                .unwrap_or_default();
+            grants.with_drawing_request(request)
+        } else {
+            grants
+        };
         let assets = ComponentAssets::read(bytes)?;
         grants.validate()?;
         let path = &source.settings_anchor();
@@ -159,6 +168,7 @@ impl ModHost {
             panel_bundle_override: None,
             source,
             attempted: digest,
+            admitted_digest: digest,
             authorized_grants: grants.clone(),
             grants,
             settings_writer,
@@ -167,6 +177,7 @@ impl ModHost {
             package: None,
             layout: None,
             session: Arc::default(),
+            drawing_session: None,
         })
     }
 
@@ -200,7 +211,7 @@ impl ModHost {
                 (Vec::new(), package.digest, Some(package))
             }
         };
-        if self.attempted == digest {
+        if self.attempted == digest && !self.instance.is_revoked() {
             return Ok(false);
         }
         if !self.instance.can_reload() {
@@ -215,6 +226,15 @@ impl ModHost {
             || self.grants.clone(),
             |package| self.authorized_grants.with_manifest(&package.manifest),
         );
+        let grants = if package.is_none() {
+            let request = crate::declarations::declarations_snapshot(bytes)?
+                .requested?
+                .map(|request| request.drawing_permissions())
+                .unwrap_or_default();
+            grants.with_drawing_request(request)
+        } else {
+            grants
+        };
         let assets = ComponentAssets::read(bytes)?;
         let bundle = self
             .panel_bundle_override
@@ -234,6 +254,7 @@ impl ModHost {
             .context("reload rejected; previous mod retained")?;
         candidate.set_session(Arc::clone(&self.session));
         self.instance = candidate;
+        self.admitted_digest = digest;
         self.embedded_font = assets.font;
         self.embedded_logo = assets.logo;
         self.embedded_title = assets.title;
@@ -263,7 +284,7 @@ impl ModHost {
     }
 
     pub fn grants(&self) -> &ModGrants {
-        &self.grants
+        self.instance.grants()
     }
 
     pub fn settings_seed(&self) -> Option<&str> {
@@ -327,6 +348,13 @@ impl ModGrants {
         let asked = Self::from_manifest(manifest);
         Self {
             screen: asked.screen && self.screen,
+            world_draw: asked.world_draw && self.world_draw,
+            entity_observe: asked.entity_observe && self.entity_observe,
+            entity_highlight: asked.entity_highlight && self.entity_highlight,
+            render_through_walls: asked.render_through_walls && self.render_through_walls,
+            render_material: asked.render_material && self.render_material,
+            render_post: asked.render_post && self.render_post,
+
             items: asked.items && self.items,
             recipes: asked.recipes && self.recipes,
             keys: asked.keys && self.keys,
@@ -340,6 +368,13 @@ impl ModGrants {
         let asks = |permission| manifest.permissions.contains(&permission);
         Self {
             screen: asks(ModPermission::Screen),
+            world_draw: asks(ModPermission::WorldDraw),
+            entity_observe: asks(ModPermission::EntityObserve),
+            entity_highlight: asks(ModPermission::EntityHighlight),
+            render_through_walls: asks(ModPermission::RenderThroughWalls),
+            render_material: asks(ModPermission::RenderMaterial),
+            render_post: asks(ModPermission::RenderPost),
+
             items: asks(ModPermission::Items),
             recipes: asks(ModPermission::Recipes),
             keys: asks(ModPermission::Keys),

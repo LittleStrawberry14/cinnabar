@@ -10007,3 +10007,10 @@ Incomplete parity: the installed native cutout material supports this offset,
 but exact-current seasonal material selection remains unverified. Mixed model
 materials are outside this change. The raster and descriptor regressions are
 written but unrun; this does not close a renderer parity or frame-budget gate.
+
+### Retained mod drawing
+
+Drawing permissions and connection fences cover legacy post effects, block highlights and
+unfiltered world observations. The retained drawing ABI is versioned separately. Geometry,
+renderer integration and entity anchors are incomplete; no rendering parity or performance
+gate is closed by these contracts.

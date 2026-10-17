@@ -156,6 +156,7 @@ pub fn generate() -> Result<Fixtures> {
             origins: BTreeSet::from([ORIGIN.to_owned()]),
             memory_bytes: policy::MAX_GUEST_MEMORY,
             gpu_bytes: 0,
+            personal_mods: Default::default(),
         },
         packages: vec![PackageOffer {
             id: PACKAGE.to_owned(),
