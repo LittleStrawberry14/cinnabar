@@ -1,28 +1,39 @@
 //! Browser application composition over the client's shared renderer and world owners.
 
-use std::sync::Arc;
-
 use assets::carriers::startup::delivery::StartupCarriers;
 use bevy::{
     anti_alias::AntiAliasPlugin,
-    app::TerminalCtrlCHandlerPlugin,
-    prelude::*,
+    prelude::{App, DefaultPlugins, PluginGroup, Resource, Window, default},
     render::{RenderPlugin, settings::RenderCreation},
     window::WindowPlugin,
 };
-use render_scene::{AtmosphereTextureAssets, ChunkTextureAssets};
 
-/// Verified startup inputs retained for the world's first network bootstrap.
-#[derive(Resource)]
-pub struct PreparedStartup(pub StartupCarriers);
+thread_local! {
+    static STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+mod frame;
+pub(crate) mod jobs;
+mod session;
+mod startup;
+pub use session::{Event, Host};
 
 /// Starts the renderer on an existing canvas, retaining the verified world inputs.
-pub fn run(startup: StartupCarriers, canvas: String) -> anyhow::Result<()> {
+pub fn run(
+    startup: StartupCarriers,
+    canvas: String,
+    identity: protocol::ClientRandomId,
+    input: Box<dyn FnMut() -> semantic_input::DeviceFrame>,
+) -> anyhow::Result<Host> {
+    anyhow::ensure!(
+        !STARTED.with(std::cell::Cell::get),
+        "The client is already started; reload the page to restart it"
+    );
     let mut settings = bevy::render::settings::WgpuSettings::default();
     render::device_settings::configure(&mut settings);
-    let world = Arc::clone(&startup.world);
-    let atmosphere = Arc::clone(&startup.atmosphere);
     let mut app = App::new();
+    let (host, commands) = startup::install(&mut app, startup, identity)?;
+    STARTED.with(|started| started.set(true));
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -35,30 +46,84 @@ pub fn run(startup: StartupCarriers, canvas: String) -> anyhow::Result<()> {
                 ..default()
             })
             .set(RenderPlugin {
-                render_creation: RenderCreation::Automatic(settings),
+                render_creation: RenderCreation::Automatic(Box::new(settings)),
                 ..default()
             })
-            .disable::<AntiAliasPlugin>()
-            .disable::<TerminalCtrlCHandlerPlugin>(),
-    )
-    .insert_resource(ChunkTextureAssets::new(world))
-    .insert_resource(AtmosphereTextureAssets::new(
-        atmosphere,
-        startup.atmosphere_identity,
-    ))
-    .insert_resource(PreparedStartup(startup))
-    .add_plugins((
-        render::AtmospherePlugin,
-        render::ChunkRenderPlugin::default(),
-        render::startup_presentation::StartupPresentationPlugin,
-    ))
-    .add_systems(Startup, camera);
+            .disable::<AntiAliasPlugin>(),
+    );
+    app.insert_non_send(commands)
+        .insert_non_send(frame::InputSource(input))
+        .add_plugins((
+            render::ActorRenderPlugin,
+            render::AtmospherePlugin,
+            render::ChunkRenderPlugin::with_budget(
+                client_runtime::publication::PublicationController::new(
+                    render_api::PublicationServiceConfig::DEFAULT,
+                )
+                .budget(),
+            ),
+            crate::camera::FlyCameraPlugin::default(),
+            render::UiRenderPlugin,
+            render::ViewmodelRenderPlugin,
+            render::HandRigRenderPlugin,
+            render::DroppedItemRenderPlugin,
+            render::ScreenOverlayRenderPlugin,
+            render::AimAssistHighlightPlugin,
+            render::ParticleRenderPlugin,
+            render::BlockEntityRenderPlugin,
+            render::EntityShadowRenderPlugin,
+        ))
+        .add_plugins((
+            render::DepthSmaaPlugin,
+            render::motion_blur::CameraMotionBlurPlugin,
+            render::startup_presentation::StartupPresentationPlugin,
+        ));
+    frame::configure(&mut app);
     let exit = app.run();
     anyhow::ensure!(!exit.is_error(), "browser client stopped with an error");
-    Ok(())
+    Ok(host)
 }
 
-/// Installs the world view before the first surface is presented.
-fn camera(mut commands: Commands) {
-    commands.spawn((Camera3d::default(), Transform::default(), Msaa::Off));
+/// In-memory settings used by gameplay until a menu host replaces them.
+#[derive(Resource, Default)]
+pub(crate) struct BrowserOptions(
+    pub(crate) std::sync::Arc<launcher::menu::settings_options::SettingsOptions>,
+);
+
+/// Formats a protocol-validated transfer through the shared session address owner.
+pub fn transfer_address(host: &str, port: u16) -> String {
+    client_runtime::session::format_transfer_address(host, port)
+}
+
+/// Browser-owned drivers for the world's and UI's existing bounded work queues.
+#[derive(Default)]
+pub struct Jobs {
+    world: chunk_pipeline::jobs::WorldJobDriver,
+    images: ui_engine::atlas::jobs::ImageJobDriver,
+    ui: client_ui::browser_jobs::Driver,
+    next: usize,
+}
+
+impl Jobs {
+    /// Runs at most one finite job after the host yields; returns whether work was performed.
+    pub fn run_one(&mut self, now: std::time::Duration) -> bool {
+        let now = simulation_clock::Moment::from_elapsed(now);
+        self.world.observe(now);
+        let drivers: &[fn(&mut Self, simulation_clock::Moment) -> bool] = &[
+            |jobs, now| jobs.world.run_one(now),
+            |jobs, _| jobs.images.run_one(),
+            |jobs, _| jobs.ui.run_one(),
+            |_, _| render::browser_jobs::run_one(),
+            |_, _| client_runtime::browser_jobs::run_one(),
+            |_, _| jobs::run_one(),
+        ];
+        for _ in drivers {
+            let driver = drivers[self.next];
+            self.next = (self.next + 1) % drivers.len();
+            if driver(self, now) {
+                return true;
+            }
+        }
+        false
+    }
 }

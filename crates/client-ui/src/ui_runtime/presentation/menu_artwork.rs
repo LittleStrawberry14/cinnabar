@@ -122,7 +122,10 @@ pub(super) struct Packed {
 /// Decodes and packs launcher art on a worker so a changed art set never
 /// stalls a frame; until an atlas arrives the previous one keeps drawing.
 pub(super) struct ArtworkLoader {
+    #[cfg(not(target_arch = "wasm32"))]
     requests: Sender<Request>,
+    #[cfg(target_arch = "wasm32")]
+    browser: (Arc<std::sync::Mutex<DecodeCache>>, Sender<Packed>),
     results: Receiver<Packed>,
     requested: u64,
     ready: Option<Packed>,
@@ -133,18 +136,24 @@ pub(super) struct ArtworkLoader {
 
 impl Default for ArtworkLoader {
     fn default() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let (requests, jobs) = crossbeam_channel::unbounded();
         let (done, results) = crossbeam_channel::unbounded();
+        #[cfg(not(target_arch = "wasm32"))]
         let spawned = std::thread::Builder::new()
             .name("menu-artwork".to_owned())
             .spawn(move || serve(&jobs, &done));
+        #[cfg(not(target_arch = "wasm32"))]
         if let Err(error) = spawned {
             tracing::warn!("menu artwork worker unavailable: {error}");
         }
         // The title is packed before the first frame so the pack's own never flashes.
         let title = pack(&ArtworkSet::default(), &DecodeCache::default(), 0, true);
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
             requests,
+            #[cfg(target_arch = "wasm32")]
+            browser: (Arc::default(), done),
             results,
             requested: 0,
             relative: HashMap::new(),
@@ -165,10 +174,26 @@ impl ArtworkLoader {
         self.gallery = None;
         self.requested += 1;
         self.ready = None;
-        let _ = self.requests.send(Request {
+        let request = Request {
             id: self.requested,
             set,
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = self.requests.send(request);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (cache, done) = self.browser.clone();
+            crate::browser_jobs::submit_steps(crate::browser_jobs::Lane::Artwork, move || {
+                let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
+                let missing = cache.missing(&request.set);
+                let batch = &missing[..missing.len().min(FIRST_BATCH)];
+                cache.decode(batch, &request.set);
+                let complete = batch.len() == missing.len();
+                let _ = done.send(pack(&request.set, &cache, request.id, complete));
+                cache.trim(&request.set);
+                complete
+            });
+        }
     }
 
     /// Whether an atlas for the latest request (or a partial one) is ready to install.
@@ -255,6 +280,7 @@ const MAX_FAILED: usize = 256;
 /// Art decoded before the first partial atlas goes out, so visible rows fill early.
 const FIRST_BATCH: usize = 8;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn serve(jobs: &Receiver<Request>, done: &Sender<Packed>) {
     let mut cache = DecodeCache::default();
     while let Ok(mut request) = jobs.recv() {

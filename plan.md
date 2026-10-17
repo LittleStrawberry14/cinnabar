@@ -214,14 +214,19 @@ refusals; expired or refused resume requires a new session. Typed control payloa
 Go/Rust wire fixtures, including idle join progress. Play opening has a host deadline;
 finishing a join retires control so the next login obtains a new generation.
 
-The browser entry preview supplies relay account controls, a browser deadline and verified memory carriers.
-Memory startup requires the same bounded item-glint artwork as native startup. Cached
-navigation retains page resources and restores relay controls with an unexpired capability.
-Incomplete: full gameplay composition, sound-bank ranges and audio playback remain pending. Relay integration
-and real-browser interoperability still need acceptance tests. Shared
-session/world/render clock migration and browser dependency composition still need a
-wasm build gate. Shader output comparisons on WebGPU and Metal and indivisible browser
-job costs remain unverified. No browser release or parity gate closes here.
+The browser entry accepts verified memory carriers and an optional bundled font, then builds
+shared world, actor, movement and HUD owners on the page canvas. A server-address field opens
+one relay play lease through the existing login and packet pump. Disconnect retires gameplay
+authority; bounded server transfers open fresh play generations. Canvas input enters the same
+semantic router. Native pacing, processes, signing, disk caches and menu services remain native.
+Renderer, geometry, UI preparation and retired snapshots use bounded browser job slots.
+
+Incomplete: interactive inventory/chat/forms controls, sound-bank range fetching and audio
+playback remain pending. The shared audio bank has bounded host-driven decode admission and
+stale-result rejection, but browser playback is not wired. A wasm artifact builds; browser boot,
+relay join/transfer acceptance, shader output comparisons on WebGPU and Metal, and indivisible
+job costs still require verification. Cached navigation retains page resources and restores
+relay controls with an unexpired capability. No browser release or parity gate closes here.
 
 ## Far terrain (LOD)
 

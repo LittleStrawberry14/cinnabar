@@ -91,7 +91,7 @@ export function canvasEdges(canvas, input, audio, view = window, doc = document)
     audio.resume().catch(() => {});
     canvas.requestPointerLock()?.catch(() => {});
   });
-  listen(doc, "pointerlockchange", () => { if (!locked()) input.release(); });
+  listen(doc, "pointerlockchange", () => { input.focus?.(locked()); if (!locked()) input.release(); });
   listen(view, "blur", () => input.release());
   for (const [name, down] of [["keydown", true], ["keyup", false]]) {
     listen(doc, name, (event) => { if (locked()) { event.preventDefault(); input.key(event.code, down); } });

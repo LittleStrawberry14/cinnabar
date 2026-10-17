@@ -54,6 +54,7 @@ pub(crate) async fn run<H: Host>(
     let mut halted = false;
     let mut requested: Option<play::Request<<H::Transport as RelayTransport>::Stream>> = None;
     let mut playing: Option<play::Active> = None;
+    let sign_out_deadline = Cell::new(None::<Duration>);
     loop {
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));
         let writing = ready && session.has_account_intent();
@@ -106,7 +107,7 @@ pub(crate) async fn run<H: Host>(
                                 io: play::Io {
                                     reader,
                                     frames,
-                                    writer: Box::pin(writer),
+                                    writer,
                                 },
                                 ended,
                                 cancelled,
@@ -120,10 +121,27 @@ pub(crate) async fn run<H: Host>(
                     return Ok(());
                 }
                 if ready {
-                    match session.next_event(|| host.now()).await? {
-                        ControlEvent::Account(account) => host.observe(
-                            serde_json::json!({"state": account.state, "account": account}),
-                        ),
+                    let event = session.next_event(|| host.now());
+                    let event = if let Some(deadline) = sign_out_deadline.get() {
+                        bridge::tasks::until(event, host.sleep(deadline.saturating_sub(host.now())))
+                            .await
+                            .unwrap_or(Err(CloseReason::Transport))?
+                    } else {
+                        event.await?
+                    };
+                    match event {
+                        ControlEvent::Account(account) => {
+                            if matches!(
+                                account.state,
+                                bridge::contract::AuthState::SignedOut
+                                    | bridge::contract::AuthState::Failed
+                            ) {
+                                sign_out_deadline.set(None);
+                            }
+                            host.observe(
+                                serde_json::json!({"state": account.state, "account": account}),
+                            );
+                        }
                         ControlEvent::Connect(connect) => {
                             host.observe(serde_json::json!({"connect": connect}))
                         }
@@ -167,7 +185,7 @@ pub(crate) async fn run<H: Host>(
                         if writing || opening { std::future::pending().await } else { joins.next().await }
                     }.fuse() => Action::Join(request),
                     _ = async {
-                        if writing { return std::future::pending().await; }
+                        if writing || sign_out_deadline.get().is_some() { return std::future::pending().await; }
                         match playing.as_mut() {
                             Some(active) => { let _ = (&mut active.finished).await; }
                             None => std::future::pending().await,
@@ -217,6 +235,7 @@ pub(crate) async fn run<H: Host>(
                 while changed.try_recv().is_ok() {}
                 session.close(CloseReason::Transport);
                 playing = None;
+                sign_out_deadline.set(None);
                 match refresh.replace(Refresh::None) {
                     Refresh::Fresh => {
                         session.fresh_session();
@@ -236,6 +255,7 @@ pub(crate) async fn run<H: Host>(
             Action::Step(Err(reason)) => {
                 session.close(reason);
                 playing = None;
+                sign_out_deadline.set(None);
                 if let Some(code) = session.refusal() {
                     host.observe(serde_json::json!({"state": "refused", "code": code, "error": refusal_message(code)}));
                 } else if session.next_retry() == Err(CloseReason::RetryExhausted) {
@@ -250,6 +270,7 @@ pub(crate) async fn run<H: Host>(
                 operation = next;
             }
             halted = operation == AccountOperation::SignOut;
+            sign_out_deadline.set(halted.then(|| host.now().saturating_add(CONTROL_DEADLINE)));
             if halted && let Some(active) = playing.as_mut() {
                 active.cancel.take();
             }

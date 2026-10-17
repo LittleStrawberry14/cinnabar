@@ -1,11 +1,12 @@
 //! Source-owned retirement. Cancellation NEVER releases a submitted reservation.
 use assets::RuntimeAudioPcm;
 use rodio::{OutputStream, OutputStreamHandle, Source};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Receiver, Sender, TryRecvError},
     },
     time::Duration,
 };
@@ -151,19 +152,23 @@ impl Source for CancelablePcm {
 
 const MIXER_RATE: u32 = 48_000;
 
-/// The default output, opened on its own thread; dropping the release sender lets that thread
-/// drop the stream it opened.
+/// Keeps the default output alive on the platform that owns its callbacks.
 struct Output {
     handle: OutputStreamHandle,
+    #[cfg(not(target_arch = "wasm32"))]
     _release: Sender<()>,
+    #[cfg(target_arch = "wasm32")]
+    _stream: OutputStream,
 }
 
 /// The shared output half from its owner thread, with a sender whose drop releases the stream.
+#[cfg(not(target_arch = "wasm32"))]
 type Opening<H = (OutputStreamHandle, u32)> = Receiver<Option<(H, Sender<()>)>>;
 
 /// Main-thread owner. No automatic reopen, alternate device enumeration or Sink.
 pub struct AudioDevice {
     /// The default output while its owner thread is still opening it.
+    #[cfg(not(target_arch = "wasm32"))]
     opening: Option<Opening>,
     output: Option<Output>,
     sample_rate: u32,
@@ -175,6 +180,7 @@ pub struct AudioDevice {
 impl AudioDevice {
     pub fn disabled() -> Self {
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
             opening: None,
             output: None,
             sample_rate: MIXER_RATE,
@@ -184,6 +190,7 @@ impl AudioDevice {
         }
     }
     /// Starts opening the default output on its own thread; later uses poll without waiting.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_default_once() -> Self {
         match open_on_owner_thread(open_default_stream) {
             Ok((opening, _owner)) => Self {
@@ -198,21 +205,39 @@ impl AudioDevice {
             }
         }
     }
+    /// Opens Web Audio on the calling browser turn, which must carry a user gesture.
+    #[cfg(target_arch = "wasm32")]
+    pub fn open_default_once() -> Self {
+        let Some((stream, (handle, sample_rate))) = open_default_stream() else {
+            return Self::disabled();
+        };
+        Self {
+            output: Some(Output {
+                handle,
+                _stream: stream,
+            }),
+            sample_rate,
+            ..Self::disabled()
+        }
+    }
     /// Takes the output once its owner thread finishes opening it; a failed open stays disabled.
     fn resolve(&mut self) {
-        let Some(opening) = self.opening.take() else {
-            return;
-        };
-        match opening.try_recv() {
-            Ok(Some(((handle, sample_rate), release))) => {
-                self.sample_rate = sample_rate;
-                self.output = Some(Output {
-                    handle,
-                    _release: release,
-                });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(opening) = self.opening.take() else {
+                return;
+            };
+            match opening.try_recv() {
+                Ok(Some(((handle, sample_rate), release))) => {
+                    self.sample_rate = sample_rate;
+                    self.output = Some(Output {
+                        handle,
+                        _release: release,
+                    });
+                }
+                Err(TryRecvError::Empty) => self.opening = Some(opening),
+                Ok(None) | Err(TryRecvError::Disconnected) => {}
             }
-            Err(TryRecvError::Empty) => self.opening = Some(opening),
-            Ok(None) | Err(TryRecvError::Disconnected) => {}
         }
     }
     /// Whether requests must wait for the device; capture and test mixers are ready immediately.
@@ -220,11 +245,14 @@ impl AudioDevice {
         if self.available() {
             return false;
         }
-        self.opening.is_some()
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.opening.is_some();
+        #[cfg(target_arch = "wasm32")]
+        false
     }
 
     /// Creates a device whose opening fails only after the test releases its channel gate.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn delayed_open() -> (Self, Sender<()>, std::thread::JoinHandle<()>) {
         let (release, wait) = mpsc::channel();
         let (opening, owner) = open_on_owner_thread(move || {
@@ -360,6 +388,7 @@ fn open_default_stream() -> Option<(OutputStream, (OutputStreamHandle, u32))> {
 
 /// Runs `open` on a new thread that keeps the stream it opened until the sender sent back with
 /// the shared half drops; the stream never leaves that thread. `None` reports a failed open.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_on_owner_thread<S: 'static, H: Send + 'static>(
     open: impl FnOnce() -> Option<(S, H)> + Send + 'static,
 ) -> std::io::Result<(Opening<H>, std::thread::JoinHandle<()>)> {

@@ -1,8 +1,10 @@
 //! Predicts GPU queue completion from nonblocking frame markers, keeping input ahead of work.
 
 use super::{HISTORY, History, MARGIN, MAX_DELAY, MEDIAN, PacingModel};
-use std::{collections::VecDeque, time::Duration};
-use web_time::Instant;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 struct Submission {

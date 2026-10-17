@@ -485,7 +485,7 @@ pub(crate) fn reconcile_world_stream_before_physics(
             let camera = server_camera_view.as_deref();
             correction_log.note(
                 movement.session_generation(),
-                std::time::Instant::now(),
+                web_time::Instant::now(),
                 packet,
                 gameplay::movement::CorrectionContext::read(
                     &player_runtime.facts,

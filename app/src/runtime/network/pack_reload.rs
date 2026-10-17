@@ -1,4 +1,8 @@
 //! Cinnabar extension: optional resource packs can change without leaving a world.
+#[cfg(target_arch = "wasm32")]
+use super::compile_execution::join;
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::join;
 
 use super::reload_environment::{
     EnvironmentBase, EnvironmentPublication, PreparedEnvironment, apply_biome_overlay,
@@ -11,8 +15,9 @@ use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use resource_pack::{PackAdmission, ValidatedPackStack};
 use std::{
     sync::{Arc, Mutex, mpsc},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 use pack_runtime::PackInputs;
 
@@ -181,7 +186,7 @@ impl PackReload {
             carrier: Mutex::new(carrier_rx),
             early: None,
         });
-        std::thread::spawn(move || {
+        let work = move || {
             let start = Instant::now();
             let _zone = bevy::log::info_span!("pack_apply.prepare").entered();
             let result = ValidatedPackStack::compose(&globals, &server)
@@ -199,7 +204,7 @@ impl PackReload {
                     let stack = Arc::new(stack);
                     let view = resource_pack::LayeredPackView::new(stack.clone());
                     // Environment layers and the other subscribers read the stack independently.
-                    let (environment, mut application) = rayon::join(
+                    let (environment, mut application) = join(
                         || {
                             let _zone = bevy::log::info_span!("pack_apply.environment").entered();
                             environment_base
@@ -329,7 +334,11 @@ impl PackReload {
                     }
                 });
             let _ = tx.send(result);
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(work);
+        #[cfg(target_arch = "wasm32")]
+        crate::browser::jobs::reload(work);
     }
 }
 

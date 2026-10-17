@@ -23,12 +23,14 @@ struct Observations {
     cancelled_timers: Cell<usize>,
     output: RefCell<Vec<u8>>,
     events: RefCell<Vec<Value>>,
+    control_input: RefCell<VecDeque<u8>>,
 }
 struct FakeHost(Rc<Observations>);
 struct Transport(Rc<Observations>);
 struct Stream {
     host: Rc<Observations>,
     input: VecDeque<u8>,
+    control: bool,
 }
 
 impl AsyncRead for Stream {
@@ -37,6 +39,10 @@ impl AsyncRead for Stream {
         _: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if self.control && self.input.is_empty() {
+            let host = Rc::clone(&self.host);
+            self.input.extend(host.control_input.borrow_mut().drain(..));
+        }
         if !self.input.is_empty() && self.host.hold_welcome.get() {
             return Poll::Pending;
         }
@@ -70,7 +76,7 @@ impl AsyncWrite for Stream {
 }
 impl RelayTransport for Transport {
     type Stream = Stream;
-    async fn open(&mut self, _: Channel) -> Result<Stream, CloseReason> {
+    async fn open(&mut self, channel: Channel) -> Result<Stream, CloseReason> {
         self.0.opens.set(self.0.opens.get() + 1);
         if self.0.failed.get() {
             return Err(CloseReason::Transport);
@@ -86,6 +92,7 @@ impl RelayTransport for Transport {
         Ok(Stream {
             host: Rc::clone(&self.0),
             input,
+            control: matches!(channel, Channel::Control),
         })
     }
     fn max_datagram_size(&self) -> Option<usize> {
@@ -300,9 +307,11 @@ fn account_commands_during_setup_preserve_the_handshake_and_coalesce() {
             let (mut lifecycle, changed) = mpsc::channel(1);
             let paused = Rc::new(Cell::new(false));
             let (cancel, cancelled) = oneshot::channel();
+            let (_joins, join_requests) = mpsc::channel(1);
             let mut task = Box::pin(run(
                 FakeHost(Rc::clone(&host)),
                 pending,
+                join_requests,
                 changed,
                 Rc::clone(&paused),
                 Rc::new(Cell::new(Refresh::None)),
@@ -371,9 +380,11 @@ fn explicit_reconnect_retains_the_current_controller() {
         let (mut lifecycle, changed) = mpsc::channel(1);
         let refresh = Rc::new(Cell::new(Refresh::None));
         let (cancel, cancelled) = oneshot::channel();
+        let (_joins, join_requests) = mpsc::channel(1);
         let mut task = Box::pin(run(
             FakeHost(Rc::clone(&host)),
             pending,
+            join_requests,
             changed,
             Rc::new(Cell::new(false)),
             Rc::clone(&refresh),
@@ -408,9 +419,11 @@ fn fresh_session_discards_account_intent_queued_during_setup() {
     let (mut lifecycle, changed) = mpsc::channel(1);
     let refresh = Rc::new(Cell::new(Refresh::None));
     let (cancel, cancelled) = oneshot::channel();
+    let (_joins, join_requests) = mpsc::channel(1);
     let mut task = Box::pin(run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::new(Cell::new(false)),
         Rc::clone(&refresh),
@@ -445,9 +458,11 @@ fn sign_out_queued_before_opening_is_sent_before_retries_stop() {
     commands.try_send(AccountOperation::SignOut).unwrap();
     let (_lifecycle, changed) = mpsc::channel(1);
     let (cancel, cancelled) = oneshot::channel();
+    let (_joins, join_requests) = mpsc::channel(1);
     let mut task = Box::pin(run(
         FakeHost(Rc::clone(&host)),
         pending,
+        join_requests,
         changed,
         Rc::new(Cell::new(false)),
         Rc::new(Cell::new(Refresh::None)),
@@ -525,7 +540,7 @@ fn play_lease_uses_the_account_session_and_retires_before_the_next_join() {
     let lease = response.now_or_never().unwrap().unwrap().unwrap();
     assert_eq!(host.opens.get(), 2);
     let hello = requests(&host);
-    assert_eq!(hello[1]["channel"], "play");
+    assert_eq!(hello[1]["channel"], bridge::contract::RELAY_CHANNEL_PLAY);
     assert_eq!(hello[1]["resume"], "retained");
     assert_eq!(hello[1]["generation"], 1);
     let (reply, response) = oneshot::channel();
@@ -580,4 +595,53 @@ fn navigation_cancels_the_game_task_without_waiting_for_play_io() {
     assert!(task.as_mut().poll(&mut cx).is_pending());
     assert!(guard.cancelled().now_or_never().is_some());
     assert_eq!(host.opens.get(), 2);
+}
+
+#[test]
+fn sign_out_keeps_control_until_confirmation_after_the_game_releases_play() {
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    let (mut commands, pending) = mpsc::channel(4);
+    let (mut joins, join_requests) = mpsc::channel(1);
+    let (_lifecycle, changed) = mpsc::channel(1);
+    let (_cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        join_requests,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::new(Cell::new(Refresh::None)),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let (reply, response) = oneshot::channel();
+    joins.try_send(play::Request { reply }).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    let (_, mut guard) = response
+        .now_or_never()
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_parts();
+    commands.try_send(AccountOperation::SignOut).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(guard.cancelled().now_or_never().is_some());
+    drop(guard);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(
+        host.closes.get(),
+        0,
+        "play retirement must retain the sign-out exchange"
+    );
+    let event =
+        serde_json::to_vec(&json!({"type":"account", "account":{"state":"signed_out"}})).unwrap();
+    host.control_input
+        .borrow_mut()
+        .extend((event.len() as u32).to_be_bytes());
+    host.control_input.borrow_mut().extend(event);
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(host.closes.get(), 1);
+    assert_eq!(host.opens.get(), 2, "sign-out must not retry control");
 }

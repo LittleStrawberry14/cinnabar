@@ -1,5 +1,12 @@
 # Phases 2-5 Completion Ledger
 
+## Browser host composition
+
+The browser host uses verified memory carriers, the shared game frame and HUD, injected
+session I/O and canvas input. A wasm artifact builds. Browser boot and join/transfer acceptance
+remain unverified; interactive UI controls, audio delivery/playback and hardware budgets remain
+incomplete. This adds no completed parity or browser-release gate.
+
 ## Redstone dust item sprite
 
 A reviewed default binding selects the item-atlas dust sprite, leaving placed

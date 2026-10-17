@@ -281,10 +281,13 @@ impl<T: RelayTransport> Session<T> {
         (
             bridge::FramedReader<tokio::io::ReadHalf<T::Stream>>,
             bridge::FrameQueue,
-            impl std::future::Future<Output = ()> + use<T>,
+            std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
         ),
         CloseReason,
-    > {
+    >
+    where
+        T::Stream: 'static,
+    {
         let State::Ready(generation) = self.state else {
             return Err(CloseReason::Protocol);
         };
@@ -306,11 +309,16 @@ impl<T: RelayTransport> Session<T> {
                 .await
                 .map_err(|_| CloseReason::Transport)?;
                 let (read, write) = tokio::io::split(play.into_inner());
-                Ok(bridge::tasks::prepare_bounded_connection(
+                let (reader, frames, writer) = bridge::tasks::prepare_bounded_connection(
                     read,
                     write,
                     MAX_FRAME_LEN,
                     RELAY_PLAY_MESSAGE_BYTES,
+                );
+                Ok((
+                    reader,
+                    frames,
+                    Box::pin(writer) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
                 ))
             },
             expires,

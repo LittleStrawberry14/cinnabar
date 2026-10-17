@@ -1,14 +1,16 @@
 //! Browser-local control driver and verified asset download admission.
 use crate::relay::{self, Host, Refresh};
-use assets::carriers::startup::delivery::{DeliveryManifest, MemoryCarriers, startup_carriers};
+use assets::carriers::startup::delivery::{DeliveryManifest, MemoryCarriers};
 use futures::channel::{mpsc, oneshot};
 use js_sys::Function;
 use std::{cell::Cell, rc::Rc, time::Duration};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::{JsError, JsValue, wasm_bindgen};
 use wasm_bindgen_futures::spawn_local;
 use web_transport::{CloseReason, browser::BrowserTransport, session::AccountOperation};
 
+mod game;
 mod timer;
+pub use game::Game;
 
 /// Samples the browser's monotonic clock only at the platform edge.
 fn now() -> Duration {
@@ -19,6 +21,7 @@ fn now() -> Duration {
 struct BrowserHost {
     origin: String,
     observe: Function,
+    ready: Rc<Cell<bool>>,
 }
 impl Host for BrowserHost {
     type Transport = BrowserTransport;
@@ -38,6 +41,13 @@ impl Host for BrowserHost {
         ))
     }
     fn observe(&self, value: serde_json::Value) {
+        if let Some(state) = value.get("state").and_then(serde_json::Value::as_str) {
+            if state == "connected" {
+                self.ready.set(true);
+            } else if matches!(state, "disconnected" | "refused" | "retry_exhausted") {
+                self.ready.set(false);
+            }
+        }
         emit(&self.observe, value);
     }
 }
@@ -45,6 +55,8 @@ impl Host for BrowserHost {
 /// Owns bounded account commands; dropping the page cancels its controller.
 #[wasm_bindgen]
 pub struct Page {
+    ready: Rc<Cell<bool>>,
+    observe: Function,
     commands: mpsc::Sender<AccountOperation>,
     joins: mpsc::Sender<crate::play::Request<web_transport::browser::BrowserStream>>,
     lifecycle: mpsc::Sender<()>,
@@ -58,6 +70,7 @@ impl Page {
     /// Opens QUIC first and falls back through the existing transport selector.
     #[wasm_bindgen(constructor)]
     pub fn new(origin: &str, observe: Function) -> Result<Page, JsError> {
+        let ready = Rc::new(Cell::new(false));
         let (commands, pending) = mpsc::channel(4);
         let (joins, requests) = mpsc::channel(1);
         let (lifecycle, changed) = mpsc::channel(1);
@@ -67,7 +80,8 @@ impl Page {
         spawn_local(relay::run(
             BrowserHost {
                 origin: origin.to_owned(),
-                observe,
+                observe: observe.clone(),
+                ready: Rc::clone(&ready),
             },
             pending,
             requests,
@@ -77,6 +91,8 @@ impl Page {
             cancelled,
         ));
         Ok(Page {
+            ready,
+            observe,
             commands,
             joins,
             lifecycle,
@@ -135,6 +151,9 @@ impl Page {
 
     /// Coalesces lifecycle changes even when the bounded wake slot is already occupied.
     fn set_suspended(&mut self, suspended: bool) {
+        if suspended {
+            self.ready.set(false);
+        }
         self.suspended.set(suspended);
         let _ = self.lifecycle.try_send(());
     }
@@ -166,7 +185,9 @@ impl Carriers {
     /// Supplies canonical filenames; JS never maintains a carrier list.
     pub fn entries(&self) -> String {
         serde_json::to_string(
-            &startup_carriers()
+            &self
+                .source
+                .entries()
                 .map(|carrier| (carrier.name, carrier.output))
                 .collect::<Vec<_>>(),
         )
@@ -182,9 +203,25 @@ impl Carriers {
     }
 
     /// Transfers verified startup carriers to the game host and starts the existing canvas.
-    pub fn boot(self, canvas: String) -> Result<(), JsError> {
+    pub fn boot(
+        self,
+        canvas: String,
+        input: &crate::BrowserInput,
+        identity: i64,
+    ) -> Result<Game, JsError> {
+        console_error_panic_hook::set_once();
         let startup = self.into_startup().map_err(error)?;
-        cinnabar::browser::run(startup, canvas).map_err(|error| JsError::new(&error.to_string()))
+        let identity = protocol::ClientRandomId::new(identity)
+            .ok_or_else(|| JsError::new("invalid client identity"))?;
+        let mut input = input.clone();
+        cinnabar::browser::run(
+            startup,
+            canvas,
+            identity,
+            Box::new(move || input.take_device()),
+        )
+        .map(Game::new)
+        .map_err(|error| JsError::new(&error.to_string()))
     }
 }
 /// Presents a carrier validation failure with the canonical rebuild hint.

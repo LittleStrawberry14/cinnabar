@@ -1932,6 +1932,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -2315,6 +2316,7 @@ dependencies = [
  "url",
  "uuid",
  "wat",
+ "web-time",
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
@@ -2463,6 +2465,8 @@ dependencies = [
  "simulation-clock",
  "test-alloc",
  "test-time",
+ "tokio",
+ "web-time",
  "windows-sys 0.61.2",
  "world",
  "zip",
@@ -2593,6 +2597,7 @@ dependencies = [
  "test-time",
  "tokio",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -2726,6 +2731,7 @@ dependencies = [
  "ui-screens",
  "url",
  "uuid",
+ "web-time",
  "world",
  "zip",
 ]
@@ -3525,6 +3531,7 @@ dependencies = [
  "tracing-error",
  "tracing-log",
  "tracing-subscriber",
+ "web-time",
  "windows-sys 0.61.2",
  "world",
 ]
@@ -4211,6 +4218,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "web-time",
  "world",
 ]
 
@@ -9779,8 +9787,11 @@ dependencies = [
  "assets",
  "bridge",
  "cinnabar",
+ "client-session",
+ "console_error_panic_hook",
  "futures",
  "js-sys",
+ "protocol",
  "semantic-input",
  "serde_json",
  "tokio",

@@ -160,24 +160,28 @@ impl MenuPreviewModel {
         let source = skin.geometry.clone();
         let skin = skin.clone();
         let (sender, receiver) = crossbeam_channel::bounded(1);
+        let work = move || {
+            let prepared = model_vertices(&skin).map(|vertices| PreparedModel {
+                bounds: skin
+                    .geometry
+                    .as_ref()
+                    .map(|_| super::fitting::OrbitBounds::new(&vertices)),
+                source: skin.geometry,
+                vertices,
+            });
+            let _ = sender.send(prepared);
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         if std::thread::Builder::new()
             .name("menu-skin-model".into())
-            .spawn(move || {
-                let prepared = model_vertices(&skin).map(|vertices| PreparedModel {
-                    bounds: skin
-                        .geometry
-                        .as_ref()
-                        .map(|_| super::fitting::OrbitBounds::new(&vertices)),
-                    source: skin.geometry,
-                    vertices,
-                });
-                let _ = sender.send(prepared);
-            })
+            .spawn(work)
             .is_err()
         {
             self.rejected = source;
             return None;
         }
+        #[cfg(target_arch = "wasm32")]
+        crate::browser_jobs::submit(crate::browser_jobs::Lane::Model, work);
         self.pending = Some(PendingModel { source, receiver });
         None
     }

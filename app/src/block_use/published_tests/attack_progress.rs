@@ -61,7 +61,7 @@ pub(super) fn interaction_app(mut world: World) -> App {
     world.insert_resource(carrier);
     let mut app = App::new();
     std::mem::swap(app.world_mut(), &mut world);
-    crate::app::interaction::configure(&mut app);
+    crate::game_frame::interaction::configure(&mut app);
     app
 }
 
