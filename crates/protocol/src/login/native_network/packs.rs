@@ -10,7 +10,6 @@ use bedrock_protocol_1_26_51::{packets, types::ResourcePackClientResponseData};
 use futures::{StreamExt, stream};
 use resource_pack::ResourcePackHandoff;
 use std::{collections::BTreeMap, io, path::Path, sync::Arc};
-use transfer::Download;
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
@@ -22,30 +21,7 @@ pub(super) async fn acquire(
     cache_root: Option<&Path>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
-    let mut downloads = Vec::new();
-    let mut ids = std::collections::BTreeSet::new();
-    let mut total = 0_u64;
-    let mut skipped_offers = 0_usize;
-    for pack in offer.resource_packs {
-        let id = pack.pack_id_version.pack_uuid;
-        if !ids.insert(id) {
-            skipped_offers += 1;
-            continue;
-        }
-        total = total
-            .checked_add(pack.pack_size.0)
-            .ok_or_else(|| invalid("pack sizes overflow"))?;
-        if downloads.len() >= resource_pack::MAX_PACKS
-            || pack.pack_size.0 > resource_pack::MAX_ARCHIVE_BYTES as u64
-            || total > resource_pack::MAX_STACK_ARCHIVE_BYTES as u64
-        {
-            return Err(invalid("pack offer exceeds download budget"));
-        }
-        downloads.push(Download::new(pack)?);
-    }
-    if skipped_offers != 0 {
-        tracing::warn!(skipped_offers, "skipped duplicate native pack offers");
-    }
+    let (downloads, mut budget) = transfer::Budget::offers(offer.resource_packs);
     let cache = if downloads.is_empty() {
         None
     } else {
@@ -106,14 +82,7 @@ pub(super) async fn acquire(
                 let download = downloads
                     .get_mut(&id)
                     .ok_or_else(|| invalid("pack data info was not advertised"))?;
-                total = total
-                    .checked_sub(download.size)
-                    .and_then(|sum| sum.checked_add(info.file_size.0))
-                    .ok_or_else(|| invalid("pack sizes overflow"))?;
-                if total > resource_pack::MAX_STACK_ARCHIVE_BYTES as u64 {
-                    return Err(invalid("pack transfer exceeds total budget"));
-                }
-                send_requests(connection, download.begin(info)?).await?;
+                send_requests(connection, budget.begin(download, info)?).await?;
             }
             packets::Packet::ResourcePackChunkData(chunk) => {
                 let id = pack_id(
@@ -128,25 +97,6 @@ pub(super) async fn acquire(
                 let complete_before = download.complete.is_some();
                 send_requests(connection, download.chunk(chunk)?).await?;
                 if !complete_before && download.complete.is_some() {
-                    let bytes = Arc::clone(
-                        download
-                            .complete
-                            .as_ref()
-                            .expect("completed chunk owns bytes"),
-                    );
-                    acquisition::verify(
-                        bytes,
-                        id,
-                        download
-                            .offer
-                            .pack_id_version
-                            .pack_version
-                            .version
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
-                    .await
-                    .map_err(failure)?;
                     stores.queue(&cache, download, &cancelled.0);
                     if downloads
                         .values()

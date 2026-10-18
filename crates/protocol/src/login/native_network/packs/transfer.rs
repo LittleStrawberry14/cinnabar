@@ -43,15 +43,98 @@ const fn request_window(bytes: &[u8]) -> u32 {
     value
 }
 
+/// Application admission is separate from the bounded bytes accepted over the connection.
+pub(super) const MAX_TRANSFER_BYTES: u64 = 2 * resource_pack::MAX_STACK_ARCHIVE_BYTES as u64;
+
+/// A completed transfer may be intentionally excluded from application admission.
+pub(super) enum Completion {
+    Archive(Arc<Vec<u8>>),
+    Excluded,
+}
+
+/// Reserves offered archives and bounds size changes without making optional content mandatory.
+pub(super) struct Budget {
+    transferred: u64,
+    retained: u64,
+}
+
+impl Budget {
+    /// Selects bounded first offers; excluded entries remain subject to final stack policy.
+    pub(super) fn offers(offers: Vec<PackInfoData>) -> (Vec<Download>, Self) {
+        let mut downloads = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut retained = 0_u64;
+        let mut skipped = 0_usize;
+        for offer in offers {
+            let first = seen.insert(offer.pack_id_version.pack_uuid);
+            if !first
+                || downloads.len() >= resource_pack::MAX_PACKS
+                || offer.pack_size.0 > resource_pack::MAX_ARCHIVE_BYTES as u64
+                || offer.pack_size.0 > resource_pack::MAX_STACK_ARCHIVE_BYTES as u64 - retained
+            {
+                skipped += 1;
+                continue;
+            }
+            match Download::new(offer) {
+                Ok(download) => {
+                    retained += download.size;
+                    downloads.push(download);
+                }
+                Err(_) => skipped += 1,
+            }
+        }
+        if skipped != 0 {
+            tracing::warn!(
+                skipped,
+                "skipped duplicate, invalid or over-budget native pack offers"
+            );
+        }
+        (
+            downloads,
+            Self {
+                transferred: retained,
+                retained,
+            },
+        )
+    }
+
+    /// Consumes a bounded transfer even when its updated size prevents application admission.
+    pub(super) fn begin(
+        &mut self,
+        download: &mut Download,
+        info: packets::ResourcePackDataInfo,
+    ) -> Result<Vec<packets::ResourcePackChunkRequest>, ProtocolError> {
+        let transferred = self
+            .transferred
+            .checked_sub(download.size)
+            .and_then(|total| total.checked_add(info.file_size.0))
+            .filter(|total| *total <= MAX_TRANSFER_BYTES)
+            .ok_or_else(|| invalid("pack transfers exceed memory budget"))?;
+        let retained = self
+            .retained
+            .checked_sub(download.size)
+            .ok_or_else(|| invalid("pack admission accounting is invalid"))?;
+        let retain = info.file_size.0 <= resource_pack::MAX_ARCHIVE_BYTES as u64
+            && info.file_size.0 <= resource_pack::MAX_STACK_ARCHIVE_BYTES as u64 - retained;
+        let size = info.file_size.0;
+        let requests = download.begin(info, retain)?;
+        self.transferred = transferred;
+        self.retained = retained + if retain { size } else { 0 };
+        Ok(requests)
+    }
+}
+
 pub(super) struct Download {
     pub(super) offer: PackInfoData,
     pub(super) name: wire::Str,
     pub(super) size: u64,
-    pub(super) complete: Option<Arc<Vec<u8>>>,
+    pub(super) complete: Option<Completion>,
     pub(super) cache_hit: bool,
     chunk_size: u32,
     chunk_count: u32,
     hash: [u8; 32],
+    digest: Sha256,
+    retain: bool,
     requested: u32,
     next_write: u32,
     fragments: BTreeMap<u32, Bytes>,
@@ -80,6 +163,8 @@ impl Download {
             chunk_size: 0,
             chunk_count: 0,
             hash: [0; 32],
+            digest: Sha256::new(),
+            retain: true,
             requested: 0,
             next_write: 0,
             fragments: BTreeMap::new(),
@@ -88,19 +173,16 @@ impl Download {
     }
 
     /// Starts one bounded chunk transfer; the advertised count is informational.
-    pub(super) fn begin(
+    fn begin(
         &mut self,
         info: packets::ResourcePackDataInfo,
+        retain: bool,
     ) -> Result<Vec<packets::ResourcePackChunkRequest>, ProtocolError> {
         if self.chunk_size != 0 || self.complete.is_some() {
             return Err(invalid("repeated pack data info"));
         }
         self.check_name(&info.resource_name)?;
-        if info.file_size.0 == 0
-            || info.file_size.0 > resource_pack::MAX_ARCHIVE_BYTES as u64
-            || info.chunk_size.0 == 0
-            || info.file_hash.len() != 32
-        {
+        if info.file_size.0 == 0 || info.chunk_size.0 == 0 || info.file_hash.len() != 32 {
             return Err(invalid("invalid pack size, chunk size or SHA-256"));
         }
         let count = info.file_size.0.div_ceil(info.chunk_size.0.into());
@@ -109,9 +191,11 @@ impl Download {
             .filter(|count| *count <= i32::MAX as u32)
             .ok_or_else(|| invalid("pack chunk count exceeds transfer budget"))?;
         self.size = info.file_size.0;
+        self.retain = retain;
         self.chunk_size = info.chunk_size.0;
         self.hash.copy_from_slice(&info.file_hash);
-        self.name = info.resource_name;
+        // This short name outlives its packet, so release the packet's decoded batch.
+        self.name = Bytes::copy_from_slice(info.resource_name.as_bytes()).into();
         Ok(self.requests())
     }
 
@@ -134,21 +218,32 @@ impl Download {
         if chunk.chunk_data.len() as u64 != expected {
             return Err(invalid("pack chunk length does not match remaining data"));
         }
-        self.fragments.insert(index, chunk.chunk_data);
+        // A retained slice must not pin the decoded batch containing unrelated siblings.
+        let bytes = if index == self.next_write {
+            chunk.chunk_data
+        } else {
+            Bytes::copy_from_slice(&chunk.chunk_data)
+        };
+        self.fragments.insert(index, bytes);
         while let Some(bytes) = self.fragments.remove(&self.next_write) {
-            self.bytes
-                .try_reserve(bytes.len())
-                .map_err(|_| invalid("pack allocation failed"))?;
-            self.bytes.extend_from_slice(&bytes);
+            self.digest.update(&bytes);
+            if self.retain {
+                self.bytes
+                    .try_reserve(bytes.len())
+                    .map_err(|_| invalid("pack allocation failed"))?;
+                self.bytes.extend_from_slice(&bytes);
+            }
             self.next_write += 1;
         }
         if self.next_write == self.chunk_count {
-            if self.bytes.len() as u64 != self.size
-                || <[u8; 32]>::from(Sha256::digest(&self.bytes)) != self.hash
-            {
+            if <[u8; 32]>::from(self.digest.clone().finalize()) != self.hash {
                 return Err(invalid("downloaded pack SHA-256 mismatch"));
             }
-            self.complete = Some(Arc::new(std::mem::take(&mut self.bytes)));
+            self.complete = Some(if self.retain {
+                Completion::Archive(Arc::new(std::mem::take(&mut self.bytes)))
+            } else {
+                Completion::Excluded
+            });
         }
         Ok(self.requests())
     }
@@ -191,6 +286,7 @@ pub(super) fn finish(
     stack: packets::ResourcePackStack,
     offer_required: bool,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
+    let required = offer_required || stack.texture_pack_required;
     if downloads
         .values()
         .any(|download| download.complete.is_none())
@@ -208,13 +304,16 @@ pub(super) fn finish(
             .ok()
             .and_then(|name| pack_id(name).ok());
         let Some(id) = id else {
-            if stack.texture_pack_required {
+            if required {
                 return Err(invalid("required stack identity is invalid"));
             }
             skipped += 1;
             continue;
         };
         if seen.contains(&id) {
+            if required {
+                return Err(invalid("required stack contains a duplicate pack"));
+            }
             skipped += 1;
             continue;
         }
@@ -222,14 +321,14 @@ pub(super) fn finish(
             if super::builtins::contains(id, &pack.version.to_string_lossy()) {
                 continue;
             }
-            if stack.texture_pack_required {
+            if required {
                 return Err(invalid("required stack contains an unavailable pack"));
             }
             skipped += 1;
             continue;
         };
         if download.offer.pack_id_version.pack_version.version != pack.version {
-            if stack.texture_pack_required {
+            if required {
                 return Err(invalid("required stack pack version differs from offer"));
             }
             skipped += 1;
@@ -239,9 +338,16 @@ pub(super) fn finish(
         let download = downloads
             .remove(&id)
             .expect("matching stack offer is available");
-        let bytes = download
+        let complete = download
             .complete
             .ok_or_else(|| invalid("stack pack is incomplete"))?;
+        let Completion::Archive(bytes) = complete else {
+            if required {
+                return Err(invalid("required stack pack exceeds application budget"));
+            }
+            skipped += 1;
+            continue;
+        };
         let bytes =
             Arc::try_unwrap(bytes).map_err(|_| invalid("pack cache worker still owns archive"))?;
         archives.push(ResourcePackArchive::with_content_key(
@@ -258,6 +364,5 @@ pub(super) fn finish(
             "skipped unavailable or duplicate native stack entries"
         );
     }
-    Ok(ResourcePackHandoff::from_archives(archives)
-        .with_required(offer_required || stack.texture_pack_required))
+    Ok(ResourcePackHandoff::from_archives(archives).with_required(required))
 }

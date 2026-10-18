@@ -1,6 +1,6 @@
 //! Runtime-only HTTP and persistent archive I/O for native direct joins.
 
-use super::transfer::Download;
+use super::transfer::{Completion, Download};
 use resource_pack::cache::{ArchiveCache, ArchiveCacheKey, DEFAULT_CACHE_QUOTA};
 use std::{
     io,
@@ -75,7 +75,7 @@ pub(super) async fn preload(
         .await
         {
             Ok(Ok(Some(bytes))) => {
-                download.complete = Some(Arc::new(bytes));
+                download.complete = Some(Completion::Archive(Arc::new(bytes)));
                 download.cache_hit = true;
                 return download;
             }
@@ -134,7 +134,7 @@ pub(super) async fn preload(
         }
         .await;
         match result {
-            Ok(bytes) => download.complete = Some(bytes),
+            Ok(bytes) => download.complete = Some(Completion::Archive(bytes)),
             Err(_) => {
                 tracing::warn!(%id, "native pack CDN acquisition failed; requesting game chunks")
             }
@@ -144,7 +144,7 @@ pub(super) async fn preload(
 }
 
 /// Checks archive structure and manifest identity on a blocking worker.
-pub(super) async fn verify(bytes: Arc<Vec<u8>>, id: uuid::Uuid, version: String) -> io::Result<()> {
+async fn verify(bytes: Arc<Vec<u8>>, id: uuid::Uuid, version: String) -> io::Result<()> {
     tokio::task::spawn_blocking(move || {
         resource_pack::verify_archive_identity(&bytes, id, &version)
     })
@@ -178,7 +178,7 @@ impl Stores {
         if download.cache_hit {
             return;
         }
-        let (Some(cache), Some(bytes)) = (cache, &download.complete) else {
+        let (Some(cache), Some(Completion::Archive(bytes))) = (cache, &download.complete) else {
             return;
         };
         let Ok(key) = ArchiveCacheKey::new(
