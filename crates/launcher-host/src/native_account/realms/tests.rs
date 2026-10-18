@@ -1,6 +1,20 @@
 use super::*;
 use launcher::accounts::AccountProfile;
 
+/// Completes a fixture's nonblocking transaction, retrying only temporary lease contention.
+fn transaction<T>(what: &str, mut perform: impl FnMut() -> io::Result<T>) -> T {
+    let mut completed = None;
+    test_time::eventually(what, || match perform() {
+        Ok(value) => {
+            completed = Some(value);
+            true
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
+        Err(error) => panic!("{what}: {error}"),
+    });
+    completed.expect("transaction completed")
+}
+
 /// Service transport admission preserves IPv6 text and never guesses unknown/signed transports as RakNet.
 #[test]
 fn realm_transport_and_catalog_metadata_follow_the_service() {
@@ -64,29 +78,29 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
         .into_account(credentials)
         .unwrap();
     let checkpoint = sdk.checkpoint().unwrap();
-    let pending = store
-        .try_begin_native_sign_in("synthetic-generation", None)
-        .unwrap();
-    pending
-        .try_publish(
+    let pending = transaction("reserve Realm fixture sign-in", || {
+        store.try_begin_native_sign_in("synthetic-generation", None)
+    });
+    transaction("publish Realm fixture OAuth", || {
+        pending.try_publish(
             "synthetic-access",
             "synthetic-refresh",
             "2099-01-01T00:00:00Z",
         )
-        .unwrap();
-    pending
-        .try_publish_checkpoint(checkpoint.as_bytes())
-        .unwrap();
-    pending
-        .try_commit(&AccountProfile::from_identity("123", "Synthetic").unwrap())
-        .unwrap();
+    });
+    transaction("publish Realm fixture checkpoint", || {
+        pending.try_publish_checkpoint(checkpoint.as_bytes())
+    });
+    transaction("commit Realm fixture sign-in", || {
+        pending.try_commit(&AccountProfile::from_identity("123", "Synthetic").unwrap())
+    });
     let account = Arc::new(NativeAccount::new(
         store.clone(),
         directory.path().join("device.json"),
         Some("123".into()),
     ));
     let mut operation = account.begin().unwrap();
-    let lease = store.try_native_lease().unwrap();
+    let lease = transaction("acquire Realm fixture account", || store.try_native_lease());
     operation.cached = Some(Cached {
         provider: None,
         generation: lease.generation().into(),
@@ -137,7 +151,9 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
     assert!(listing.into_current_cards(&account).is_some());
 
     let mut operation = account.begin().unwrap();
-    let lease = store.try_native_lease().unwrap();
+    let lease = transaction("reacquire Realm fixture account", || {
+        store.try_native_lease()
+    });
     operation
         .cached
         .as_mut()
@@ -164,7 +180,7 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
         "an earlier credential revision published its list"
     );
     assert_eq!(
-        store.try_native_lease().unwrap().refresh_token(),
+        transaction("read Realm fixture rotation", || store.try_native_lease()).refresh_token(),
         "rotated-refresh"
     );
 }
