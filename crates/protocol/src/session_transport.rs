@@ -203,6 +203,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 Some(Err(error)) => return Err(error),
                 None => return Err(SessionFailure::ConnectionClosed.into()),
             };
+            #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+            let ReadItem::Core(frame) = frame;
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             let frame = match frame {
                 ReadItem::Core(frame) => frame,
                 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
