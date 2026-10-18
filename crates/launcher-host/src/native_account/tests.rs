@@ -317,3 +317,61 @@ fn changed_xuid_cannot_reuse_a_service_session_without_a_selected_account() {
     assert_eq!(lease.refresh_token(), "current-b-refresh");
     assert!(lease.checkpoint().unwrap().is_some());
 }
+
+/// A live process cannot republish its older cache after another lease persisted an eviction.
+#[test]
+fn stale_checkpoint_owner_cannot_undo_another_processes_rejection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-oauth.json");
+    seed(&path, "one-generation");
+    let account = Arc::new(NativeAccount::new(
+        AccountStore::new(path),
+        directory.path().join("device.json"),
+        None,
+    ));
+    let sdk = MicrosoftAuth::new(authentication_policy())
+        .unwrap()
+        .into_account(
+            Credentials::from_tokens(
+                authentication_policy().client_id,
+                "before-access".into(),
+                "before-refresh".into(),
+                UNIX_EPOCH + Duration::from_secs(4_000_000_000),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut lease = account.store.try_native_lease().unwrap();
+    lease
+        .publish_active_checkpoint(sdk.checkpoint().unwrap().as_bytes())
+        .unwrap();
+    let stale_binding = lease.binding();
+    drop(lease);
+    account
+        .store
+        .try_native_lease()
+        .unwrap()
+        .publish_active_checkpoint(b"new-checkpoint-with-refused-issuance-removed")
+        .unwrap();
+
+    let mut operation = account.begin().unwrap();
+    operation.cached = Some(Cached {
+        generation: "one-generation".into(),
+        binding: stale_binding,
+        owner: Owner::Xbox(Box::new(sdk)),
+        identity: None,
+    });
+    operation.lease = Some(account.store.try_native_lease().unwrap());
+    assert_eq!(
+        operation.persist().unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    drop(operation);
+    assert!(account.state.lock().unwrap().cached.is_none());
+    let lease = account.store.try_native_lease().unwrap();
+    assert_eq!(lease.refresh_token(), "before-refresh");
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        b"new-checkpoint-with-refused-issuance-removed"
+    );
+}

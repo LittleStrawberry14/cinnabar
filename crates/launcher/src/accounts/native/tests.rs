@@ -199,3 +199,33 @@ fn failed_verified_proof_promotion_keeps_the_saved_refresh_current() {
         b"current-proof"
     );
 }
+
+/// The newest active checkpoint suppresses a saved backup that still contains a refused issuance.
+#[test]
+fn active_checkpoint_replacement_survives_reopening_a_selected_account() {
+    let fixture = Fixture::new();
+    fixture.sign_in("selected");
+    fixture
+        .store
+        .remember_current("123", "Saved", None)
+        .unwrap();
+    let mut lease = fixture.store.try_native_lease().unwrap();
+    lease
+        .publish_verified_identity("123", b"includes-refused-issuance")
+        .unwrap();
+    let previous = lease.binding();
+    lease
+        .publish_active_checkpoint(b"refused-issuance-removed")
+        .unwrap();
+    assert_ne!(lease.binding(), previous);
+    drop(lease);
+
+    let reopened = AccountStore::new(fixture.store.active_cache.clone());
+    let lease = reopened.try_native_lease().unwrap();
+    assert_eq!(lease.selected_id(), Some("123"));
+    assert_eq!(lease.refresh_token(), "old-refresh");
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        b"refused-issuance-removed"
+    );
+}
