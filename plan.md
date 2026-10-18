@@ -799,6 +799,14 @@ the handle sprite. Owning regressions and the focused crate check pass; the
 missing-part regression fails on the previous envelope model.
 Rendered/input acceptance, native-server placement and broader parity remain incomplete.
 
+## Flowerbed stem tint
+
+Flowerbed stems use biome grass tint while petals retain their sprite colours.
+Original-art compiler coverage checks every registered flowerbed state and the
+carrier roundtrip. The focused check and local BDS rendering with a rebuilt
+carrier pass against the official client's green stems. Broader terrain parity
+and hardware performance gates stay open.
+
 ## Bubble column terrain geometry
 
 Bubble columns compile separate outer and inner side shells with directional
@@ -2150,6 +2158,8 @@ not close a parity or visual acceptance gate.
   merge and drag; a drag clamps contributions after an authoritative decrease.
 - World-use selection reads player backing separately from screen predictions and recovery.
   Local backing mutations and hotbar changes still wait for transport admission.
+- Held books read their identity and contents from player backing. Opening admits an item-use
+  transaction, including initialized and written books; initialization only creates absent user data.
 - A normal close acknowledgement retires that screen's unanswered requests without
   committing their predictions. HUD mining requests retain their separate ownership,
   and HUD/crafting observers follow the admitted packet and backing state.
@@ -2172,8 +2182,21 @@ not close a parity or visual acceptance gate.
 - Server UI result previews remain admitted for existing screen consumers. Moving their
   ownership to locally generated station previews is incomplete and must preserve result
   display and taking together.
-- Incomplete: crafting remainders and multiple results, enchanting prediction and availability,
-  all station membership rules, ability updates beyond retained evidence,
+- Brewing bottle cells use a one-item limit derived from their named window run. Decoded
+  potion and container mix records retain their wire order and allocation credit separately
+  from ordinary recipe IDs. Runtime configured membership and routing remain incomplete.
+  Ingredient and fuel cells use admitted item capacity.
+- Loom banner inputs check the admitted item identity and typed root Type. Grindstone inputs
+  require an enchantment List or admitted damageability without a true Unbreakable Byte.
+  Valid durability components retain a zero Int maximum as damageable, without a durability bar
+  or positive repair maximum. Inventory and world registry admission share that maximum rule.
+  Registry changes retire placements or fallback routes whose
+  admission changes. Cancelling unsent gestures restores the sparse owners they replaced,
+  including empty cursor ownership; server rejection keeps its separate response behavior.
+  Registry-dependent malformed component loading and remaining station membership checks
+  are incomplete.
+- Incomplete: book-edit publication and replacement ordering, crafting remainders and multiple results, enchanting prediction and availability,
+  remaining station membership rules, ability updates beyond retained evidence,
   complete registry/model coverage, legacy response keys and alias-resolved item data, and complete live
   pickup, reconnect and close-lifetime acceptance. These changes do not close the inventory
   parity gate.
@@ -9831,6 +9854,13 @@ choices remain provisional compatibility data. Complete native, metadata, versio
 and custom base-item coverage is incomplete. Optional Java animation name routing
 remains a separate incomplete admission path. This does not close the complete
 equipment parity gate. `make assets` rebuilds carriers that lack these records.
+
+Canonical empty component data preserves the compiled native item grip even when
+an item registry marks the item component based. Explicit hand flags still override it;
+malformed, missing nonempty definitions and unknown versions remain unresolved.
+Original regressions cover upright and mirrored art plus retained equipment refresh.
+A local fishing-rod check restores the upright grip and first-person art direction.
+Incomplete: a third-person rod rotation difference remains against native Bedrock.
 
 ## Spawner display actors
 

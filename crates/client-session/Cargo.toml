@@ -10,6 +10,7 @@ test-support = []
 native-networking = ["protocol/native-networking"]
 
 [dependencies]
+render-api = { path = "../render-api" }
 simulation-clock = { path = "../simulation-clock" }
 bridge = { path = "../bridge" }
 crossbeam-channel = "0.5"

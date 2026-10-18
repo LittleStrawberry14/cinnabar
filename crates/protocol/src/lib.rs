@@ -110,9 +110,9 @@ pub use interaction::{
     swing_arm_packet, use_actor_packet, use_item_as_attack_packet, writable_book_init_change,
 };
 pub use inventory::recipes::{
-    BrewingItem, BrewingRecipe, MAX_RECIPE_INGREDIENTS, MultiRecipe, RECIPE_ANY_AUX,
-    RECIPE_OWNED_BYTES, RecipeCatalog, RecipeDefinition, RecipeHandle, RecipeIdentity,
-    RecipeIdentityHandle, RecipeIngredient, RecipeIngredientView, RecipeOutput,
+    BrewingItem, BrewingMix, BrewingMixItem, BrewingRecipe, MAX_RECIPE_INGREDIENTS, MultiRecipe,
+    RECIPE_ANY_AUX, RECIPE_OWNED_BYTES, RecipeCatalog, RecipeDefinition, RecipeHandle,
+    RecipeIdentity, RecipeIdentityHandle, RecipeIngredient, RecipeIngredientView, RecipeOutput,
     RecipeUnlockOperation, RecipeUnlockState, RecipeUnlockUpdate, RecipeUnlockingContext,
     RecipeUpdate, ScreenIngredient, ScreenRecipe, ScreenRecipeKind, ScreenRecipes,
     decode_recipe_unlocks, decode_recipe_update, empty_recipe_extra, recipe_binding_supported,
@@ -159,19 +159,22 @@ pub use inventory::{
 };
 pub use item::{
     ActorActionEvent, ActorActionKind, ActorHandedness, ArmorEquipmentEvent, EquipmentEvent,
-    FoodProperties, HOTBAR_SLOT_COUNT, ItemActorEvent, ItemAnvilData, ItemAttackCooldown,
-    ItemAttackTiming, ItemBannerPattern, ItemBook, ItemComponents, ItemDisplay, ItemNbtEdit,
-    ItemPacketError, ItemRegistryEntry, ItemRegistryEvent, ItemRegistryVersion, ItemStackFacts,
-    ItemStackFactsCache, ItemUseCooldown, KineticWeaponTiming, MAX_ACTION_IDENTIFIER_BYTES,
-    MAX_ANIMATE_ENTITY_IDS, MAX_ANIMATION_IDENTIFIER_BYTES, MAX_BOOK_PAGES, MAX_ITEM_EXTRA_BYTES,
-    MAX_ITEM_REGISTRY_ENTRIES, NetworkItemStack, book_init_extra, book_needs_init, edit_item_extra,
-    held_items_match, item_anvil_data, item_banner_patterns, item_book, item_bundle_id,
-    item_charged_projectile, item_custom_color, item_custom_name, item_display,
-    item_enchantment_level, item_enchantment_level_value, item_extra_damage,
-    item_extra_damage_integer, item_extra_damage_value, item_extra_lock, item_extra_slot_locked,
-    item_extra_unbreakable, item_filtered_custom_name, item_has_enchantment_list, item_repair_cost,
-    item_stack_damage, item_use_progress_packet, item_user_data_equal, offhand_equipment_packet,
-    select_hotbar_slot_packet, vanilla_item_registry,
+    FoodProperties, HOTBAR_SLOT_COUNT, ItemActorEvent, ItemAttackCooldown, ItemAttackTiming,
+    ItemBannerPattern, ItemBook, ItemComponents, ItemDisplay, ItemPacketError, ItemRegistryEntry,
+    ItemRegistryEvent, ItemRegistryVersion, ItemStackFacts, ItemStackFactsCache, ItemUseCooldown,
+    KineticWeaponTiming, MAX_ACTION_IDENTIFIER_BYTES, MAX_ANIMATE_ENTITY_IDS,
+    MAX_ANIMATION_IDENTIFIER_BYTES, MAX_BOOK_PAGES, MAX_ITEM_EXTRA_BYTES,
+    MAX_ITEM_REGISTRY_ENTRIES, NetworkItemStack, held_items_match, item_banner_patterns,
+    item_banner_type, item_book, item_bundle_id, item_charged_projectile, item_custom_color,
+    item_display, item_enchantment_level, item_enchantment_level_value, item_extra_damage,
+    item_extra_damage_integer, item_extra_damage_value, item_extra_unbreakable,
+    item_has_enchantment_list, item_stack_damage, item_use_progress_packet,
+    offhand_equipment_packet, select_hotbar_slot_packet, vanilla_item_registry,
+};
+pub use item::{
+    ItemAnvilData, ItemNbtEdit, book_init_extra, book_needs_init, edit_item_extra, item_anvil_data,
+    item_custom_name, item_extra_lock, item_extra_slot_locked, item_filtered_custom_name,
+    item_repair_cost, item_user_data_equal,
 };
 pub use item_capacity::{ITEM_DEFAULT_MAX_STACK_SIZE, vanilla_item_capacity};
 pub use respawn::{respawn_ready_packet, respawn_request_packet};
@@ -244,18 +247,16 @@ pub use world::{
     CustomStateValue, CustomTransformation, CustomVisualComponents, DaylightCycleUpdateEvent,
     DimensionHeightDiagnostic, DimensionRange, GameRulesEvent, HeightmapDiagnostic,
     LevelChunkEvent, LevelChunkMode, MAP_IMAGE_SIDE, MAX_BIOME_DEFINITIONS, MAX_BIOME_NAME_BYTES,
-    MAX_DIMENSION_DEFINITIONS, MAX_SUB_CHUNK_COLUMN_HEIGHT, MAX_SUB_CHUNK_REQUESTS, MapDataEvent,
-    MovePlayerEvent, MovePlayerMode, MovementCorrectionSubject, MovementEffectEvent,
-    MovementEffectKind, NETHER_DIMENSION_ID, OVERWORLD_CLOCK_ID, OVERWORLD_CLOCK_NAME,
-    OpenSignEvent, PLAYER_NETWORK_OFFSET, PlayerGameMode, PlayerMovementCorrectionEvent,
-    PublisherUpdateEvent, RespawnEvent, STANDING_PLAYER_EYE_HEIGHT, SetTimeEvent,
-    SubChunkBatchEvent, SubChunkDiagnostic, SubChunkEntryEvent, SubChunkReplyAdmissionEvent,
-    SubChunkRequestMember, SubChunkRequestReceipt, SubChunkResult, SubChunkUnavailable,
-    SyncedBlockUpdateEvent, WeatherChannel, WeatherUpdateEvent, WorldBootstrap,
-    WorldClockDefinition, WorldClockState, WorldClockUpdateEvent, WorldEnvironmentBootstrap,
-    WorldEvent, WorldPacketError, WorldSpawnEvent, WorldWireError, air_network_id,
-    block_name_sort_key, block_state_network_hash, into_world_event, request_sub_chunk_column,
-    request_sub_chunks, sub_chunk_request_offset, vanilla_dimension_range,
+    MAX_DIMENSION_DEFINITIONS, MapDataEvent, MovePlayerEvent, MovePlayerMode,
+    MovementCorrectionSubject, MovementEffectEvent, MovementEffectKind, NETHER_DIMENSION_ID,
+    OVERWORLD_CLOCK_ID, OVERWORLD_CLOCK_NAME, OpenSignEvent, PLAYER_NETWORK_OFFSET, PlayerGameMode,
+    PlayerMovementCorrectionEvent, PublisherUpdateEvent, RespawnEvent, STANDING_PLAYER_EYE_HEIGHT,
+    SetTimeEvent, SubChunkBatchEvent, SubChunkDiagnostic, SubChunkEntryEvent,
+    SubChunkReplyAdmissionEvent, SubChunkResult, SubChunkUnavailable, SyncedBlockUpdateEvent,
+    WeatherChannel, WeatherUpdateEvent, WorldBootstrap, WorldClockDefinition, WorldClockState,
+    WorldClockUpdateEvent, WorldEnvironmentBootstrap, WorldEvent, WorldPacketError,
+    WorldSpawnEvent, WorldWireError, air_network_id, block_name_sort_key, block_state_network_hash,
+    into_world_event, request_sub_chunk_column, request_sub_chunks, vanilla_dimension_range,
 };
 
 mod movement_transport;
