@@ -2,6 +2,85 @@
 use super::*;
 use tokio::sync::{mpsc, oneshot};
 
+struct LeaseContendedService<'a> {
+    account: Arc<NativeAccount>,
+    lifetime: &'a TitlePresenceLifetime,
+    held: Mutex<Option<Box<dyn FnOnce()>>>,
+    attempted: mpsc::Sender<()>,
+    removed: std::sync::atomic::AtomicUsize,
+}
+
+impl Service for LeaseContendedService<'_> {
+    type Scope = PresenceScope;
+
+    async fn bind(&self) -> io::Result<PresenceScope> {
+        let scope = NativeService {
+            account: Arc::clone(&self.account),
+            lifetime: self.lifetime,
+        }
+        .bind()
+        .await?;
+        *self.held.lock().unwrap() = Some(crate::native_account::presence::tests::hold_operation(
+            &self.account,
+        ));
+        Ok(scope)
+    }
+
+    async fn update(
+        &self,
+        scope: &PresenceScope,
+        state: &bridge::XboxPresenceState,
+    ) -> io::Result<Option<Duration>> {
+        self.attempted.send(()).await.unwrap();
+        Arc::clone(&self.account)
+            .update_title_presence(scope, state)
+            .await
+    }
+
+    async fn remove(&self, _: &PresenceScope) -> io::Result<()> {
+        // A successful cleanup cannot manufacture a prior remote write; this
+        // control lets the real publisher report its own retirement outcome.
+        self.removed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// A timeout on the real account lease precedes every SDK/title request and cannot retain ambiguity.
+#[tokio::test(start_paused = true)]
+async fn lease_contended_update_does_not_block_original_presence_retirement() {
+    let namespace = tempfile::tempdir().unwrap();
+    let account = crate::native_account::presence::tests::verified_account(namespace.path());
+    let shared = Mutex::new(Snapshot::default());
+    let lifetime = TitlePresenceLifetime::new();
+    let (attempted, mut attempts) = mpsc::channel(1);
+    let service = LeaseContendedService {
+        account,
+        lifetime: &lifetime,
+        held: Mutex::new(None),
+        attempted,
+        removed: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let scenario = async {
+        attempts.recv().await.unwrap();
+        assert!(service.held.lock().unwrap().is_some());
+        tokio::time::advance(REQUEST_BUDGET + Duration::from_millis(1)).await;
+        lifetime.retire();
+        service.held.lock().unwrap().take().unwrap()();
+    };
+    tokio::join!(publish(&service, &shared, &lifetime), scenario);
+    assert_eq!(
+        lifetime.retirement(),
+        Some(TitlePresenceRetirement::Complete),
+        "lease contention before dispatch retained a permanent remote-write obligation"
+    );
+    assert_eq!(
+        service.removed.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "an undispatched first update cannot require a remote cleanup"
+    );
+}
+
 struct Fixture {
     updates: mpsc::Sender<bridge::XboxPresenceState>,
     update_release: Mutex<Vec<oneshot::Receiver<io::Result<()>>>>,

@@ -89,6 +89,7 @@ windows-sys = { version = "0.61", features = [
 [dev-dependencies]
 test-time = { path = "../test-time" }
 launcher = { path = "../launcher", features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 
 [lints]
