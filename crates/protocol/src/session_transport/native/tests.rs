@@ -213,3 +213,43 @@ async fn oversized_batches_never_consume_queue_capacity() {
 }
 
 pub(crate) mod service;
+
+#[tokio::test]
+async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
+    use bedrock_protocol_1_26_51::{packets, wire};
+    let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
+    let (fifth_read, received_fifth) = oneshot::channel();
+    let mut transport = SessionTransport::from_native(ReplayConnection {
+        incoming: receive,
+        fifth_read: Some(fifth_read),
+        reads: 0,
+    });
+    for index in 0..=QUEUED_BATCHES {
+        incoming
+            .send(
+                crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime {
+                    time: wire::ZigZag32(i32::try_from(index).unwrap()),
+                })])
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    received_fifth.await.unwrap();
+    transport.close().await.unwrap();
+    for index in 0..=QUEUED_BATCHES {
+        let item = transport
+            .recv()
+            .await
+            .expect("graceful close lost accepted pending ingress");
+        let super::super::Inbound::Packet(raw) = item else {
+            panic!("expected original pending packet prefix")
+        };
+        let packet = raw.decode().unwrap();
+        let packets::Packet::SetTime(actual) = &*packet.data else {
+            panic!("expected original SetTime")
+        };
+        assert_eq!(actual.time.0, i32::try_from(index).unwrap());
+    }
+    drop(incoming);
+}
