@@ -97,9 +97,9 @@ edition = "2024"
 rust-version = "1.99.0"
 
 [workspace.dependencies]
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "8af9aea1b3ccebd59a244eade9d7417cac9a784d" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "8af9aea1b3ccebd59a244eade9d7417cac9a784d" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "8af9aea1b3ccebd59a244eade9d7417cac9a784d" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c73aa2ad6299065c89f8cf08390ae5f077feba47" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c73aa2ad6299065c89f8cf08390ae5f077feba47" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c73aa2ad6299065c89f8cf08390ae5f077feba47" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
