@@ -8,6 +8,8 @@ from pathlib import Path
 import tempfile
 import tomllib
 import unittest
+import urllib.error
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -157,7 +159,7 @@ class ObservationTests(unittest.TestCase):
             self.assertIn("error", value["watches"][0])
             self.assertEqual(value["watches"][1]["status"], "ahead")
 
-    def test_api_uses_bounded_cached_gets_on_one_origin_and_rejects_redirects(self):
+    def test_api_uses_bounded_cached_gets_on_one_origin(self):
         class Response(io.BytesIO):
             def read(self, size=-1):
                 self.requested = size
@@ -182,9 +184,73 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(request.full_url, watch.API_ROOT + path)
         self.assertEqual(timeout, 30)
         self.assertEqual(response.requested, watch.MAX_RESPONSE_BYTES + 1)
-        self.assertIsNone(watch.NoRedirect().redirect_request(request, None, 302, "moved", {}, "https://elsewhere.invalid/"))
         with self.assertRaises(watch.WatchError):
             api("https://elsewhere.invalid/")
+
+    def test_redirect_handles_canonical_watch_and_derived_legacy_baseline(self):
+        manifest = json.loads((ROOT / ".github/networking-upstreams.json").read_text())
+        entry = next(row for row in manifest["watches"]
+                     if row["baseline"].get("go_module") == "github.com/sandertv/go-raknet")
+        legacy, revision = watch.go_pin((ROOT / "core/go.mod").read_text(), entry["baseline"]["go_module"])
+        legacy_url = f"{watch.API_ROOT}repos/{legacy}/commits/{revision}"
+        pinned = PIN
+        redirected = []
+
+        class Opener:
+            def open(self, request, timeout):
+                if request.full_url == legacy_url:
+                    request = watch.APIGetRedirect().redirect_request(
+                        request, io.BytesIO(b"moved"), 301, "moved", {},
+                        f"{watch.API_ROOT}repositories/7/commits/{revision}")
+                    redirected.append(request)
+                    value = {"sha": pinned}
+                elif request.full_url == f"{watch.API_ROOT}repos/{entry['repository']}/commits/lunar":
+                    value = {"sha": HEAD}
+                elif request.full_url == f"{watch.API_ROOT}repos/{entry['repository']}/compare/{pinned}...{HEAD}?per_page=100":
+                    value = comparison()
+                else:
+                    raise AssertionError("unexpected fixture API request")
+                return io.BytesIO(json.dumps(value).encode())
+
+        api = watch.GitHub("synthetic-fixture-token")
+        api.opener = Opener()
+        result = watch.collect({"schema": 1, "watches": [entry], "pull_requests": []}, ROOT, api)
+        value = result["watches"][0]
+        self.assertEqual(value["repository"], entry["repository"])
+        self.assertEqual(value["baseline"]["repository"], legacy)
+        self.assertEqual(value["baseline"]["revision"], pinned)
+        self.assertEqual(value["head"], HEAD)
+        self.assertEqual(redirected[0].get_method(), "GET")
+        self.assertEqual(redirected[0].get_header("Authorization"), "Bearer synthetic-fixture-token")
+
+    def test_redirect_rejects_other_origins_ports_userinfo_and_method_changes(self):
+        request = urllib.request.Request(watch.API_ROOT + "repos/example/reference",
+                                         headers={"Authorization": "Bearer synthetic-fixture-token"})
+        handler = watch.APIGetRedirect()
+        for target in ["https://elsewhere.invalid/", "http://api.github.com/repos/example/reference",
+                       "https://api.github.com:443/repos/example/reference",
+                       "https://user@api.github.com/repos/example/reference",
+                       "https://api.github.com/repos/example/reference#fragment"]:
+            with self.subTest(target=target), self.assertRaises(watch.WatchError):
+                handler.redirect_request(request, None, 301, "moved", {}, target)
+        for method in ["HEAD", "POST", "PUT"]:
+            changed = urllib.request.Request(request.full_url, method=method)
+            with self.subTest(method=method), self.assertRaises(watch.WatchError):
+                handler.redirect_request(changed, None, 301, "moved", {}, request.full_url)
+
+    def test_redirect_preserves_standard_loop_limits_and_bounds_redirect_bodies(self):
+        handler = watch.APIGetRedirect()
+        target = watch.API_ROOT + "repositories/7"
+        for visited in [{target: handler.max_repeats},
+                        {f"{watch.API_ROOT}repositories/{index}": 1
+                         for index in range(handler.max_redirections)}]:
+            request = urllib.request.Request(watch.API_ROOT + "repos/example/reference")
+            request.redirect_dict = visited
+            with self.assertRaises(urllib.error.HTTPError):
+                handler.http_error_302(request, io.BytesIO(b"moved"), 301, "moved", {"location": target})
+        with self.assertRaises(watch.WatchError):
+            handler.redirect_request(request, io.BytesIO(b"x" * (watch.MAX_RESPONSE_BYTES + 1)),
+                                     301, "moved", {}, target)
 
 
 if __name__ == "__main__":

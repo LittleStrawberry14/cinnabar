@@ -13,9 +13,16 @@ are retained. It does not mean a compatibility defect was established.
 
 `.github/networking-upstreams.json` owns the watched repositories and branches.
 Hashim's Gophertunnel integration and Lunar branches are separate observations.
+The transferred go-raknet repository is watched at `lunar-bedrock/go-raknet`;
+its baseline still derives from the original effective Go module replacement.
 The Go module repositories are also watched. Hashim's go-playfab currently has no
 Lunar branch; its actual main branch is recorded instead. Reference checkpoints
 are observations, not certificates of source correctness or compatibility.
+
+Legacy dependency names may follow bounded GET redirects within the exact HTTPS
+GitHub API origin. Cross-origin, non-HTTPS, user-info, explicit-port and method
+changes are rejected before forwarding credentials. Redirect limits remain owned
+by Python's standard handler; no repository alias or duplicate pin table is kept.
 
 Read the artifact's full commit identities and comparison links, then inspect the
 actual changed owners before deciding applicability. Divergence, missing sources

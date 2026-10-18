@@ -12,7 +12,7 @@
   },
   "watches": [
     {"repository": "HashimTheArab/gophertunnel", "refs": ["resource-pack-changes", "lunar"], "baseline": {"go_module": "github.com/sandertv/gophertunnel"}},
-    {"repository": "HashimTheArab/go-raknet", "refs": ["lunar"], "baseline": {"go_module": "github.com/sandertv/go-raknet"}},
+    {"repository": "lunar-bedrock/go-raknet", "refs": ["lunar"], "baseline": {"go_module": "github.com/sandertv/go-raknet"}},
     {"repository": "HashimTheArab/go-nethernet", "refs": ["lunar"], "baseline": {"go_module": "github.com/df-mc/go-nethernet"}},
     {"repository": "df-mc/go-nethernet", "refs": ["main"], "baseline": {"go_module": "github.com/df-mc/go-nethernet"}},
     {"repository": "HashimTheArab/go-xsapi", "refs": ["lunar"], "baseline": {"go_module": "github.com/df-mc/go-xsapi/v2"}},

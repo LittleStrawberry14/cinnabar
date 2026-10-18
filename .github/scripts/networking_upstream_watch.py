@@ -24,11 +24,20 @@ class WatchError(Exception):
     """A local source or remote observation could not be interpreted completely."""
 
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Keep the API credential on its one explicit origin, including repository renames."""
+class APIGetRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow finite GET redirects only within the exact HTTPS API origin."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+        if req.get_method() != "GET":
+            raise WatchError("GitHub redirect cannot change the request method")
+        for url in (req.full_url, newurl):
+            target = urllib.parse.urlsplit(url)
+            if target.scheme != "https" or target.netloc.lower() != "api.github.com" or target.fragment:
+                raise WatchError("GitHub redirect left the permitted API origin")
+        # urllib otherwise consumes a redirect body without a byte bound before opening its target.
+        if fp is not None and len(fp.read(MAX_RESPONSE_BYTES + 1)) > MAX_RESPONSE_BYTES:
+            raise WatchError("GitHub redirect exceeds the response bound")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class GitHub:
@@ -37,7 +46,7 @@ class GitHub:
     def __init__(self, token):
         self.token = token
         self.cache = {}
-        self.opener = urllib.request.build_opener(NoRedirect())
+        self.opener = urllib.request.build_opener(APIGetRedirect())
 
     def __call__(self, path):
         if path in self.cache:
