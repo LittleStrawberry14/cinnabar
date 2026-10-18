@@ -21,6 +21,55 @@ use std::{
 
 const JOIN_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Retains a decoded negotiation boundary when a response write fails.
+async fn preserve_negotiation_boundary(
+    connection: &mut impl PacketConnection,
+    error: io::Error,
+) -> ProtocolError {
+    let drain = async {
+        let limit = bedrock_net::BatchLimits::default().max_decoded_bytes;
+        let mut retained = 0_usize;
+        loop {
+            let body = connection.recv_body().await.ok()?;
+            retained = retained.checked_add(body.len())?;
+            if retained > limit {
+                return None;
+            }
+            for raw in crate::raw_packet::decode_batch_body(body, limit).ok()? {
+                if matches!(
+                    raw.id,
+                    packets::PacketId::Transfer | packets::PacketId::Disconnect
+                ) {
+                    let packet = raw.decode().ok()?;
+                    match negotiation_boundary(*packet.data) {
+                        Ok(Some(error)) => return Some(error),
+                        Err(reason) => tracing::warn!(
+                            ?reason,
+                            "skipped unusable transfer while draining negotiation"
+                        ),
+                        Ok(None) => {}
+                    }
+                }
+            }
+        }
+    };
+    match tokio::time::timeout(super::WRITE_FAILURE_DRAIN, drain).await {
+        Ok(Some(boundary)) => boundary,
+        _ => failure(error),
+    }
+}
+
+/// Returns only a validated redirect or the server's decoded disconnect reason.
+fn negotiation_boundary(
+    packet: packets::Packet,
+) -> Result<Option<ProtocolError>, crate::ServerTransferRejection> {
+    if let packets::Packet::Disconnect(packet) = packet {
+        return Ok(Some(disconnected(packet)));
+    }
+    Ok(crate::ServerTransferEvent::from_packet_data(&packet)?
+        .map(|target| SessionFailure::ServerTransfer(target).into()))
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -28,12 +77,13 @@ mod tests;
 fn negotiation_failure(
     packet: packets::Packet,
 ) -> Result<ProtocolError, crate::ServerTransferRejection> {
-    if let Some(target) = crate::ServerTransferEvent::from_packet_data(&packet)? {
-        return Ok(SessionFailure::ServerTransfer(target).into());
+    let id = packet.id();
+    if let Some(boundary) = negotiation_boundary(packet)? {
+        return Ok(boundary);
     }
     Ok(failure(io::Error::new(
         io::ErrorKind::InvalidData,
-        format!("unexpected negotiation packet: {:?}", packet.id()),
+        format!("unexpected negotiation packet: {id:?}"),
     )))
 }
 
@@ -76,8 +126,7 @@ async fn connect<P: Send + 'static>(
         .send(packets::RequestNetworkSettings {
             client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
         })
-        .await
-        .map_err(failure)?;
+        .await?;
     let settings = loop {
         let packet = connection.next_packet().await.map_err(failure)?;
         match *packet.data {
@@ -137,8 +186,7 @@ async fn connect<P: Send + 'static>(
             client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
             connection_request: request,
         })
-        .await
-        .map_err(failure)?;
+        .await?;
     let mut handshake_seen = false;
     let mut cache_sent = false;
     let offer = loop {
@@ -160,10 +208,7 @@ async fn connect<P: Send + 'static>(
                 if connection.transport.batch_encryption() {
                     connection.enable_encryption(ciphers).map_err(failure)?;
                 }
-                connection
-                    .send(packets::ClientToServerHandshake {})
-                    .await
-                    .map_err(failure)?;
+                connection.send(packets::ClientToServerHandshake {}).await?;
                 handshake_seen = true;
             }
             packets::Packet::PlayStatus(status)
@@ -231,8 +276,7 @@ async fn send_cache_status(
             .send(packets::ClientCacheStatus {
                 is_cache_supported: enabled,
             })
-            .await
-            .map_err(failure)?;
+            .await?;
         *sent = true;
     }
     Ok(())

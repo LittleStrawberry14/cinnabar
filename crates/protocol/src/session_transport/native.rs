@@ -85,39 +85,40 @@ impl NativeSender {
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
     pub(crate) fn from_native(mut connection: impl PacketConnection) -> Self {
-        let (send, mut outgoing) = mpsc::channel::<SendBatch>(QUEUED_BATCHES);
+        let (send, outgoing) = mpsc::channel::<SendBatch>(QUEUED_BATCHES);
         let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
         let (stop, mut stopping) = oneshot::channel();
         let task = tokio::spawn(async move {
-            let mut pending = None;
-            let mut writes_failed = false;
-            let mut reads_failed = false;
+            let mut pending: Option<io::Result<Bytes>> = None;
+            let mut writes = Writes::Active(outgoing);
             loop {
                 tokio::select! {
                     _ = &mut stopping => break,
                     _ = incoming.closed() => break,
                     permit = incoming.reserve(), if pending.is_some() => {
                         let Ok(permit) = permit else { break };
-                        permit.send(pending.take().expect("pending input"));
-                        if reads_failed { break; }
+                        let item = pending.take().expect("pending input");
+                        let ended = item.is_err();
+                        permit.send(item);
+                        if ended { break; }
                     }
-                    result = connection.recv_body(), if pending.is_none() && !reads_failed => {
-                        if result.is_err() {
-                            reads_failed = true;
-                            fail_queued_writes(&mut outgoing);
-                        }
+                    result = connection.recv_body(), if pending.is_none() => {
+                        if result.is_err() { writes.reject(); }
                         pending = Some(result);
                     }
-                    batch = outgoing.recv(), if !writes_failed && !reads_failed => {
-                        let Some(batch) = batch else { break };
-                        let result = connection.send_body(batch.body).await;
-                        writes_failed = result.is_err();
+                    batch = writes.recv() => {
+                        let Some(batch) = batch else { writes = Writes::Drained; continue };
+                        let result = if writes.is_active() {
+                            connection.send_body(batch.body).await
+                        } else {
+                            Err(io::Error::new(io::ErrorKind::BrokenPipe, "native writes stopped"))
+                        };
+                        if result.is_err() { writes.reject(); }
                         let _ = batch.written.send(result);
-                        if writes_failed { fail_queued_writes(&mut outgoing); }
                     }
                 }
             }
-            if !writes_failed && !reads_failed {
+            if let Writes::Active(mut outgoing) = writes {
                 outgoing.close();
                 while let Some(batch) = outgoing.recv().await {
                     let result = connection.send_body(batch.body).await;
@@ -153,8 +154,36 @@ impl SessionTransport {
     }
 }
 
-/// Rejects queued writes immediately so their failure can unblock the receive boundary drain.
-fn fail_queued_writes(outgoing: &mut mpsc::Receiver<SendBatch>) {
-    outgoing.close();
-    while outgoing.try_recv().is_ok() {}
+/// Outgoing admission stays owned until even pre-close permits have settled.
+enum Writes {
+    Active(mpsc::Receiver<SendBatch>),
+    Rejecting(mpsc::Receiver<SendBatch>),
+    Drained,
+}
+
+impl Writes {
+    /// Receives every accepted batch, including permits committed after closure.
+    async fn recv(&mut self) -> Option<SendBatch> {
+        match self {
+            Self::Active(receiver) | Self::Rejecting(receiver) => receiver.recv().await,
+            Self::Drained => std::future::pending().await,
+        }
+    }
+
+    /// Rejects new reservations while keeping outstanding admissions observable.
+    fn reject(&mut self) {
+        let previous = std::mem::replace(self, Self::Drained);
+        *self = match previous {
+            Self::Active(mut receiver) | Self::Rejecting(mut receiver) => {
+                receiver.close();
+                Self::Rejecting(receiver)
+            }
+            Self::Drained => Self::Drained,
+        };
+    }
+
+    /// Whether this owner may still submit new wire writes.
+    fn is_active(&self) -> bool {
+        matches!(self, Self::Active(_))
+    }
 }

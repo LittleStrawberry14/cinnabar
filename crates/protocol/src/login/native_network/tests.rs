@@ -1,5 +1,64 @@
 use super::*;
 
+struct PendingPackets(std::collections::VecDeque<bytes::Bytes>);
+
+impl PacketConnection for PendingPackets {
+    async fn send_body(&mut self, _: bytes::Bytes) -> io::Result<()> {
+        unreachable!("receive-only replay")
+    }
+    async fn recv_body(&mut self) -> io::Result<bytes::Bytes> {
+        self.0
+            .pop_front()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed"))
+    }
+    async fn close(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn negotiation_write_failure_preserves_a_received_redirect() {
+    let body = crate::session_transport::batch_body(&[
+        crate::Packet::new(packets::PlayStatus {
+            status: PlayStatusType::Loginsuccess,
+        }),
+        crate::Packet::new(packets::Transfer {
+            server_address: "target.example".into(),
+            server_port: wire::U16LE(19132),
+            ..Default::default()
+        }),
+    ])
+    .unwrap();
+    let mut connection = PendingPackets([body].into());
+    let error = preserve_negotiation_boundary(
+        &mut connection,
+        io::Error::new(io::ErrorKind::BrokenPipe, "response failed"),
+    )
+    .await;
+    assert_eq!(error.server_transfer().unwrap().host, "target.example");
+}
+
+#[tokio::test]
+async fn negotiation_write_failure_preserves_received_disconnect_text() {
+    let body = crate::session_transport::batch_body(&[crate::Packet::new(packets::Disconnect {
+        messages: bedrock_protocol_1_26_51::types::DisconnectMessages::DisconnectPacketMessages {
+            message: "peer reason".into(),
+            filtered_message: "".into(),
+        },
+        ..Default::default()
+    })])
+    .unwrap();
+    let mut connection = PendingPackets([body].into());
+    let error = preserve_negotiation_boundary(
+        &mut connection,
+        io::Error::new(io::ErrorKind::BrokenPipe, "response failed"),
+    )
+    .await;
+    assert!(
+        matches!(error, ProtocolError::Session(crate::SessionError(SessionFailure::ServerDisconnect { message, .. })) if message == "peer reason")
+    );
+}
+
 #[test]
 fn negotiation_redirect_keeps_its_destination() {
     let packet = packets::Packet::Transfer(packets::Transfer {

@@ -87,16 +87,21 @@ impl Connection {
         Ok(())
     }
 
-    /// Encodes one generated packet through the ordinary batch send path.
-    pub(super) async fn send<P>(&mut self, packet: P) -> io::Result<()>
+    /// Sends one negotiation response, preserving received terminal input if writing fails.
+    pub(super) async fn send<P>(&mut self, packet: P) -> Result<(), crate::ProtocolError>
     where
         packets::Packet: From<P>,
     {
         let packet = Packet::new(packet);
-        let body = crate::session_transport::batch_body(&[packet]).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode")
-        })?;
-        self.send_body(body).await
+        let body = crate::session_transport::batch_body(&[packet])
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode")
+            })
+            .map_err(super::failure)?;
+        match self.send_body(body).await {
+            Ok(()) => Ok(()),
+            Err(error) => Err(super::preserve_negotiation_boundary(self, error).await),
+        }
     }
 
     /// Refuses an oversized queue item before it can retain connection capacity.

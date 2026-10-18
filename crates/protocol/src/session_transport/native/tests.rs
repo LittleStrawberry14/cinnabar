@@ -7,6 +7,39 @@ struct ReplayConnection {
     reads: usize,
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingress() {
+    use bedrock_protocol_1_26_51::packets;
+    let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
+    let (fifth_read, received_fifth) = oneshot::channel();
+    let transport = SessionTransport::from_native(ReplayConnection {
+        incoming: receive,
+        fifth_read: Some(fifth_read),
+        reads: 0,
+    });
+    let body =
+        crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
+            .unwrap();
+    for _ in 0..=QUEUED_BATCHES {
+        incoming.send(body.clone()).await.unwrap();
+    }
+    received_fifth.await.unwrap();
+    let PacketSender::Native(sender) = transport.sender() else {
+        panic!("native fixture")
+    };
+    let sender = sender.0;
+    let permit = sender.reserve().await.unwrap();
+    assert!(transport.sender().send(body.clone()).await.is_err());
+    let (written, receipt) = oneshot::channel();
+    permit.send(SendBatch { body, written });
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), receipt).await;
+    assert!(
+        result.is_ok(),
+        "a pre-close admission kept its receipt unresolved"
+    );
+    assert!(result.unwrap().map_or(true, |written| written.is_err()));
+}
+
 impl PacketConnection for ReplayConnection {
     async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::BrokenPipe, "peer closed"))

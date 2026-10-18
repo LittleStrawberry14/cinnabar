@@ -79,8 +79,7 @@ pub(super) async fn acquire(
     };
     connection
         .send(packets::ResourcePackClientResponse { response })
-        .await
-        .map_err(failure)?;
+        .await?;
     loop {
         let packet = connection.next_packet().await.map_err(failure)?;
         match *packet.data {
@@ -166,8 +165,7 @@ pub(super) async fn acquire(
                                     response_type: "downloadingfinished".into(),
                                 },
                             })
-                            .await
-                            .map_err(failure)?;
+                            .await?;
                     }
                 } else {
                     request(connection, download).await?;
@@ -210,8 +208,7 @@ pub(super) async fn acquire(
                             response_type: "resourcepackstackfinished".into(),
                         },
                     })
-                    .await
-                    .map_err(failure)?;
+                    .await?;
                 return Ok(ResourcePackHandoff::from_archives(archives)
                     .with_required(offer.resource_pack_required || stack.texture_pack_required));
             }
@@ -238,7 +235,6 @@ async fn request(connection: &mut Connection, download: &Download) -> Result<(),
             chunk: wire::I32LE(chunk),
         })
         .await
-        .map_err(failure)
 }
 
 /// Accepts the protocol's UUID or UUID_version resource name without treating it as a path.

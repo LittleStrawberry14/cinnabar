@@ -4,7 +4,7 @@ use protocol::{
     ClientRandomId, ClientSkin, ClientSkinGeometry, LoginSequence, LoginSettings,
     NativeConnectionTarget, NativeTransport, SessionLogin,
 };
-use std::{error::Error, io, time::Duration};
+use std::{error::Error, io, io::Write, time::Duration};
 
 /// Joins an explicitly supplied signed-out test server and receives its world stream.
 #[tokio::main(flavor = "current_thread")]
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         |packs, _game| packs.len(),
     )
     .await?;
-    println!("native world spawned; packs={packs}");
+    writeln!(io::stdout().lock(), "native world spawned; packs={packs}")?;
     session.finish_loading().await?;
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     })
     .await??;
-    println!("native terrain received");
+    writeln!(io::stdout().lock(), "native terrain received")?;
     session.close().await?;
     Ok(())
 }
