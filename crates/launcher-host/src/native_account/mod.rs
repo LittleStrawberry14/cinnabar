@@ -3,7 +3,9 @@
 mod acquisition;
 mod catalog;
 mod catalog_worker;
+mod friend_join;
 mod friends;
+mod messaging;
 mod metadata;
 mod operation;
 mod prepare;
@@ -12,6 +14,7 @@ mod realms;
 mod restore;
 pub use catalog::{CatalogCards, CatalogListing};
 pub use catalog_worker::CatalogWorker;
+pub use friend_join::{FriendAdmission, FriendJoin, FriendSelection, JoinProgress};
 pub use realms::is_realm_target;
 
 use bedrock_services::{

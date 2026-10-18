@@ -9,9 +9,9 @@ use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::HashSet};
 use uuid::Uuid;
 
-const NETHERNET_TRANSPORT: i64 = 2;
+pub(super) const NETHERNET_TRANSPORT: i64 = 2;
 const WEBSOCKET_SIGNALING: i64 = 3;
-const JSON_RPC_SIGNALING: i64 = 7;
+pub(super) const JSON_RPC_SIGNALING: i64 = 7;
 
 /// Preserves service order and the current menu's one-row-per-host/world de-duplication.
 pub(super) fn cards(activities: Vec<Activity>, self_xuid: &str) -> Vec<MenuFriendCard> {
@@ -118,7 +118,7 @@ fn usable_id(value: &str) -> bool {
 }
 
 /// Go's title metadata decoding compares JSON field names without ASCII case sensitivity.
-fn field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
+pub(super) fn field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
     object.get(name).or_else(|| {
         object
             .iter()
