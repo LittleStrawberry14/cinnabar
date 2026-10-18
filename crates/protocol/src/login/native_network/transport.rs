@@ -253,3 +253,6 @@ impl Transport {
 
 #[cfg(test)]
 mod early_spawn_tests;
+
+#[cfg(test)]
+mod early_packet_tap_tests;
