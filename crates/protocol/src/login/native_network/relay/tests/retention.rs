@@ -107,7 +107,7 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
                 &[
                     tiny.clone(),
                     crate::Packet::new(packets::Transfer {
-                        server_address: "x".repeat(PADDING_BYTES),
+                        server_address: "x".repeat(PADDING_BYTES).into(),
                         server_port: wire::U16LE(0),
                         ..Default::default()
                     }),
