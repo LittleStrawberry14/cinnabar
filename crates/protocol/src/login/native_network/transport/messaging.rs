@@ -2,15 +2,20 @@
 
 use super::Inbox;
 use crate::login::native_network::authentication::{MessagingAdmission, ensure_current, expired};
-use bedrock_net::messaging::MessagingConnection;
+use bedrock_net::messaging::{ClosingMessagingConnection, MessagingConnection};
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, NetherError};
 use std::{io, time::Instant};
 
 pub(in crate::login::native_network) struct MessagingTransport {
-    connection: MessagingConnection,
+    connection: Option<Connection>,
     target: crate::NativeMessagingTarget,
     inbox: Inbox,
+}
+
+enum Connection {
+    Established(MessagingConnection),
+    Closing(ClosingMessagingConnection),
 }
 
 impl MessagingTransport {
@@ -53,7 +58,7 @@ impl MessagingTransport {
                 }
             })?;
         Ok(Self {
-            connection,
+            connection: Some(Connection::Established(connection)),
             target: admission.target,
             inbox: Inbox::default(),
         })
@@ -70,18 +75,25 @@ impl MessagingTransport {
         message: Bytes,
         deadline: Option<Instant>,
     ) -> io::Result<()> {
-        let session = self.connection.session();
+        let Connection::Established(connection) = self
+            .connection
+            .as_mut()
+            .expect("synchronous transport transition")
+        else {
+            return Err(super::closing());
+        };
+        let sender = connection.sender();
         let sending = async {
             let result = match deadline {
-                Some(deadline) => session.send_before(message, deadline).await,
-                None => session.send(message).await,
+                Some(deadline) => sender.send_before(message, deadline).await,
+                None => sender.send(message).await,
             };
             match result {
                 Err(NetherError::Timeout) if deadline.is_some() => Err(expired()),
                 result => result.map_err(io::Error::other),
             }
         };
-        let incoming = futures::stream::unfold(&mut self.connection, |connection| async move {
+        let incoming = futures::stream::unfold(connection, |connection| async move {
             match connection.recv().await {
                 Ok(Some(message)) => Some((Ok(message), connection)),
                 Ok(None) => None,
@@ -96,20 +108,40 @@ impl MessagingTransport {
         if let Some(message) = self.inbox.pop() {
             return Ok(message);
         }
-        self.connection
-            .recv()
-            .await
+        let result = match self
+            .connection
+            .as_mut()
+            .expect("synchronous transport transition")
+        {
+            Connection::Established(connection) => connection.recv().await,
+            Connection::Closing(connection) => connection.recv().await,
+        };
+        result
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "NetherNet peer closed"))
     }
 
     /// Drives only service/control/signaling; terminal reporting waits behind accepted input.
     pub(super) async fn maintain(&mut self) {
-        self.connection.maintain().await;
+        match self
+            .connection
+            .as_mut()
+            .expect("synchronous transport transition")
+        {
+            Connection::Established(connection) => connection.maintain().await,
+            Connection::Closing(_) => std::future::pending().await,
+        }
     }
 
-    /// Ends the existing transport without creating a cleanup task.
-    pub(super) async fn close(&mut self) -> io::Result<()> {
-        self.connection.close().await.map_err(io::Error::other)
+    /// Consumes local sending synchronously while retaining the exact service/receiver drain owner.
+    pub(super) fn close(&mut self) {
+        let current = self
+            .connection
+            .take()
+            .expect("synchronous transport transition");
+        self.connection = Some(match current {
+            Connection::Established(connection) => Connection::Closing(connection.begin_close()),
+            closing @ Connection::Closing(_) => closing,
+        });
     }
 }
