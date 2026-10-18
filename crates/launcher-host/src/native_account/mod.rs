@@ -13,7 +13,6 @@ mod operation;
 mod prepare;
 pub(crate) mod presence;
 mod profile;
-mod provider;
 mod realms;
 mod restore;
 mod world_metadata;
@@ -47,7 +46,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub(super) const ACQUISITION_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const LEASE_RETRY: Duration = Duration::from_millis(25);
-pub(super) const XBOX_RELYING_PARTY: &str = "http://xboxlive.com";
+pub(super) const XBOX_RELYING_PARTY: &str = bridge::contract::NATIVE_AUTH_RELYING_PARTY;
 pub(super) const REFRESH_ONLY_EXPIRY: &str = "1970-01-01T00:00:00Z";
 
 /// Retains proof and service credentials for one selected application account.
@@ -72,7 +71,7 @@ struct Cached {
     checkpoint_revision: [u8; 32],
     owner: Owner,
     identity: Option<AccountIdentity>,
-    provider: Option<provider::Provider>,
+    provider: Option<protocol::NativeProvider>,
 }
 
 /// Retains the generation's account anchor and current OAuth identity validation.
@@ -185,11 +184,11 @@ impl Owner {
 /// Chooses the current application's Android policy explicitly, independent of SDK defaults.
 pub(super) fn authentication_policy() -> xbox::Config {
     xbox::Config {
-        client_id: "0000000048183522".into(),
-        user_agent: "XAL Android 2025.11.20251111.000".into(),
+        client_id: bridge::contract::NATIVE_AUTH_CLIENT_ID.into(),
+        user_agent: bridge::contract::NATIVE_AUTH_USER_AGENT.into(),
         device: xbox::Device::Android,
-        device_version: "13".into(),
-        sandbox: "RETAIL".into(),
+        device_version: bridge::contract::NATIVE_AUTH_DEVICE_VERSION.into(),
+        sandbox: bridge::contract::NATIVE_AUTH_SANDBOX.into(),
     }
 }
 

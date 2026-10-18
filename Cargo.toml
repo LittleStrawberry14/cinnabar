@@ -12,6 +12,7 @@ members = [
     "crates/assets",
     "crates/bridge",
     "web/transport",
+    "web/gateway",
     "web/client",
     "crates/block-transform",
     "crates/bootstrap-ui",

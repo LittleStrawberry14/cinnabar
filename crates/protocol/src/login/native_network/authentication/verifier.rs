@@ -1,6 +1,7 @@
 //! Provider policy over the existing pure NetherNet JWS/JWK/claims implementation.
 
 mod claims;
+mod player;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nethernet::identity::{
@@ -209,4 +210,17 @@ pub(super) fn rejected() -> io::Error {
         io::ErrorKind::PermissionDenied,
         "native multiplayer credential verification failed",
     )
+}
+
+/// Projects only claims already verified by this owner, using the common canonical identity mapping.
+pub(super) fn session_identity(
+    claims: &Claims,
+) -> io::Result<crate::session_wire::SessionIdentity> {
+    let trusted = player::identity(claims).map_err(|_| rejected())?;
+    let player = trusted.player_identity().ok_or_else(rejected)?;
+    Ok(crate::session_wire::SessionIdentity {
+        xuid: claims.xuid().ok_or_else(rejected)?.to_owned(),
+        display_name: player.display_name().to_owned(),
+        uuid: player.uuid().to_string(),
+    })
 }

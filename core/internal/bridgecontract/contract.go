@@ -79,6 +79,24 @@ const (
 	RelayEventConnect = "connect"
 	// RelayEventError: Report a bounded public refusal code.
 	RelayEventError = "error"
+	// NativeAuthRelyingParty: Xbox authorization scope used to verify the signing-in account identity.
+	NativeAuthRelyingParty = "http://xboxlive.com"
+	// NativeAuthClientID: Microsoft application used by native and gateway Android account owners.
+	NativeAuthClientID = "0000000048183522"
+	// NativeAuthUserAgent: Android acquisition user agent shared with the configured Go owner.
+	NativeAuthUserAgent = "XAL Android 2025.11.20251111.000"
+	// NativeAuthDeviceVersion: Android Xbox device operating-system version.
+	NativeAuthDeviceVersion = "13"
+	// NativeAuthSandbox: Xbox account environment.
+	NativeAuthSandbox = "RETAIL"
+	// NativeAccountDeviceOS: Bedrock device platform for an authenticated Android account.
+	NativeAccountDeviceOS = 1
+	// NativeAccountDefaultModel: Original Rust Android account profile model.
+	NativeAccountDefaultModel = "GOOGLE Pixel 8"
+	// NativeAccountInputMode: Default input mode claimed by the Android account profile.
+	NativeAccountInputMode = 2
+	// NativeAccountPlatformType: Platform claimed by Android when client metadata leaves it unset.
+	NativeAccountPlatformType = 1
 	// GameVersion: Game version reported by the client.
 	GameVersion = "1.26.50"
 	// DefaultBedrockPort: Default port for an addressed Bedrock server.

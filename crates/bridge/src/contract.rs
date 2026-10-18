@@ -116,6 +116,33 @@ pub const RELAY_EVENT_CONNECT: &str = "connect";
 /// Report a bounded public refusal code.
 pub const RELAY_EVENT_ERROR: &str = "error";
 
+/// Xbox authorization scope used to verify the signing-in account identity.
+pub const NATIVE_AUTH_RELYING_PARTY: &str = "http://xboxlive.com";
+
+/// Microsoft application used by native and gateway Android account owners.
+pub const NATIVE_AUTH_CLIENT_ID: &str = "0000000048183522";
+
+/// Android acquisition user agent shared with the configured Go owner.
+pub const NATIVE_AUTH_USER_AGENT: &str = "XAL Android 2025.11.20251111.000";
+
+/// Android Xbox device operating-system version.
+pub const NATIVE_AUTH_DEVICE_VERSION: &str = "13";
+
+/// Xbox account environment.
+pub const NATIVE_AUTH_SANDBOX: &str = "RETAIL";
+
+/// Bedrock device platform for an authenticated Android account.
+pub const NATIVE_ACCOUNT_DEVICE_OS: u32 = 1;
+
+/// Original Rust Android account profile model.
+pub const NATIVE_ACCOUNT_DEFAULT_MODEL: &str = "GOOGLE Pixel 8";
+
+/// Default input mode claimed by the Android account profile.
+pub const NATIVE_ACCOUNT_INPUT_MODE: u32 = 2;
+
+/// Platform claimed by Android when client metadata leaves it unset.
+pub const NATIVE_ACCOUNT_PLATFORM_TYPE: u32 = 1;
+
 /// Game version reported by the client.
 pub const GAME_VERSION: &str = "1.26.50";
 
