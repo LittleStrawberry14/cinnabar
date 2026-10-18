@@ -5,7 +5,7 @@ mod upgrade;
 
 use super::{
     control,
-    registry::{ConnectionPermit, Registry},
+    registry::{ConnectionPermit, Registry, RegistryDriver},
     session::closed,
     socket::Socket,
 };
@@ -43,7 +43,7 @@ pub(super) struct Backend {
 /// Field order retires actual sockets before the service driver erases ephemeral credentials.
 struct Running {
     connections: FuturesUnordered<Work>,
-    services: Work,
+    services: RegistryDriver,
     registry: Arc<Registry>,
 }
 
@@ -84,10 +84,9 @@ impl Backend {
         mut incoming: impl Stream<Item = io::Result<TcpStream>> + Unpin,
     ) -> io::Result<()> {
         let registry = Arc::clone(&self.registry);
-        let driving = Arc::clone(&registry);
         let mut running = Running {
             connections: FuturesUnordered::new(),
-            services: Box::pin(async move { driving.drive().await }),
+            services: registry.drive(),
             registry,
         };
         let mut stopping = false;
