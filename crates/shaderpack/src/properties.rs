@@ -4,7 +4,7 @@
 //! then read as java.util.Properties, and recognised keys are parsed into typed rules.
 //! Malformed input never fails the whole file: it becomes a [`PropertiesDiagnostic`].
 
-mod reader;
+pub(crate) mod reader;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -12,6 +12,9 @@ mod tests;
 use std::collections::BTreeMap;
 
 use crate::expr::Expr;
+use crate::programs::ProgramGroup;
+use crate::reflection::{SamplerClass, TextureDimension};
+use crate::source::PackSource;
 
 /// Parsed shaders.properties after conditional preprocessing.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -233,6 +236,49 @@ pub struct CustomTexture {
     pub source: TextureSource,
 }
 
+impl CustomTexture {
+    /// The uniform it binds: [`Self::sampler`] without a texture-unit suffix
+    /// (`colortex6.1` → `colortex6`).
+    pub fn uniform(&self) -> &str {
+        match self.sampler.rsplit_once('.') {
+            Some((name, unit)) if unit.bytes().all(|b| b.is_ascii_digit()) => name,
+            _ => &self.sampler,
+        }
+    }
+
+    /// Whether it binds in programs of `group` (`texture.noise` binds everywhere).
+    pub fn applies_to(&self, group: ProgramGroup) -> bool {
+        self.stage == group.texture_stage() || self.stage == "noise"
+    }
+
+    /// Its filtering, as Iris reads it: `blur` and `clamp` from `<path>.mcmeta`, defaulting
+    /// to nearest/repeat for images and linear/clamp for raw textures.
+    pub fn sampler_class(&self, source: &PackSource) -> SamplerClass {
+        let (path, default) = match &self.source {
+            TextureSource::File(path) => (Some(path), false),
+            TextureSource::Raw { path, .. } => (Some(path), true),
+            TextureSource::Resource(_) => (None, false),
+        };
+        let meta = path.and_then(|p| source.text(&format!("{p}.mcmeta")));
+        let flag = |key| meta.and_then(|m| mcmeta_flag(m, key)).unwrap_or(default);
+        SamplerClass::from_filtering(flag("blur"), flag("clamp"))
+    }
+}
+
+/// The boolean value of `"key"` in `.mcmeta` JSON (only `texture.blur`/`texture.clamp` exist).
+fn mcmeta_flag(json: &str, key: &str) -> Option<bool> {
+    let quoted = format!("\"{key}\"");
+    let rest = json[json.find(&quoted)? + quoted.len()..].trim_start();
+    let value = rest.strip_prefix(':')?.trim_start();
+    if value.starts_with("true") {
+        Some(true)
+    } else if value.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Source of a custom texture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextureSource {
@@ -243,6 +289,22 @@ pub enum TextureSource {
     /// Raw texture: `<path> <TYPE> <internalFormat> <dims...> <pixelFormat> <pixelType>`;
     /// `path` has its leading '/' stripped and `spec` keeps the remaining tokens unvalidated.
     Raw { path: String, spec: Vec<String> },
+}
+
+impl TextureSource {
+    /// The texture's shape: raw textures name it (`TEXTURE_1D`, `TEXTURE_3D` …), images are 2D.
+    /// OptiFine binds each shape on its own target of the sampler's unit, so a custom texture
+    /// only replaces a sampler declared with the same shape.
+    pub fn dimension(&self) -> TextureDimension {
+        match self {
+            TextureSource::Raw { spec, .. } => match spec.first().map(String::as_str) {
+                Some("TEXTURE_1D") => TextureDimension::D1,
+                Some("TEXTURE_3D") => TextureDimension::D3,
+                _ => TextureDimension::D2,
+            },
+            TextureSource::File(_) | TextureSource::Resource(_) => TextureDimension::D2,
+        }
+    }
 }
 
 /// `image.<name> = <sampler> <format> <internalFormat> <pixelType> <clear> <relative> <w> <h> [<d>]`.

@@ -7,7 +7,7 @@ use crate::source::PackSource;
 use crate::token::{Tok, TokKind};
 use pp_rs::pp::Preprocessor;
 use pp_rs::token::{Punct, TokenValue};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Identifier prefix of the markers that stand in for comment and `const` directives while
 /// the preprocessor decides which of them sit in active code. Stripped before transforming.
@@ -88,6 +88,9 @@ struct Expander<'a> {
     map: LineMap,
     directives: Vec<Directive>,
     pending: Vec<usize>,
+    /// Object-like macros defined so far as a float literal, with the integer JCPP reads
+    /// them as in `#if` (`daySpeed` → `1`).
+    float_macros: HashMap<String, String>,
 }
 
 /// Expands `#include`s of the `shaders/`-relative `path` textually, like Iris: absolute
@@ -107,6 +110,7 @@ pub(crate) fn expand(
         map: LineMap::default(),
         directives: Vec::new(),
         pending: Vec::new(),
+        float_macros: HashMap::new(),
     };
     x.file(path, None)?;
     Ok(Expanded {
@@ -174,11 +178,33 @@ impl<'a> Expander<'a> {
                 rewrite_option_line(line, self.options, self.values)
             };
             let line = rewritten.as_deref().unwrap_or(line);
-            // pp-rs tokenizes skipped groups and rejects quotes in #error messages.
-            let line = if line.trim_start().starts_with("#error") {
+            let trimmed = line.trim_start();
+            let line = if !frame.in_block && is_unknown_directive(trimmed) {
+                // Iris's preprocessor (JCPP) warns about and skips unknown directives,
+                // which some packs use as `#====` banner comments.
+                String::new()
+            } else if trimmed.starts_with("#error") {
+                // pp-rs tokenizes skipped groups and rejects quotes in #error messages.
                 line.replace('"', "")
             } else {
                 line.to_string()
+            };
+            if !frame.in_block
+                && let Some(name) = defined_name(trimmed)
+            {
+                // Iris's preprocessor (JCPP) lets a later `#define` replace an earlier one;
+                // pp-rs rejects a redefinition, so each define drops any earlier one first.
+                self.out.push_str(&format!("#undef {name}\n"));
+                self.map.lines.push((frame.file, n as u32 + 1));
+                match float_macro_value(&line, name) {
+                    Some(value) => self.float_macros.insert(name.to_string(), value),
+                    None => self.float_macros.remove(name),
+                };
+            }
+            let line = if !frame.in_block && is_condition(trimmed) {
+                integer_condition(&line, &self.float_macros)
+            } else {
+                line
             };
             let out = self.directives_in(&line, &mut frame.in_block);
             let directive = out.trim_start().strip_prefix('#').map(str::trim_start);
@@ -246,6 +272,135 @@ impl<'a> Expander<'a> {
         }
         out
     }
+}
+
+/// The integer JCPP evaluates a float literal as in `#if`: its integer part.
+fn truncated(literal: &str) -> Option<String> {
+    let digits = literal.trim_end_matches(['f', 'F', 'l', 'L']);
+    let is_float =
+        !digits.starts_with("0x") && !digits.starts_with("0X") && digits.contains(['.', 'e', 'E']);
+    let value: f64 = digits.parse().ok().filter(|_| is_float)?;
+    Some(format!("{}", value.trunc() as i64))
+}
+
+/// The integer value of `#define <name> <float literal>`, or `None` for any other define.
+fn float_macro_value(line: &str, name: &str) -> Option<String> {
+    let body = line.trim_start().strip_prefix('#')?.trim_start();
+    let body = body
+        .strip_prefix("define")?
+        .trim_start()
+        .strip_prefix(name)?;
+    if !body.starts_with([' ', '\t']) {
+        return None;
+    }
+    let end = body.find("//").unwrap_or(body.len());
+    let end = body[..end].find("/*").unwrap_or(end);
+    truncated(body[..end].trim())
+}
+
+/// Whether the line is an `#if` or `#elif`.
+fn is_condition(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix('#') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    ["if", "elif"].iter().any(|d| {
+        rest.strip_prefix(d)
+            .is_some_and(|r| r.starts_with([' ', '\t', '(', '!']))
+    })
+}
+
+/// Rewrites an `#if`/`#elif` condition the way JCPP evaluates it: float literals, and
+/// macros defined as float literals, read as their integer part (`daySpeed >= 1.0` with
+/// `daySpeed 0.5` is `0 >= 1`). pp-rs rejects floats in conditions.
+fn integer_condition(line: &str, float_macros: &HashMap<String, String>) -> String {
+    let code_end = line.find("//").unwrap_or(line.len());
+    let (code, comment) = line.split_at(code_end);
+    let mut out = String::with_capacity(line.len());
+    let mut after_defined = false;
+    let mut rest = code;
+    while let Some(c) = rest.chars().next() {
+        let word = if c.is_ascii_alphabetic() || c == '_' {
+            rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        } else if c.is_ascii_digit()
+            || (c == '.' && rest[1..].starts_with(|d: char| d.is_ascii_digit()))
+        {
+            let mut prev = ' ';
+            rest.find(|c: char| {
+                let more = c.is_ascii_alphanumeric()
+                    || c == '.'
+                    || ((c == '+' || c == '-') && matches!(prev, 'e' | 'E'));
+                prev = c;
+                !more
+            })
+        } else {
+            if !c.is_whitespace() && c != '(' {
+                after_defined = false;
+            }
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+            continue;
+        };
+        let (token, tail) = rest.split_at(word.unwrap_or(rest.len()));
+        rest = tail;
+        let replaced = if after_defined {
+            None
+        } else if c.is_ascii_digit() || c == '.' {
+            truncated(token)
+        } else {
+            float_macros.get(token).cloned()
+        };
+        after_defined = token == "defined";
+        out.push_str(replaced.as_deref().unwrap_or(token));
+    }
+    out.push_str(comment);
+    out
+}
+
+/// The macro name a `#define` line defines.
+fn defined_name(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix('#')?.trim_start();
+    let rest = rest.strip_prefix("define")?;
+    if !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
+/// A `#` line whose directive name GLSL doesn't define. A lone `#` is the null directive.
+fn is_unknown_directive(trimmed: &str) -> bool {
+    const KNOWN: [&str; 14] = [
+        "define",
+        "undef",
+        "if",
+        "ifdef",
+        "ifndef",
+        "else",
+        "elif",
+        "endif",
+        "include",
+        "line",
+        "error",
+        "pragma",
+        "extension",
+        "version",
+    ];
+    let Some(rest) = trimmed.strip_prefix('#') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let word = &rest[..end];
+    if word.is_empty() {
+        return !rest.is_empty() && !rest.starts_with("//") && !rest.starts_with("/*");
+    }
+    !KNOWN.contains(&word)
 }
 
 /// `shaders/`-relative target of an `#include` argument written in `from`.
@@ -661,5 +816,35 @@ mod tests {
             .expect("fails");
         assert_eq!(err.phase, Phase::Include);
         assert_eq!(err.location.expect("located").to_string(), "a.fsh:2");
+    }
+
+    #[test]
+    fn a_later_define_replaces_an_earlier_one_as_in_jcpp() {
+        let src = "#version 450\n#define D(m) 1\n#define D(m) (m) + 2\nint x = D(3);\n";
+        let pp = run(&[("a.fsh", src)], "a.fsh", &[]);
+        assert!(
+            pp.tokens.iter().any(|t| t.is("+")),
+            "the second body expands"
+        );
+        let x = pp
+            .tokens
+            .iter()
+            .find(|t| t.ident() == Some("x"))
+            .expect("x");
+        assert_eq!(
+            pp.map.locate(x.line).expect("mapped").to_string(),
+            "a.fsh:4"
+        );
+    }
+
+    #[test]
+    fn float_conditions_compare_integer_parts_as_in_jcpp() {
+        let src = "#version 450\n#define speed 0.5 // [0.5 1.0]\n\
+            #if speed < 1.0 && !defined speed2 && 1.9 >= 1\nint slow;\n#else\nint fast;\n#endif\n\
+            #if 0.9\nint truncated_true;\n#endif\n";
+        let pp = run(&[("a.fsh", src)], "a.fsh", &[]);
+        let has = |n: &str| pp.tokens.iter().any(|t| t.ident() == Some(n));
+        assert!(has("slow") && !has("fast"));
+        assert!(!has("truncated_true"));
     }
 }

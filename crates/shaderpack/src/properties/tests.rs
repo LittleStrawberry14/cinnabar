@@ -86,6 +86,19 @@ fn continuation_lines_starting_with_hash_are_content() {
 }
 
 #[test]
+fn a_directive_ends_a_continued_line_as_in_iris() {
+    let text = "#ifdef BRIGHT\nuniform.float.b = if( \\\n  x > 0, 1.0, \\\n  0.5) \\\n\
+                #else\nuniform.float.b = 0.25\n#endif\nafter=1\n";
+    let off = parse(text);
+    assert_eq!(off.get("uniform.float.b"), Some("0.25"));
+    assert!(off.diagnostics.is_empty(), "{:?}", off.diagnostics);
+    let on = parse_with(text, &[("BRIGHT", "")]);
+    assert_eq!(on.get("uniform.float.b"), Some("if( x > 0, 1.0, 0.5)"));
+    assert_eq!(on.get("after"), Some("1"));
+    assert!(on.diagnostics.is_empty(), "{:?}", on.diagnostics);
+}
+
+#[test]
 fn if_elif_else_select_one_branch() {
     let text = "#if LEVEL == 1\npick=one\n#elif LEVEL == 2\npick=two\n#else\npick=other\n#endif\n";
     assert_eq!(parse_with(text, &[("LEVEL", "1")]).get("pick"), Some("one"));
@@ -458,6 +471,38 @@ fn custom_uniforms_and_variables_keep_file_order() {
     );
     assert_eq!(properties.custom_uniforms[1].expr.identifiers(), ["half"]);
     assert_eq!(diagnostic_lines(&properties), [3, 4]);
+}
+
+#[test]
+fn custom_uniform_expressions_see_macros_expanded_like_iris() {
+    let properties = parse_with(
+        "#define LOCAL_SCALE 2.0\n\
+         uniform.float.swampy = if(biome_category == CAT_SWAMP, 1.0, 0.0)\n\
+         variable.float.scaled = LOCAL_SCALE * SELF + frameTime\n\
+         screen = CAT_SWAMP\n",
+        &[
+            ("CAT_SWAMP", "14"),
+            ("SELF", "SELF + ALIAS"),
+            ("ALIAS", "SELF"),
+        ],
+    );
+    let expressions: Vec<_> = properties
+        .entries
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(
+        expressions,
+        [
+            "if(biome_category == 14, 1.0, 0.0)",
+            "2.0 * SELF + SELF + frameTime",
+            "CAT_SWAMP",
+        ]
+    );
+    assert_eq!(
+        properties.custom_uniforms[0].expr.identifiers(),
+        ["biome_category"]
+    );
 }
 
 #[test]

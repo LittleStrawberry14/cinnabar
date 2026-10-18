@@ -1,6 +1,6 @@
 //! Line-level reading of `shaders.properties`: the conditional preprocessor and the
-//! java.util.Properties key/value syntax, in one pass so that continuation lines are
-//! never mistaken for directives.
+//! java.util.Properties key/value syntax in one pass. As in Iris, whose preprocessor sees
+//! every `#` directive line before properties are joined, a directive ends a continued line.
 
 use std::collections::BTreeMap;
 
@@ -8,16 +8,16 @@ use super::PropertiesDiagnostic;
 use crate::expr::{Expr, macro_value};
 
 /// One key/value pair from an active logical line.
-pub(super) struct RawEntry {
+pub(crate) struct RawEntry {
     /// 1-based line where the logical line starts.
-    pub(super) line: u32,
-    pub(super) key: String,
-    pub(super) value: String,
+    pub(crate) line: u32,
+    pub(crate) key: String,
+    pub(crate) value: String,
 }
 
 /// Reads the key/value pairs of `text` that survive conditional preprocessing, in file
 /// order. Malformed directives are reported to `diagnostics` and reading continues.
-pub(super) fn read_entries(
+pub(crate) fn read_entries(
     text: &str,
     defines: &BTreeMap<String, String>,
     diagnostics: &mut Vec<PropertiesDiagnostic>,
@@ -34,6 +34,11 @@ pub(super) fn read_entries(
         let line = u32::try_from(index + 1).unwrap_or(u32::MAX);
         if let Some((start, mut logical)) = pending.take() {
             let piece = physical.trim_start();
+            if let Some(directive) = piece.strip_prefix('#').and_then(Directive::parse) {
+                entries.push(expand_entry(parse_entry(start, &logical), &conditionals));
+                conditionals.apply(directive, line, diagnostics);
+                continue;
+            }
             match strip_continuation(piece) {
                 Some(head) => {
                     logical.push_str(head);
@@ -41,7 +46,7 @@ pub(super) fn read_entries(
                 }
                 None => {
                     logical.push_str(piece);
-                    entries.push(parse_entry(start, &logical));
+                    entries.push(expand_entry(parse_entry(start, &logical), &conditionals));
                 }
             }
             continue;
@@ -58,14 +63,80 @@ pub(super) fn read_entries(
         }
         match strip_continuation(trimmed) {
             Some(head) => pending = Some((line, head.to_owned())),
-            None => entries.push(parse_entry(line, trimmed)),
+            None => entries.push(expand_entry(parse_entry(line, trimmed), &conditionals)),
         }
     }
     if let Some((start, logical)) = pending {
-        entries.push(parse_entry(start, &logical));
+        entries.push(expand_entry(parse_entry(start, &logical), &conditionals));
     }
     conditionals.finish(diagnostics);
     entries
+}
+
+/// Longest chain of macros expanded inside one another before expansion stops.
+const MAX_MACRO_DEPTH: usize = 32;
+
+/// Iris runs `shaders.properties` through a C preprocessor, so custom uniform and variable
+/// expressions see macros (options, `BIOME_*`, `CAT_*` …) replaced by their values. Only
+/// those expressions are expanded here; other keys keep their text.
+fn expand_entry(mut entry: RawEntry, conditionals: &Conditionals) -> RawEntry {
+    if entry.key.starts_with("uniform.") || entry.key.starts_with("variable.") {
+        let mut out = String::with_capacity(entry.value.len());
+        expand_macros(
+            &entry.value,
+            &conditionals.defines,
+            &mut Vec::new(),
+            &mut out,
+        );
+        entry.value = out;
+    }
+    entry
+}
+
+/// Appends `text` to `out` with every identifier that names an object-like macro replaced
+/// by its value, rescanned as the C preprocessor does; a macro is not expanded inside its
+/// own expansion (`active`). Numbers such as `1.0f` and `0x1F` are copied whole.
+fn expand_macros<'a>(
+    text: &str,
+    defines: &'a BTreeMap<String, String>,
+    active: &mut Vec<&'a str>,
+    out: &mut String,
+) {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let starts_number = byte.is_ascii_digit()
+            || (byte == b'.' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit));
+        if starts_number || byte.is_ascii_alphabetic() || byte == b'_' {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric()
+                    || bytes[index] == b'_'
+                    || (starts_number && bytes[index] == b'.'))
+            {
+                index += 1;
+            }
+            let word = &text[start..index];
+            match defines.get_key_value(word) {
+                Some((name, value))
+                    if !starts_number
+                        && active.len() < MAX_MACRO_DEPTH
+                        && !active.contains(&name.as_str()) =>
+                {
+                    active.push(name);
+                    expand_macros(value, defines, active, out);
+                    active.pop();
+                }
+                _ => out.push_str(word),
+            }
+        } else {
+            let end = index + text[index..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&text[index..end]);
+            index = end;
+        }
+    }
 }
 
 /// `text` without its continuation backslash when it ends in an odd number of `\`.
