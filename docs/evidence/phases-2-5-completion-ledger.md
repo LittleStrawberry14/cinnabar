@@ -15,6 +15,12 @@ End-to-end account/signaling/cleanup acceptance and native friend UI qualificati
 remain incomplete. Go stays the default. Real-account, broad
 server/device/network, performance and source-based parity gates remain open.
 
+Native negotiation passes23 owning tests and transport passes22, including
+early PlayerSpawn, original raw packet observations and held CDN/cache service
+progress. The target-specific resource-pack UUID correction passes its owning
+WebAssembly check. Full current-base browser, application and integration gates
+remain pending; no native default or broader compatibility gate closes.
+
 The unadvertised host directory and native account-lifetime presence owners pass
 the full 450-test host suite. Presence bridge and shell filters pass, including
 actual old-process retirement before policy replacement. Ambiguous updates retain
