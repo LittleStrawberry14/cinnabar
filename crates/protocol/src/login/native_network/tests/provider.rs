@@ -15,7 +15,7 @@ use rsa::{
 use serde_json::Value;
 use std::{
     sync::OnceLock,
-    time::{Instant, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 const ISSUER: &str = "https://synthetic.example/tenant/";
