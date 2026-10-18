@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=1e4dedb1ec355d982da72a57c6415a8584405f0b#1e4dedb1ec355d982da72a57c6415a8584405f0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=afaacea6bf0de1a282f9b094ecb594489cb8788d#afaacea6bf0de1a282f9b094ecb594489cb8788d"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
@@ -7940,6 +7940,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "futures",
+ "nethernet",
  "nethernet-tokio",
  "p384",
  "protocol-ids",
@@ -7947,6 +7948,7 @@ dependencies = [
  "render-api",
  "reqwest 0.13.5",
  "resource-pack",
+ "rsa",
  "rustls",
  "serde",
  "serde_json",

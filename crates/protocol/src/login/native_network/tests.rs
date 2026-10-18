@@ -1,15 +1,10 @@
 use super::*;
+mod provider;
 
 #[tokio::test]
 async fn authenticated_join_refuses_a_transport_without_signed_identity_support() {
     let settings = super::super::LoginSettings::default();
-    let claims = RawValue::from_string(r#"{"DeviceOS":1,"DeviceId":"fixture"}"#.into()).unwrap();
-    let authentication = NativeAuthentication::new(
-        SigningKey::from_slice(&[1; 48]).unwrap(),
-        "synthetic-credential".into(),
-        &claims,
-    )
-    .unwrap();
+    let authentication = provider::authentication();
     let result = LoginSequence::connect_native_authenticated(
         &NativeConnectionTarget {
             address: "unresolved.invalid:0".into(),

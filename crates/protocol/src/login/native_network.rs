@@ -1,7 +1,7 @@
 //! Native direct joins using the shared Rust spawn and play sequence.
 
 mod authentication;
-pub use authentication::NativeAuthentication;
+pub use authentication::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
 mod connection;
 mod packs;
 mod transport;
@@ -164,7 +164,16 @@ async fn connect<P: Send + 'static>(
         )));
     }
     let (key, authentication) = match authentication {
-        Some(NativeAuthentication { key, token, claims }) => (key, Some((token, claims))),
+        Some(NativeAuthentication {
+            key,
+            token,
+            claims,
+            expires,
+        }) => {
+            authentication::ensure_current(expires, std::time::Instant::now())
+                .map_err(ProtocolError::Authentication)?;
+            (key, Some((token, claims, expires)))
+        }
         None => (
             SigningKey::try_generate_from_rng(&mut SysRng)
                 .map_err(io::Error::other)
@@ -199,8 +208,8 @@ async fn connect<P: Send + 'static>(
         algorithm,
         threshold: settings.compression_threshold.0,
     });
-    let (mut claims, token) = if let Some((token, claims)) = authentication {
-        (serde_json::Value::Object(claims), Some(token))
+    let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
+        (serde_json::Value::Object(claims), Some((token, expires)))
     } else {
         let mut claims = super::client_data::login_client_data(
             login.display_name,
@@ -224,7 +233,10 @@ async fn connect<P: Send + 'static>(
     )
     .map_err(io::Error::other)
     .map_err(failure)?;
-    let request = if let Some(token) = token {
+    let deadline = token.as_ref().map(|(_, expires)| *expires);
+    let request = if let Some((token, expires)) = token {
+        authentication::ensure_current(expires, std::time::Instant::now())
+            .map_err(ProtocolError::Authentication)?;
         encode_authenticated_request(
             connection.transport.key(),
             &token,
@@ -249,12 +261,14 @@ async fn connect<P: Send + 'static>(
     }
     .map_err(io::Error::other)
     .map_err(failure)?;
-    connection
-        .send(packets::Login {
-            client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
-            connection_request: request,
-        })
-        .await?;
+    let packet = packets::Login {
+        client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
+        connection_request: request,
+    };
+    match deadline {
+        Some(deadline) => connection.send_before(packet, deadline).await?,
+        None => connection.send(packet).await?,
+    }
     let mut handshake_seen = false;
     let mut cache_sent = false;
     let offer = loop {

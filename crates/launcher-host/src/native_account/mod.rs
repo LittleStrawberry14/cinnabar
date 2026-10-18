@@ -4,6 +4,7 @@ mod acquisition;
 mod metadata;
 mod operation;
 mod prepare;
+mod provider;
 mod realms;
 mod realms_worker;
 pub use realms::{RealmListing, is_realm_target};
@@ -52,6 +53,7 @@ struct Cached {
     binding: [u8; 32],
     owner: Owner,
     identity: Option<AccountIdentity>,
+    provider: Option<provider::Provider>,
 }
 
 /// Retains the generation's account anchor and current OAuth identity validation.

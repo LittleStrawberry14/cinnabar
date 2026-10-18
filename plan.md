@@ -24,6 +24,15 @@ not downgrade the join to signed-out identity. Explicit signed-out joins remain
 available. Native direct and Realm joins do not await an unrelated Go account-core
 readiness check.
 
+Native multiplayer preparation now qualifies the issued credential against bounded
+OpenID/JWKS metadata from the configured authorization issuer, using the existing
+pure Rust signature/key/claims owner. The handoff checks account and connection-key
+identity and retains the original service-time observation and minimum mint/JWT
+validity through actual Login admission, including RakNet capacity waits. Known
+keys are reused and unknown-key refresh remains on demand. Signed NetherNet and
+end-to-end delayed-login/provider HTTP acceptance remain incomplete; this source
+milestone does not close a parity gate.
+
 Native Realms discovery projects the existing menu cards from a selected-account
 worker. It fences old account/credential revisions and Go Realms replies, while
 leaving unrelated Go feeds available. A click cancels listing before connection

@@ -83,7 +83,9 @@ retain their current Go owners.
 Authenticated direct joins retain one native account owner across retries and transfers. Refresh
 rotation shares the existing account-cache leases with Go, and private checkpoints retain proof
 and refresh ownership. Persistent derived-service caches and live authenticated acceptance remain
-in progress. Account acquisition errors return to the menu without a signed-out retry.
+in progress. Acquired multiplayer credentials are checked against the configured provider's
+public keys and selected account/connection key. Their original hard validity remains in force
+through Login admission. Account acquisition errors return to the menu without a signed-out retry.
 
 Signed-out direct connections can also opt in:
 

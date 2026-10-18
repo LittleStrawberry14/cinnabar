@@ -23,7 +23,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
 
 [[test]]
 name = "it"
@@ -67,9 +67,11 @@ bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c280b
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a", optional = true }
+nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]
+rsa = { version = "0.10.0-rc.19", default-features = false, features = ["std", "sha2"] }
 resource-pack = { path = "../resource-pack", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 test-alloc = { path = "../test-alloc" }

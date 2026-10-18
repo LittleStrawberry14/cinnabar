@@ -11,7 +11,7 @@ use bedrock_net::{
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
 use p384::ecdsa::SigningKey;
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, time::Instant};
 
 const LAN_CONNECTION_TYPE: u8 = 4;
 
@@ -155,20 +155,37 @@ impl Transport {
         matches!(self, Self::RakNet { .. })
     }
 
-    /// Admits and flushes one complete message. The connection owner never cancels this write.
-    pub(super) async fn send(&mut self, message: Bytes) -> io::Result<()> {
+    /// Applies a credential deadline to output admission, preserving any already accepted write's progress.
+    pub(super) async fn send_until(
+        &mut self,
+        message: Bytes,
+        deadline: Option<Instant>,
+    ) -> io::Result<()> {
         match self {
             Self::RakNet { connection, .. } => {
-                connection
-                    .wait_send_capacity(message.len())
-                    .await
-                    .map_err(io::Error::other)?;
+                let capacity = connection.wait_send_capacity(message.len());
+                match deadline {
+                    Some(deadline) => tokio::time::timeout_at(deadline.into(), capacity)
+                        .await
+                        .map_err(|_| super::authentication::expired())?
+                        .map_err(io::Error::other)?,
+                    None => capacity.await.map_err(io::Error::other)?,
+                }
+                if let Some(deadline) = deadline {
+                    super::authentication::ensure_current(deadline, Instant::now())?;
+                }
                 connection.queue_send(message).map_err(io::Error::other)?;
                 connection.flush().await.map_err(io::Error::other)
             }
             Self::NetherNetLan {
                 connection, inbox, ..
             } => {
+                if deadline.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "signed credential admission requires an authenticated transport",
+                    ));
+                }
                 let session = connection.session();
                 let sending = async { session.send(message).await.map_err(io::Error::other) };
                 let incoming = futures::stream::unfold(connection, |connection| async move {
