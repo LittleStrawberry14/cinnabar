@@ -62,7 +62,7 @@ impl Drop for Completion {
 impl NativeAuth {
     /// Supplies a completed deterministic presenter fixture without threads, HTTP or credentials.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn test_state(state: AuthState) -> Self {
+    pub(super) fn from_state(state: AuthState) -> Self {
         let (_, receiver) = bounded(super::EVENT_CAPACITY);
         Self {
             receiver,

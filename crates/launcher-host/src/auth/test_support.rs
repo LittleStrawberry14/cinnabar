@@ -90,5 +90,5 @@ pub fn from_child(child: Child) -> Result<AuthSupervisor> {
 /// Supplies native presenter state without a helper process, HTTP, credentials or wall-clock waiting.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub fn native_state(state: AuthState) -> AuthSupervisor {
-    AuthSupervisor::from_native(native::NativeAuth::test_state(state))
+    AuthSupervisor::from_native(native::NativeAuth::from_state(state))
 }
