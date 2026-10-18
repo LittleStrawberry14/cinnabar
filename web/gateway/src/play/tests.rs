@@ -19,6 +19,7 @@ use tokio::{
 use tokio_util::codec::FramedRead;
 
 mod peer;
+mod semantic;
 
 /// EOF on an empty upload retires the actual generation even while a native output write is blocked.
 /// This private preconnected fixture does not enable the held HTTP play route or authorize metadata.

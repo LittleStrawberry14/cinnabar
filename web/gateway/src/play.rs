@@ -17,6 +17,11 @@ use std::{collections::VecDeque, io, sync::Arc, time::Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
+#[cfg(test)]
+tokio::task_local! {
+    static PREPARED_CLAIMS: tokio::sync::mpsc::Sender<RawClientData>;
+}
+
 /// The socket field drops before its account lease even if the caller cancels or unwinds.
 struct Playing {
     socket: Option<Socket>,
@@ -132,6 +137,12 @@ impl Playing {
             (claims, None)
         };
         upstream::current(&self.lease, deadline)?;
+        #[cfg(test)]
+        let _ = PREPARED_CLAIMS.try_with(|prepared| {
+            prepared
+                .try_send(claims.clone())
+                .expect("fixture prepared-claims capacity");
+        });
         let connected = upstream::connect(&self.lease, request.target, deadline).await?;
         self.socket = Some(Socket::Connecting(connected));
         self.negotiate(
