@@ -28,7 +28,6 @@ fn decals_lie_flat_on_their_centre_height() {
 fn ribbons_emit_two_triangles_per_segment_and_taper_to_the_tail() {
     let vertices = build(&Primitives {
         ribbons: vec![Ribbon {
-            through_world: false,
             taper: true,
             pattern: crate::LinePattern::Solid,
             points: vec![
@@ -119,7 +118,6 @@ fn billboards_keep_anchor_and_select_facing_mode() {
 #[test]
 fn full_budgets_fit_the_vertex_bound() {
     let ribbon = Ribbon {
-        through_world: false,
         taper: true,
         pattern: crate::LinePattern::Solid,
         points: vec![[0.0; 3]; mod_api::MAX_RIBBON_POINTS],
@@ -138,7 +136,6 @@ fn full_budgets_fit_the_vertex_bound() {
 fn untapered_ribbons_keep_constant_width_and_solid_style() {
     let vertices = build(&Primitives {
         ribbons: vec![Ribbon {
-            through_world: false,
             taper: false,
             pattern: crate::LinePattern::Solid,
             points: vec![[0., 0., 0.], [1., 0., 0.], [1., 2., 0.]],
@@ -164,7 +161,6 @@ fn line_patterns_keep_continuous_distance_and_distinct_styles() {
     ] {
         let vertices = build(&Primitives {
             ribbons: vec![Ribbon {
-                through_world: false,
                 taper: false,
                 pattern,
                 points: vec![[0., 0., 0.], [1., 0., 0.], [1., 3., 0.]],
@@ -186,53 +182,4 @@ fn line_patterns_keep_continuous_distance_and_distinct_styles() {
         assert_eq!(joint.uv[1], 0.25);
         assert_eq!(vertices.last().unwrap().uv[1], 1.);
     }
-}
-
-/// Identical line geometry is routed to one depth layer only.
-#[test]
-fn overlay_lines_are_partitioned_from_depth_tested_primitives() {
-    let line = Ribbon {
-        through_world: false,
-        taper: false,
-        pattern: crate::LinePattern::Solid,
-        points: vec![[0., 0., -2.], [1., 1., -2.]],
-        width: 2.,
-        color: [1.; 4],
-    };
-    let mut primitives = Primitives {
-        ribbons: vec![line.clone()],
-        ..Default::default()
-    };
-    let regular = build(&primitives);
-    assert_eq!(regular.len(), 6);
-    assert!(build_overlay(&primitives).is_empty());
-    primitives.ribbons[0].through_world = true;
-    assert!(build(&primitives).is_empty());
-    assert_eq!(build_overlay(&primitives), regular);
-    primitives.ribbons.push(line);
-    assert_eq!(build(&primitives).len(), 6);
-    assert_eq!(build_overlay(&primitives).len(), 6);
-}
-
-/// Compact boxes cover every physical edge once or more, within one shared line slot.
-#[test]
-fn compact_wire_boxes_cover_all_twelve_native_edges() {
-    let b = crate::wire_box([0.; 3], [1.; 3], 2., [1.; 4], true);
-    let edges: std::collections::BTreeSet<_> = b
-        .points
-        .windows(2)
-        .map(|p| {
-            let index =
-                |v: [f32; 3]| (v[0] as usize) | ((v[1] as usize) << 1) | ((v[2] as usize) << 2);
-            let a = index(p[0]);
-            let z = index(p[1]);
-            (a.min(z), a.max(z))
-        })
-        .collect();
-    let expected: std::collections::BTreeSet<_> = (0..8)
-        .flat_map(|i| (0..3).map(move |axis| (i, i ^ (1 << axis))))
-        .filter(|(a, b)| a < b)
-        .collect();
-    assert_eq!(edges, expected);
-    assert!(b.through_world && !b.taper);
 }

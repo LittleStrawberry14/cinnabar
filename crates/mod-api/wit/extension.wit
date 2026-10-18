@@ -320,12 +320,7 @@ interface render {
     record line { points: list<vector3>, width: f32, color: rgba, pattern: line-pattern }
     /// Appends depth-tested lines with the same authority and shared ribbon budget.
     draw-lines: func(lines: list<line>) -> result<_, string>;
-    record wire-box { min: vector3, max: vector3, width: f32, color: rgba }
-    /// Compact wire boxes sharing the line/ribbon budget; through-world requires explicit consent.
-    draw-wire-boxes: func(boxes: list<wire-box>, through-world: bool) -> result<_, string>;
-    /// World-space lines without world occlusion; shares the ribbon budget and callback lifetime.
-    /// Requires drawing authority and explicit render-through-walls consent within session policy.
-    draw-overlay-lines: func(lines: list<line>) -> result<_, string>;
+
 }
 
 /// The mod's JSON-UI templates beside the vanilla container screens. Templates are the

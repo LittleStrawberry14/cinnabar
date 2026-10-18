@@ -54,8 +54,6 @@ pub enum LinePattern {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ribbon {
-    /// Uses the separately authorized non-depth-tested draw.
-    pub through_world: bool,
     pub pattern: LinePattern,
     /// False preserves constant width; true keeps the existing trailing taper.
     pub taper: bool,
@@ -271,26 +269,3 @@ mod tests;
 pub mod position_box;
 
 pub mod block_highlights;
-
-/// Expands validated axis-aligned bounds into one connected constant-width polyline.
-/// Callers admit coordinates, positive extents and color through `append_checked`.
-pub fn wire_box(min: Vec3, max: Vec3, width: f32, color: Rgba, through_world: bool) -> Ribbon {
-    const PATH: [usize; 17] = [0, 1, 3, 2, 0, 4, 5, 1, 5, 7, 3, 7, 6, 2, 6, 4, 0];
-    let corners: [Vec3; 8] = std::array::from_fn(|corner| {
-        std::array::from_fn(|axis| {
-            if corner & (1 << axis) == 0 {
-                min[axis]
-            } else {
-                max[axis]
-            }
-        })
-    });
-    Ribbon {
-        through_world,
-        taper: false,
-        pattern: LinePattern::Solid,
-        points: PATH.iter().map(|&index| corners[index]).collect(),
-        width,
-        color,
-    }
-}
