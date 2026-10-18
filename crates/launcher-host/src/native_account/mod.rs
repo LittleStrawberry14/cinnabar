@@ -25,7 +25,7 @@ pub(super) const XBOX_RELYING_PARTY: &str = "http://xboxlive.com";
 pub(super) const REFRESH_ONLY_EXPIRY: &str = "1970-01-01T00:00:00Z";
 
 /// Retains proof and service credentials for one selected application account.
-/// No runtime, polling task or HTTP request is created until `prepare` is polled.
+/// No runtime, polling task or HTTP request is created until an operation is polled.
 /// Credential values and filesystem locations are deliberately absent from Debug.
 pub struct NativeAccount {
     store: AccountStore,

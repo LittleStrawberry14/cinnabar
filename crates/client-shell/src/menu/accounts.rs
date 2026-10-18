@@ -44,7 +44,7 @@ impl MenuRuntime {
             || self.accounts.work.is_some()
     }
 
-    fn account_store(&self) -> AccountStore {
+    pub(super) fn account_store(&self) -> AccountStore {
         AccountStore::new(self.layout.auth_cache())
     }
 
