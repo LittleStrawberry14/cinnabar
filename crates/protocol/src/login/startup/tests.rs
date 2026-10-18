@@ -108,6 +108,7 @@ mod session {
         ChunkRadiusUpdated, NetworkChunkPublisherUpdate, PlayStatus, Transfer,
     };
     use bedrock_protocol_1_26_51::types::ItemData;
+    use bedrock_protocol_1_26_51::{enums::PlayStatusType, types::ActorRuntimeID};
 
     use super::*;
     use crate::raw_packet::MAX_RAW_BATCH_PACKETS;
@@ -246,7 +247,7 @@ mod session {
         )
         .await;
         let mut first = None;
-        let spawned = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, registry| {
+        let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, registry| {
             first = Some(registry)
         })
         .await
@@ -294,10 +295,37 @@ mod session {
             set_time(-1),
         ]);
         let first = (0..half).map(|time| set_time(time as i32)).collect();
-        let Pair { transport, .. } = &mut handed_off("fifo", &[first, second]).await;
-        await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+        let mut raw_chunk = Vec::new();
+        wire::Writer::new(&mut raw_chunk)
+            .write_var_u32(PacketId::LevelChunk as u32)
+            .unwrap();
+        raw_chunk.push(0x80); // Deliberately undecodable until ordinary play asks for this body.
+        let Pair {
+            transport, peer, ..
+        } = &mut pair(
+            "fifo",
+            &[
+                packet_bytes(&start_game(RUNTIME_ID)),
+                Bytes::from(raw_chunk),
+            ],
+        )
+        .await;
+        for batch in [first, second] {
+            write_frame(peer, &batch_frame(&batch).unwrap()).await;
+        }
+        let (_, ready) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
             .await
             .expect("spawn");
+        assert!(ready.terrain_received);
+        let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
+            panic!("raw terrain remains first")
+        };
+        assert_eq!(raw.id, PacketId::LevelChunk);
+        assert_eq!(raw.body().as_ref(), &[0x80]);
+        assert!(
+            raw.decode().is_err(),
+            "startup must leave unrelated bodies undecoded"
+        );
         for expected in 0..=MAX_RAW_BATCH_PACKETS {
             assert_eq!(next_time(transport).await, expected as i32);
         }
@@ -326,10 +354,10 @@ mod session {
                 player_spawn(),
             ]);
             let Pair { transport, .. } = &mut handed_off(name, &[batch]).await;
-            let spawned = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+            let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
                 .await
                 .expect("spawn");
-            assert_eq!(spawned.terrain_before_spawn, expected);
+            assert_eq!(spawned.terrain_received, expected);
         }
     }
 
@@ -355,9 +383,16 @@ mod session {
         let length = peer.read_u32().await.unwrap();
         let mut frame = vec![0; length as usize];
         peer.read_exact(&mut frame).await.unwrap();
-        assert_eq!(
-            frame,
-            batch_frame(&loading_started(DEFAULT_CHUNK_RADIUS)).unwrap()
+        let sent = decode_batch_body(Bytes::from(frame).slice(1..), usize::MAX).unwrap();
+        assert_eq!(sent.len(), 2);
+        let mut sent = sent.into_iter().map(|raw| *raw.decode().unwrap().data);
+        assert!(
+            matches!(sent.next().unwrap(), packets::Packet::RequestChunkRadius(request)
+            if request.chunk_radius.0 == i32::from(DEFAULT_CHUNK_RADIUS))
+        );
+        assert!(
+            matches!(sent.next().unwrap(), packets::Packet::ServerboundLoadingScreen(loading)
+            if loading.loading_screen_packet_type == bedrock_protocol_1_26_51::enums::ServerboundLoadingScreenType::Startloadingscreen)
         );
         let more = tokio::time::timeout(Duration::from_millis(100), peer.read_u8()).await;
         assert!(more.is_err(), "the radius request is sent once");
@@ -369,7 +404,7 @@ mod session {
             (
                 "conflicting-start",
                 vec![start_game(RUNTIME_ID + 1)],
-                "conflicting StartGame runtime entity ID",
+                "conflicting StartGame runtime identity",
             ),
             (
                 "zero-radius",

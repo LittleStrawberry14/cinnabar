@@ -3,6 +3,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use bedrock_net::login::encode_authenticated_request;
 use nethernet::identity::{MINECRAFT_AUDIENCE, jwt::Jws};
 use p384::pkcs8::EncodePublicKey;
 use rsa::{

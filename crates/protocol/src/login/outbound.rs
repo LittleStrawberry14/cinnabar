@@ -12,11 +12,12 @@ use super::PlaySession;
 use super::cache_status::SharedCacheStatus;
 use crate::packet_tap::PacketTap;
 use crate::{Packet, ProtocolError};
+use bedrock_client::spawn::SpawnNegotiation;
 
 /// The write half of a play session: frames whole batches without borrowing the session.
 pub struct PlayOutbound {
     frames: PacketSender,
-    finish_loading: Vec<Packet>,
+    pending_initialization: Option<SpawnNegotiation>,
     tap: Option<Arc<dyn PacketTap>>,
     cache_status: SharedCacheStatus,
     pending: VecDeque<PendingBatch>,
@@ -119,7 +120,7 @@ impl<R: bridge::FrameRead> PlaySession<R> {
     pub fn outbound(&mut self) -> Result<PlayOutbound, ProtocolError> {
         Ok(PlayOutbound {
             frames: self.transport.sender(),
-            finish_loading: self.take_finish_loading_packets(),
+            pending_initialization: self.pending_initialization.take(),
             tap: self.transport.tap(),
             cache_status: self.cache_status.clone(),
             pending: VecDeque::new(),
@@ -160,6 +161,9 @@ impl PlayOutbound {
 
     /// Takes the one-shot loading-end and initialization packets the session would send.
     pub fn take_finish_loading(&mut self) -> Vec<Packet> {
-        std::mem::take(&mut self.finish_loading)
+        self.pending_initialization
+            .take()
+            .map(super::startup::loading_finished)
+            .unwrap_or_default()
     }
 }

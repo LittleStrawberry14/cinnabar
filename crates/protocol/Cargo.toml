@@ -23,7 +23,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:bedrock-client", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
 
 [[test]]
 name = "it"
@@ -34,6 +34,7 @@ name = "native-join"
 required-features = ["native-networking"]
 
 [dependencies]
+bedrock-client.workspace = true
 bedrock-packs.workspace = true
 resource-pack = { path = "../resource-pack" }
 protocol-ids = { path = "../protocol-ids" }
@@ -65,7 +66,6 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"
 bedrock-net = { workspace = true, features = ["raknet", "login"], optional = true }
-bedrock-client = { workspace = true, optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "298c89b6d229dbc0c1870a3337e558bf8cddbe44", optional = true }

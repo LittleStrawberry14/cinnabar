@@ -12,17 +12,19 @@ use crate::codec::SessionFailure;
 use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
 use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
-use bedrock_net::login::{
-    OfflineIdentity, encode_authenticated_request, encode_offline_request, finish_key_exchange,
+use bedrock_client::{
+    handshake::{ClientHandshake, HandshakeError, HandshakeEvent, HandshakeOptions},
+    packs::PackNegotiation,
 };
-use bedrock_net::{CompressionAlgorithm, CompressionSettings};
+use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
-use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, wire};
+use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
 use serde_json::{json, value::RawValue};
 use std::{
     io,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -181,33 +183,42 @@ async fn connect<P: Send + 'static>(
             None,
         ),
     };
-    let transport = transport::Transport::connect(target, key)
+    let key = Arc::new(key);
+    let transport = transport::Transport::connect(target)
         .await
         .map_err(failure)?;
     let mut connection = Connection::new(transport);
+    let mut handshake = ClientHandshake::new(
+        key,
+        HandshakeOptions {
+            batch_encryption: connection.transport.batch_encryption(),
+            blob_cache: login.cache.is_some(),
+            max_login_bytes: connection.max_decoded_bytes(),
+            ..Default::default()
+        },
+    )
+    .map_err(handshake_failure)?;
     connection
-        .send(packets::RequestNetworkSettings {
-            client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
-        })
+        .send(handshake.start().map_err(handshake_failure)?)
         .await?;
-    let settings = loop {
+    loop {
         let packet = connection.next_packet().await.map_err(failure)?;
-        match *packet.data {
-            packets::Packet::NetworkSettings(settings) => break settings,
-            packets::Packet::Disconnect(disconnect) => return Err(disconnected(disconnect)),
-            other => {
-                if let Some(error) = connection.negotiation_failure(other) {
-                    return Err(error);
+        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
+        match event {
+            HandshakeEvent::Compression(settings) => {
+                connection.enable_compression(settings);
+                break;
+            }
+            event => {
+                if apply_handshake(&mut connection, event).await?.is_some() {
+                    return Err(failure(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "resource offer preceded Login",
+                    )));
                 }
             }
         }
-    };
-    let algorithm = CompressionAlgorithm::try_from(settings.compression_algorithm.to_raw())
-        .unwrap_or(CompressionAlgorithm::Deflate);
-    connection.enable_compression(CompressionSettings {
-        algorithm,
-        threshold: settings.compression_threshold.0,
-    });
+    }
     let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
         (serde_json::Value::Object(claims), Some((token, expires)))
     } else {
@@ -234,19 +245,13 @@ async fn connect<P: Send + 'static>(
     .map_err(io::Error::other)
     .map_err(failure)?;
     let deadline = token.as_ref().map(|(_, expires)| *expires);
-    let request = if let Some((token, expires)) = token {
+    let packet = if let Some((token, expires)) = token {
         authentication::ensure_current(expires, std::time::Instant::now())
             .map_err(ProtocolError::Authentication)?;
-        encode_authenticated_request(
-            connection.transport.key(),
-            &token,
-            &claims,
-            connection.max_decoded_bytes(),
-        )
+        handshake.login_authenticated(&token, &claims)
     } else {
         let identity = uuid::Uuid::new_v4().to_string();
-        encode_offline_request(
-            connection.transport.key(),
+        handshake.login_offline(
             &OfflineIdentity {
                 display_name: login.display_name,
                 identity: &identity,
@@ -256,76 +261,31 @@ async fn connect<P: Send + 'static>(
             },
             &claims,
             SystemTime::now(),
-            connection.max_decoded_bytes(),
         )
     }
-    .map_err(io::Error::other)
-    .map_err(failure)?;
-    let packet = packets::Login {
-        client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
-        connection_request: request,
-    };
+    .map_err(handshake_failure)?;
     match deadline {
         Some(deadline) => connection.send_before(packet, deadline).await?,
         None => connection.send(packet).await?,
     }
-    let mut handshake_seen = false;
-    let mut cache_sent = false;
-    let offer = loop {
+    let negotiation = loop {
         let packet = connection.next_packet().await.map_err(failure)?;
-        match *packet.data {
-            packets::Packet::ServerToClientHandshake(handshake) if !handshake_seen => {
-                let token = handshake
-                    .handshake_web_token
-                    .to_str()
-                    .map_err(io::Error::other)
-                    .map_err(failure)?;
-                let ciphers = finish_key_exchange(
-                    connection.transport.key(),
-                    token,
-                    connection.max_decoded_bytes(),
-                )
-                .map_err(io::Error::other)
-                .map_err(failure)?;
-                if connection.transport.batch_encryption() {
-                    connection.enable_encryption(ciphers).map_err(failure)?;
-                }
-                connection.send(packets::ClientToServerHandshake {}).await?;
-                handshake_seen = true;
-            }
-            packets::Packet::PlayStatus(status)
-                if status.status == PlayStatusType::Loginsuccess =>
-            {
-                send_cache_status(&mut connection, login.cache.is_some(), &mut cache_sent).await?;
-            }
-            packets::Packet::ResourcePacksInfo(info) => {
-                send_cache_status(&mut connection, login.cache.is_some(), &mut cache_sent).await?;
-                break info;
-            }
-            packets::Packet::Disconnect(disconnect) => return Err(disconnected(disconnect)),
-            packets::Packet::PlayStatus(status) => {
-                return Err(failure(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!("Login failed: {:?}", status.status),
-                )));
-            }
-            other => {
-                if let Some(error) = connection.negotiation_failure(other) {
-                    return Err(error);
-                }
-            }
+        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
+        if let Some(negotiation) = apply_handshake(&mut connection, event).await? {
+            break negotiation;
         }
     };
     let packs = packs::acquire(
         &mut connection,
-        offer,
+        &mut handshake,
+        negotiation,
         login.settings.resource_pack_cache_dir.as_deref(),
     )
     .await?;
     let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;
-    let spawned = super::startup::await_spawn(
+    let (initialization, spawned) = super::startup::await_spawn(
         &mut transport,
         login.settings.view_distance_chunks,
         |start, items| {
@@ -345,28 +305,58 @@ async fn connect<P: Send + 'static>(
         PlaySession::new(
             transport,
             login.cache,
-            spawned.runtime_id,
-            spawned.terrain_before_spawn,
+            initialization,
+            spawned.terrain_received,
         ),
         prepared,
     ))
 }
 
-/// Advertises the capability exactly once even when the offer precedes LoginSuccess.
-async fn send_cache_status(
+/// Applies ordered pure-core effects on the retained connection without restarting its FIFO.
+async fn apply_handshake(
     connection: &mut Connection,
-    enabled: bool,
-    sent: &mut bool,
-) -> Result<(), ProtocolError> {
-    if !*sent {
-        connection
-            .send(packets::ClientCacheStatus {
-                is_cache_supported: enabled,
-            })
-            .await?;
-        *sent = true;
+    event: HandshakeEvent,
+) -> Result<Option<PackNegotiation>, ProtocolError> {
+    match event {
+        HandshakeEvent::Send(packets) => packs::send_packets(connection, packets).await?,
+        HandshakeEvent::KeyExchange { ciphers, response } => {
+            if let Some(ciphers) = ciphers {
+                connection.enable_encryption(*ciphers).map_err(failure)?;
+            }
+            connection.send(response).await?;
+        }
+        HandshakeEvent::Packs {
+            cache_status,
+            negotiation,
+        } => {
+            if let Some(status) = cache_status {
+                connection.send(status).await?;
+            }
+            return Ok(Some(negotiation));
+        }
+        HandshakeEvent::Unhandled(packet) => {
+            if let Some(error) = connection.negotiation_failure(*packet) {
+                return Err(error);
+            }
+        }
+        _ => {
+            return Err(failure(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected client handshake effect",
+            )));
+        }
     }
-    Ok(())
+    Ok(None)
+}
+
+/// Keeps the reusable handshake failure as a typed cause of the native connection error.
+fn handshake_failure(error: HandshakeError) -> ProtocolError {
+    let kind = if matches!(error, HandshakeError::LoginRefused(_)) {
+        io::ErrorKind::PermissionDenied
+    } else {
+        io::ErrorKind::InvalidData
+    };
+    failure(io::Error::new(kind, error))
 }
 
 /// Preserves the server's disconnect text through the existing startup error model.

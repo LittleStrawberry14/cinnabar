@@ -2,9 +2,12 @@
 
 mod acquisition;
 
-use super::{Connection, disconnected, failure};
+use super::{Connection, apply_handshake, failure, handshake_failure};
 use crate::ProtocolError;
-use bedrock_client::packs::{PackError, PackEvent, PackNegotiation, PackTransferLimits};
+use bedrock_client::{
+    handshake::ClientHandshake,
+    packs::{PackError, PackEvent, PackNegotiation},
+};
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
@@ -15,12 +18,11 @@ const MAX_CDN_DOWNLOADS: usize = 4;
 /// Tries cache and CDN before requesting missing archives on the retained game connection.
 pub(super) async fn acquire(
     connection: &mut Connection,
-    offer: packets::ResourcePacksInfo,
+    handshake: &mut ClientHandshake,
+    mut negotiation: PackNegotiation,
     cache_root: Option<&Path>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
-    let mut negotiation =
-        PackNegotiation::new(offer, PackTransferLimits::default()).map_err(pack_failure)?;
     let offers = negotiation.offers().cloned().collect::<Vec<_>>();
     let cache = if offers.is_empty() {
         None
@@ -73,23 +75,21 @@ pub(super) async fn acquire(
                 connection.send(response).await?;
                 return Ok(handoff);
             }
-            PackEvent::Unhandled(packet) => match *packet {
-                packets::Packet::PlayStatus(status)
-                    if status.status
-                        == bedrock_protocol_1_26_51::enums::PlayStatusType::Loginsuccess => {}
-                packets::Packet::Disconnect(packet) => return Err(disconnected(packet)),
-                other => {
-                    if let Some(error) = connection.negotiation_failure(other) {
-                        return Err(error);
-                    }
+            PackEvent::Unhandled(packet) => {
+                let event = handshake.receive(*packet).map_err(handshake_failure)?;
+                if apply_handshake(connection, event).await?.is_some() {
+                    return Err(failure(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "repeated resource-pack offer",
+                    )));
                 }
-            },
+            }
         }
     }
 }
 
 /// Sends each generated response immediately under the existing batch packet limit.
-async fn send_packets(
+pub(super) async fn send_packets(
     connection: &mut Connection,
     packets: Vec<packets::Packet>,
 ) -> Result<(), ProtocolError> {

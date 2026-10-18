@@ -83,7 +83,8 @@ dependency_free = true
 name = "protocol"
 path = "crates/protocol"
 # Native networking uses external cinnabar-mc/bedrock-net and nethernet libraries;
-# generated packets feed protocol adapters; reusable pack negotiation is external.
+# generated handshake, pack negotiation and spawn owners are external; adapters
+# retain account admission, I/O, raw FIFO bounds and presentation policy.
 # NetherNet's pure JWS/JWK owner supplies credential verification primitives.
 allowed_dependencies = ["simulation-clock", "block-transform", "bridge", "render-api", "test-time", "protocol-ids", "resource-pack"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]

@@ -99,7 +99,7 @@ impl LoginSequence {
         let mut transport =
             SessionTransport::with_timers(reader, frames, &handoff.startup, timers).with_tap(tap);
         let mut prepared_job = None;
-        let spawned = match super::startup::await_spawn(
+        let (initialization, spawned) = match super::startup::await_spawn(
             &mut transport,
             settings.view_distance_chunks,
             |start_game, item_registry| {
@@ -127,12 +127,7 @@ impl LoginSequence {
             prepared = &mut preparation => prepared,
             () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => preparation.await,
         };
-        let session = PlaySession::new(
-            transport,
-            cache,
-            spawned.runtime_id,
-            spawned.terrain_before_spawn,
-        );
+        let session = PlaySession::new(transport, cache, initialization, spawned.terrain_received);
         Ok((session, prepared))
     }
 }
