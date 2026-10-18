@@ -874,6 +874,98 @@ fn end_transfer_without_follow(
 mod tests {
     use super::*;
 
+    /// Native opt-in retains the existing provisioning owner for non-direct destinations.
+    #[cfg(feature = "native-networking")]
+    #[test]
+    fn native_routing_preserves_go_gathering_and_friend_provisioning() {
+        let controller = SessionController::default()
+            .with_native_transport(Some(protocol::NativeTransport::RakNet));
+        assert!(controller.native_direct_enabled("play.example.net", false));
+        assert!(controller.native_direct_enabled(
+            &format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
+            false
+        ));
+        assert!(!controller.native_direct_enabled("play.example.net", true));
+        assert!(!controller.native_direct_enabled(
+            &format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
+            false
+        ));
+        let gathering = format!(
+            "{}{}",
+            launcher::menu::EXPERIENCE_ADDRESS_PREFIX,
+            "00000000-0000-0000-0000-000000000007"
+        );
+        assert!(matches!(
+            launcher_host::launcher_core::target_for(&gathering),
+            bridge::ConnectTarget::Gathering(_)
+        ));
+        assert!(
+            !controller.native_direct_enabled(&gathering, false),
+            "gathering destinations must reach the existing Go provisioning owner"
+        );
+    }
+
+    /// The real native provisioning branch preserves the ordinary target owner's endpoint grammar.
+    #[cfg(feature = "native-networking")]
+    #[test]
+    fn native_start_core_normalizes_saved_direct_host_and_ipv6_destinations() {
+        let layout = launcher::test_support::scratch("native-direct-addresses");
+        let menu = MenuRuntime::new_with_layout(
+            false,
+            None,
+            "Direct".into(),
+            layout,
+            client_shell::player_skin::LocalPlayerSkin::generated_default("Direct"),
+        );
+        let mut controller = SessionController::default()
+            .with_native_transport(Some(protocol::NativeTransport::RakNet));
+        let cache = BlobCache::default();
+        for address in [
+            "play.example.net:19133",
+            "[2001:db8::7]:19134",
+            "play.example.net",
+            "2001:db8::7",
+            " play.example.net ",
+        ] {
+            let bridge::ConnectTarget::RakNet(expected) =
+                launcher_host::launcher_core::target_for(address)
+            else {
+                panic!("direct fixture must use the ordinary endpoint owner");
+            };
+            let JoinStage::Native(target) = controller
+                .start_core(&menu, &cache, address, None, 1)
+                .expect("direct native provisioning must not start a Go process")
+            else {
+                panic!("explicit native direct destination did not retain native I/O");
+            };
+            assert_eq!(target.transport, protocol::NativeTransport::RakNet);
+            assert_eq!(
+                target.address, expected,
+                "native provisioning lost the existing endpoint grammar for {address}"
+            );
+            assert!(controller.directory.is_none());
+        }
+        let realm = format!("{}7", bridge::contract::REALM_TARGET_PREFIX);
+        assert!(
+            controller
+                .start_core(&menu, &cache, &realm, None, 1)
+                .is_err()
+        );
+        let JoinStage::Native(target) = controller
+            .start_core(
+                &menu,
+                &cache,
+                &realm,
+                Some(std::path::Path::new("unread.json")),
+                1,
+            )
+            .unwrap()
+        else {
+            panic!("Realm keeps native account resolution");
+        };
+        assert_eq!(target.address, realm, "Realm locator is not a DNS endpoint");
+    }
+
     #[test]
     fn login_profanity_preference_comes_from_saved_settings_with_a_hidden_menu() {
         use launcher::menu::settings_options::{SETTINGS_FILE, SETTINGS_OPTIONS, SettingsOptions};
