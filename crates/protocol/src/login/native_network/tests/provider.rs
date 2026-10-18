@@ -34,11 +34,16 @@ fn key() -> SigningKey {
     SigningKey::from_slice(&[1; 48]).unwrap()
 }
 
+/// Publishes the original synthetic issuer's public key under one stable key ID.
+fn published_keys() -> Value {
+    let public = issuer().as_ref();
+    json!({"keys":[{"kty":"RSA","kid":"synthetic",
+        "n":URL_SAFE_NO_PAD.encode(public.n().to_be_bytes()), "e":URL_SAFE_NO_PAD.encode(public.e().to_be_bytes())}]})
+}
+
 /// Builds bounded trusted public metadata from the synthetic issuer, retaining a non-retail issuer.
 fn verifier() -> NativeTokenVerifier {
-    let public = issuer().as_ref();
-    let keys = serde_json::to_vec(&json!({"keys":[{"kty":"RSA","kid":"synthetic",
-        "n":URL_SAFE_NO_PAD.encode(public.n().to_be_bytes()), "e":URL_SAFE_NO_PAD.encode(public.e().to_be_bytes())}]})).unwrap();
+    let keys = serde_json::to_vec(&published_keys()).unwrap();
     NativeTokenVerifier::new(ISSUER.into(), &["RS256".into()], &keys).unwrap()
 }
 
@@ -56,11 +61,36 @@ fn signed(claims: Value, kid: &str) -> String {
 
 /// Signs issuer-authentic header-policy violations without conflating them with invalid signatures.
 fn signed_header(claims: Value, header: Value) -> String {
+    signed_payload(&serde_json::to_vec(&claims).unwrap(), header)
+}
+
+/// Preserves exact JSON number spelling while signing through the existing synthetic issuer.
+fn signed_payload(payload: &[u8], header: Value) -> String {
     let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
-    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+    let payload = URL_SAFE_NO_PAD.encode(payload);
     let input = format!("{header}.{payload}");
     let signature: pkcs1v15::Signature = issuer().sign(input.as_bytes());
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature.to_vec()))
+}
+
+/// Replaces one temporal claim without normalizing its decimal or exponent representation.
+fn signed_temporal_claim(field: &str, value: &str) -> String {
+    let mut claims = claims()
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.clone(),
+                serde_json::value::to_raw_value(value).unwrap(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    claims.insert(field.into(), RawValue::from_string(value.into()).unwrap());
+    signed_payload(
+        &serde_json::to_vec(&claims).unwrap(),
+        json!({"alg":"RS256","kid":"synthetic"}),
+    )
 }
 
 /// Preserves the response's original observation rather than creating a remaining-lifetime TTL.
@@ -119,6 +149,95 @@ async fn native_provider_expired_handoff_cannot_start_a_connection() {
     assert!(
         matches!(result, Err(ProtocolError::Authentication(error)) if error.kind() == io::ErrorKind::PermissionDenied)
     );
+}
+
+/// A matching key ID cannot make malformed RSA material a successful cached verifier.
+#[test]
+fn native_provider_rejects_malformed_matching_key_before_cache_admission() {
+    let token = signed(claims(), "synthetic");
+    assert!(verifier().recognizes(&token).unwrap());
+    for (field, value) in [("n", "***"), ("e", "***"), ("n", ""), ("e", "")] {
+        let mut keys = published_keys();
+        keys["keys"][0][field] = json!(value);
+        let result = NativeTokenVerifier::new(
+            ISSUER.into(),
+            &["RS256".into()],
+            &serde_json::to_vec(&keys).unwrap(),
+        );
+        assert!(result.is_err(), "admitted malformed RSA {field}");
+    }
+}
+
+/// Equivalent temporal representations retain second truncation and the original hard deadline.
+#[test]
+fn native_provider_numeric_dates_preserve_representations_and_deadlines() {
+    let observed = Instant::now();
+    let client = RawValue::from_string("{}".into()).unwrap();
+    let verifier = verifier();
+    for field in ["exp", "iat", "nbf"] {
+        let seconds = SERVICE_SECONDS + if field == "exp" { 5 } else { 60 };
+        for value in [
+            seconds.to_string(),
+            format!("{seconds}.9"),
+            format!("{seconds}9e-1"),
+        ] {
+            let authentication = NativeAuthentication::new(
+                key(),
+                credential(
+                    signed_temporal_claim(field, &value),
+                    observed,
+                    Duration::from_secs(60),
+                ),
+                &client,
+                &verifier,
+                XUID,
+                observed,
+            )
+            .unwrap_or_else(|error| panic!("rejected {field}={value}: {error}"));
+            let lifetime = Duration::from_secs(if field == "exp" { 5 } else { 60 });
+            assert_eq!(authentication.expires, observed + lifetime);
+        }
+    }
+}
+
+/// NumericDate compatibility must retain controlled rejection of invalid values and time bounds.
+#[test]
+fn native_provider_numeric_dates_reject_invalid_values_and_time_bounds() {
+    let observed = Instant::now();
+    let client = RawValue::from_string("{}".into()).unwrap();
+    let verifier = verifier();
+    for field in ["exp", "iat", "nbf"] {
+        let boundary = SERVICE_SECONDS + if field == "exp" { 0 } else { 61 };
+        for value in [
+            "\"invalid\"".into(),
+            "true".into(),
+            "{}".into(),
+            "[]".into(),
+            "1e100".into(),
+            "-1e100".into(),
+            "9223372036854775808".into(),
+            "-9223372036854775809".into(),
+            format!("{boundary}.9"),
+            format!("{boundary}9e-1"),
+        ] {
+            let result = NativeAuthentication::new(
+                key(),
+                credential(
+                    signed_temporal_claim(field, &value),
+                    observed,
+                    Duration::from_secs(60),
+                ),
+                &client,
+                &verifier,
+                XUID,
+                observed,
+            );
+            assert!(
+                matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied),
+                "accepted invalid {field}={value}"
+            );
+        }
+    }
 }
 
 /// Signature, issuer, account/key identity and temporal claims are all part of the real handoff.
