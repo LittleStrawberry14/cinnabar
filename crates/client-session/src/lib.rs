@@ -7,6 +7,8 @@
 pub mod connection;
 pub mod markers;
 mod session;
+#[cfg(not(target_arch = "wasm32"))]
+pub use session::{SessionCompanion, spawn_network_with_companion};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use session::handle_state::CapturedPackets;

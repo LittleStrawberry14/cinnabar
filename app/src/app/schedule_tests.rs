@@ -13,6 +13,8 @@ fn network_config_call_sites_share_the_process_blob_cache() {
         endpoint: protocol::SessionEndpoint::Core(std::path::PathBuf::from("first-core.sock")),
         #[cfg(feature = "native-networking")]
         native_account: None,
+        #[cfg(feature = "native-networking")]
+        native_friend: None,
         display_name: "cache-owner".to_owned(),
         client_random_id: protocol::ClientRandomId::new(-7).unwrap(),
         client_blob_cache: owner.cache(),
@@ -35,6 +37,8 @@ fn network_config_call_sites_share_the_process_blob_cache() {
         )),
         #[cfg(feature = "native-networking")]
         native_account: None,
+        #[cfg(feature = "native-networking")]
+        native_friend: None,
         display_name: "cache-owner".to_owned(),
         client_random_id: protocol::ClientRandomId::new(-7).unwrap(),
         client_blob_cache: owner.cache(),

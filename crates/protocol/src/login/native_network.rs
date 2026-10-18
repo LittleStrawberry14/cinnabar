@@ -22,13 +22,7 @@ use bedrock_protocol_1_26_51::packets;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
 use serde_json::{json, value::RawValue};
-use std::{
-    io,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
-
-const JOIN_TIMEOUT: Duration = Duration::from_secs(120);
+use std::{io, sync::Arc, time::SystemTime};
 
 /// Retains a decoded negotiation boundary when a response write fails.
 async fn preserve_negotiation_boundary(
@@ -140,7 +134,7 @@ async fn native_join<P: Send + 'static>(
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
     tokio::time::timeout(
-        JOIN_TIMEOUT,
+        crate::NATIVE_JOIN_TIMEOUT,
         connect(target, login, authentication, prepare),
     )
     .await

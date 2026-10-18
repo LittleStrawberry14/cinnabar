@@ -25,6 +25,36 @@ fn seed_tokens(path: &std::path::Path, generation: &str, access: &str, refresh: 
     file.write_all(&bytes).unwrap();
 }
 
+/// A retired catalog owner is denied before restoring any SDK account or starting authentication.
+#[tokio::test]
+async fn catalog_generation_is_rejected_before_credential_restore_or_authentication() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-oauth.json");
+    seed(&path, "replacement-generation");
+    let account = Arc::new(NativeAccount::new(
+        AccountStore::new(path),
+        directory.path().join("device.json"),
+        None,
+    ));
+    // Reaching SDK restoration would fail locally with a different error, without contacting a service.
+    account
+        .store
+        .try_native_lease()
+        .unwrap()
+        .publish_active_checkpoint(b"synthetic-invalid-sdk-checkpoint")
+        .unwrap();
+    let result = Arc::clone(&account)
+        .acquire_verified_for(Some("retired-generation"))
+        .await;
+    let error = match result {
+        Ok(_) => panic!("retired catalog generation reached authentication"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(account.state.lock().unwrap().cached.is_none());
+    assert!(account.store.try_native_lease().is_ok());
+}
+
 /// Dropping a later-stage acquisition preserves the SDK-visible refresh and retires replaced generations.
 #[test]
 fn cancelling_after_oauth_rotation_persists_before_releasing_the_lease() {

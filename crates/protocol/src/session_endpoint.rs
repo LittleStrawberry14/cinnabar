@@ -4,6 +4,10 @@
 /// Largest host-issued admission nonce retained for a native game login.
 pub const MAX_NATIVE_JOIN_NONCE_BYTES: usize = 4096;
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+/// Bounds one native connection's admission and protocol startup.
+pub const NATIVE_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Native direct transport selected by application composition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeTransport {
