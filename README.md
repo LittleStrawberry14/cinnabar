@@ -65,7 +65,18 @@ cinnabar (Rust, Bevy/wgpu)  ── local socket ──  bedrock-core (Go)
 The Rust client owns everything you see and play. By default, the Go core owns Xbox sign-in,
 encryption and the network transports. The target game version is pinned in `assets/bedrock-target.json`.
 
-Signed-out direct connections can opt into native Rust networking:
+Launch the menu with native RakNet enabled, then sign in or select a saved account and join a server:
+
+```sh
+cargo run -p cinnabar --features native-networking -- --native-networking raknet
+```
+
+Authenticated direct joins retain one native account owner across retries and transfers. Refresh
+rotation shares the existing account-cache leases with Go, and private checkpoints retain proof
+and refresh ownership. Persistent derived-service caches and live authenticated acceptance remain
+in progress. Account acquisition errors return to the menu without a signed-out retry.
+
+Signed-out direct connections can also opt in:
 
 ```sh
 cargo run -p cinnabar --features native-networking -- --address HOST:PORT --native-networking raknet
@@ -73,7 +84,8 @@ cargo run -p cinnabar --features native-networking -- --address HOST:PORT --nati
 
 Use `nethernet-lan` with a peer's LAN discovery endpoint for directed IPv4 NetherNet.
 The native backend uses the existing Rust resource-pack presentation, spawn and play paths.
-Account services, CDN/cache integration, hosting and broader acceptance remain in progress;
+Realms, friend worlds and hosting retain the Go backend. Authenticated native NetherNet is not yet
+supported. CDN/cache integration and broader acceptance remain in progress;
 the working Go backend remains the default.
 
 Built on these libraries:
@@ -81,6 +93,7 @@ Built on these libraries:
 | Library | Used for |
 | --- | --- |
 | [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Optional native batch framing, compression, encryption, Login and RakNet transport. |
+| [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Optional native account authentication and Minecraft multiplayer credentials. |
 | [nethernet](https://github.com/cinnabar-mc/nethernet) | Optional native LAN signaling, ICE, DTLS and SCTP transport. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |

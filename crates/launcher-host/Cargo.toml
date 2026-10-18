@@ -14,6 +14,7 @@ reads = [
 
 [features]
 test-support = []
+native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "protocol/native-networking"]
 
 [dependencies]
 cosmetics = { path = "../cosmetics" }
@@ -36,13 +37,20 @@ serde_json = "1"
 server-experience = { path = "../server-experience" }
 sha2.workspace = true
 thiserror.workspace = true
-time = { version = "0.3", default-features = false, features = ["std"] }
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 tokio.workspace = true
 tracing.workspace = true
 update-installer = { path = "../update-installer" }
 update-manifest = { path = "../update-manifest" }
 url = "2"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "7f6a74c326eb09f7c6cd84de8309bba9d4e8476e", optional = true }
+p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
+rand = { version = "0.10", optional = true }
+uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }
+md-5 = { version = "0.10", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

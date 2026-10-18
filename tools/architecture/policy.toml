@@ -1289,6 +1289,7 @@ exports = [
 [[crates]]
 name = "launcher-host"
 path = "crates/launcher-host"
+# Optional account services use this runtime/storage edge; protocol and transport stay HTTP-free.
 allowed_dependencies = ["cosmetics", "bridge", "crash-report", "launcher", "protocol", "resource-pack", "server-experience", "test-time", "update-manifest", "update-installer"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]

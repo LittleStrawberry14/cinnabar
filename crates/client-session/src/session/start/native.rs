@@ -58,20 +58,38 @@ pub fn spawn_network<P: Send + 'static>(
                                 .flatten();
                                 (game_data, packs)
                             };
-                            LoginSequence::connect_endpoint(
-                                &config.endpoint,
-                                protocol::SessionLogin {
-                                    display_name: &config.display_name,
-                                    client_random_id: config.client_random_id,
-                                    cache: Some(config.client_blob_cache.clone()),
-                                    skin: Some(config.player_skin),
-                                    settings: &config.login_settings,
-                                    tap: Some(packet_tap),
-                                    target: None,
-                                },
-                                prepare,
-                            )
-                            .await
+                            let login = protocol::SessionLogin {
+                                display_name: &config.display_name,
+                                client_random_id: config.client_random_id,
+                                cache: Some(config.client_blob_cache.clone()),
+                                skin: Some(config.player_skin),
+                                settings: &config.login_settings,
+                                tap: Some(packet_tap),
+                                target: None,
+                            };
+                            #[cfg(feature = "native-networking")]
+                            if let Some(acquire) = config.native_authentication {
+                                let protocol::SessionEndpoint::Native(target) = &config.endpoint
+                                else {
+                                    return Err(protocol::ProtocolError::Authentication(
+                                        std::io::Error::new(
+                                            std::io::ErrorKind::InvalidInput,
+                                            "native account preparation requires a native endpoint",
+                                        ),
+                                    ));
+                                };
+                                let authentication = acquire
+                                    .await
+                                    .map_err(protocol::ProtocolError::Authentication)?;
+                                return LoginSequence::connect_native_authenticated(
+                                    target,
+                                    login,
+                                    authentication,
+                                    prepare,
+                                )
+                                .await;
+                            }
+                            LoginSequence::connect_endpoint(&config.endpoint, login, prepare).await
                         },
                         executor,
                         observation,

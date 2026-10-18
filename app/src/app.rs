@@ -550,6 +550,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             ),
             session_generation: simulation_clock::identity::SessionGeneration::new(1),
             endpoint: args.session_endpoint(socket_dir)?,
+            #[cfg(feature = "native-networking")]
+            native_account: None,
             display_name: args.display_name.clone(),
             client_random_id: client_random_id.expect("connection requested"),
             client_blob_cache: client_blob_cache.cache(),

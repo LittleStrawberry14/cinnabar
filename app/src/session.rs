@@ -30,6 +30,8 @@ use {
 use std::time::Instant;
 
 mod client_id;
+#[cfg(feature = "native-networking")]
+mod native_account;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
 
@@ -39,7 +41,7 @@ pub(crate) type JoinStage = client_session::connection::JoinStage<SessionDirecto
 
 use client_state::{JoinIntent, SessionStatus};
 
-#[derive(Debug, Resource)]
+#[derive(Resource)]
 pub(crate) struct SessionController {
     core: CoreProcessGuard, // declared first: the core stops before the directories below go
     /// Identity-checked owner of the live session's runtime directory.
@@ -60,6 +62,8 @@ pub(crate) struct SessionController {
     connecting: bool,
     #[cfg(feature = "native-networking")]
     native_transport: Option<protocol::NativeTransport>,
+    #[cfg(feature = "native-networking")]
+    native_account: Option<native_account::SelectedAccount>,
     /// Polls the per-session core this join started for its server trust question.
     trust: Option<SessionTrust>,
     /// Server packs recent joins compiled; released once no join follows.
@@ -73,7 +77,7 @@ impl Default for SessionController {
 }
 
 impl SessionController {
-    /// Retains the direct backend for signed-out retries and server transfer follows.
+    /// Retains the direct backend for retries and server transfer follows.
     pub(crate) fn with_native_transport(
         self,
         transport: Option<protocol::NativeTransport>,
@@ -91,15 +95,18 @@ impl SessionController {
         }
     }
 
-    /// Account and hosted-world joins keep their existing authenticated owner.
-    fn native_direct_enabled(&self, authenticated: bool, local_world: bool) -> bool {
+    /// Local worlds and service-resolved destinations retain their existing provisioning owner.
+    fn native_direct_enabled(&self, address: &str, local_world: bool) -> bool {
         #[cfg(feature = "native-networking")]
         {
-            self.native_transport.is_some() && !authenticated && !local_world
+            self.native_transport.is_some()
+                && !local_world
+                && !address.starts_with(bridge::contract::REALM_TARGET_PREFIX)
+                && !address.starts_with(bridge::contract::FRIEND_TARGET_PREFIX)
         }
         #[cfg(not(feature = "native-networking"))]
         {
-            let _ = (authenticated, local_world);
+            let _ = (address, local_world);
             false
         }
     }
@@ -119,6 +126,8 @@ impl SessionController {
             connecting: false,
             #[cfg(feature = "native-networking")]
             native_transport: None,
+            #[cfg(feature = "native-networking")]
+            native_account: None,
             trust: None,
             kept_packs: crate::runtime::network::compiled_stacks(),
         }
@@ -211,7 +220,13 @@ impl SessionController {
         generation: u64,
     ) -> Result<JoinStage, String> {
         #[cfg(feature = "native-networking")]
-        if let Some(transport) = self.native_transport.filter(|_| auth_cache.is_none()) {
+        if let Some(transport) = self
+            .native_transport
+            .filter(|_| self.native_direct_enabled(address, self.local_world))
+        {
+            if auth_cache.is_some() && transport != protocol::NativeTransport::RakNet {
+                return Err("Authenticated native joins currently require direct RakNet.".into());
+            }
             return Ok(JoinStage::Native(protocol::NativeConnectionTarget {
                 address: address.to_owned(),
                 transport,
@@ -394,7 +409,7 @@ fn attempt_connect(
         .filter(|_| {
             !session
                 .controller
-                .native_direct_enabled(auth_cache.is_some(), local_world)
+                .native_direct_enabled(&address, local_world)
         })
         .and_then(|slot| {
             slot.begin_join(
@@ -460,6 +475,8 @@ fn poll_join(
         }
     };
     let attempt = controller.join.take().expect("pending join");
+    #[cfg(feature = "native-networking")]
+    let native_auth_cache = attempt.auth_cache.clone();
     use client_session::connection::JoinPoll;
     match attempt.poll(controller.generation, controller.connecting, || {
         controller.core.exit_status()
@@ -490,12 +507,20 @@ fn poll_join(
                 controller.bind_directory(directory);
             }
             let login_settings = login_settings(menu, session.input.as_deref());
+            #[cfg(feature = "native-networking")]
+            let native_account = if matches!(endpoint, protocol::SessionEndpoint::Native(_)) {
+                native_auth_cache.map(|path| controller.native_account_for(menu, path))
+            } else {
+                None
+            };
             if let Err(error) = start_network(
                 commands,
                 menu,
                 controller.generation,
                 cache,
                 endpoint,
+                #[cfg(feature = "native-networking")]
+                native_account,
                 login_settings,
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
@@ -553,6 +578,9 @@ fn start_network(
     session_generation: u64,
     cache: &BlobCache,
     endpoint: protocol::SessionEndpoint,
+    #[cfg(feature = "native-networking")] native_account: Option<
+        std::sync::Arc<launcher_host::native_account::NativeAccount>,
+    >,
     login_settings: protocol::LoginSettings,
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
@@ -563,6 +591,8 @@ fn start_network(
         registry_base,
         session_generation: simulation_clock::identity::SessionGeneration::new(session_generation),
         endpoint,
+        #[cfg(feature = "native-networking")]
+        native_account,
         display_name: menu.display_name().to_owned(),
         client_random_id,
         client_blob_cache: cache.cache(),
@@ -591,6 +621,11 @@ pub(crate) fn drive_session(
     client_blob_cache: Res<BlobCache>,
     mut session: SessionResources,
 ) {
+    #[cfg(feature = "native-networking")]
+    if menu.account_operation_pending() && session.controller.native_account.is_some() {
+        session.leave();
+        session.controller.native_account = None;
+    }
     session.controller.publish(&mut menu);
     // A queued answer reaches its core before a decline below retires that core.
     if let Some(trust) = session.controller.trust.as_ref() {

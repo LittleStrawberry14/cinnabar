@@ -16,6 +16,10 @@ const MAX_BATCH_PACKETS: usize = 1_600;
 /// Errors produced by raw Bedrock batch encoding and decoding.
 #[derive(Debug, Error)]
 pub enum ProtocolError {
+    /// The application could not prepare its explicitly selected native account.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    #[error("native account preparation failed: {0}")]
+    Authentication(#[source] std::io::Error),
     #[error("bridge connection failed: {0}")]
     Bridge(#[source] anyhow::Error),
 

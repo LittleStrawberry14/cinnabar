@@ -176,7 +176,7 @@ pub enum ParseOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ArgsError {
     #[error(
-        "native networking requires --features native-networking, --address and no --socket-dir"
+        "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
     #[error("--native-networking must be raknet or nethernet-lan")]
@@ -450,7 +450,7 @@ impl ClientArgs {
         }
         if parsed.native_transport.is_some()
             && (!cfg!(feature = "native-networking")
-                || parsed.address.is_none()
+                || (parsed.connection_requested() && parsed.address.is_none())
                 || parsed.socket_dir_explicit)
         {
             return Err(ArgsError::NativeNetworkingUnavailable);
@@ -504,9 +504,21 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn native_networking_rejects_ambiguous_or_missing_endpoints() {
+    fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {
+        let menu = ClientArgs::parse_from(["client", "--native-networking", "raknet"]);
+        if cfg!(feature = "native-networking") {
+            let ParseOutcome::Run(menu) = menu.unwrap() else {
+                panic!("menu launch")
+            };
+            assert!(!menu.connection_requested());
+            assert_eq!(
+                menu.native_transport,
+                Some(protocol::NativeTransport::RakNet)
+            );
+        } else {
+            assert!(matches!(menu, Err(ArgsError::NativeNetworkingUnavailable)));
+        }
         for arguments in [
-            vec!["client", "--native-networking", "raknet"],
             vec![
                 "client",
                 "--address",
@@ -515,6 +527,13 @@ mod tests {
                 "raknet",
                 "--socket-dir",
                 "custom",
+            ],
+            vec![
+                "client",
+                "--native-networking",
+                "raknet",
+                "--acceptance-seconds",
+                "1",
             ],
         ] {
             assert!(matches!(
