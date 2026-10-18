@@ -151,7 +151,7 @@ impl NativeRelayConnecting {
                     ))
                 })?;
             let start_game = packet_id(&raw).map_err(failure)? == PacketId::StartGame;
-            self.startup.push(raw);
+            self.startup.push(Bytes::copy_from_slice(&raw));
             if start_game {
                 break;
             }
