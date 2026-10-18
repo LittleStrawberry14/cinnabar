@@ -191,7 +191,7 @@ mod session {
             ]],
         )
         .await;
-        await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+        let _ready = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
             .await
             .unwrap();
         let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
@@ -277,7 +277,7 @@ mod session {
             tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(spawn, core) }).await;
         let (spawned, runtime_id) = joined.expect("the facts waited for PlayerSpawn");
         assert_eq!(runtime_id, RUNTIME_ID);
-        spawned.expect("spawn");
+        let _ready = spawned.expect("spawn");
     }
 
     /// Optional packets are deferred to play in order, ahead of a packet the spawning batch
@@ -377,7 +377,7 @@ mod session {
             ]],
         )
         .await;
-        await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+        let _ready = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
             .await
             .expect("spawn");
         let length = peer.read_u32().await.unwrap();
