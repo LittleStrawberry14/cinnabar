@@ -255,7 +255,7 @@ Set-Content -LiteralPath $manifestPath -NoNewline -Value `
     $canonicalManifest.Replace($expectedProtocolgenRevision, ('0' * 40))
 Assert-ThrowsLike {
     Assert-TestProtocolDependencyProvenance -Root $fixtureRoot
-} '*cargo metadata*' 'protocol provenance accepted a drifted codec Git revision'
+} '*must use the canonical pinned Git source*' 'protocol provenance accepted a drifted codec Git revision'
 Set-Content -LiteralPath $manifestPath -NoNewline -Value $canonicalManifest
 
 $canonicalStringDecoys = "[dependencies]`n$canonicalCodec"
