@@ -62,7 +62,7 @@ fn app_with(open: bool) -> (App, Entity) {
             storage_item: NetworkItemStack::default(),
         }));
     if open {
-        runtime.toggle_inventory(&mut player_runtime, None);
+        runtime.toggle_inventory(&mut player_runtime);
         assert!(
             runtime
                 .inventory_ledger_mut(&mut player_runtime)

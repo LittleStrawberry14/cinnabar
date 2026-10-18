@@ -70,7 +70,6 @@ fn flatten(
     } else {
         RawControl {
             owner_ns: first.owner_ns.clone(),
-            definition_scope: first.definition_scope.clone(),
             name: first.name.clone(),
             base: first.base.clone(),
             props: first.props.clone(),
@@ -94,7 +93,7 @@ fn literal_base(control: &RawControl) -> Option<ControlRef> {
         .base
         .as_deref()
         .filter(|base| !base.starts_with('$'))?;
-    Some(control.reference(base))
+    Some(ControlRef::parse(base, &control.owner_ns))
 }
 
 /// How a derived definition's explicit `null` treats the base's property.
@@ -129,10 +128,6 @@ fn inherit_with_children(
     }
     RawControl {
         owner_ns: child.owner_ns.clone(),
-        definition_scope: child
-            .definition_scope
-            .clone()
-            .or_else(|| base.definition_scope.clone()),
         name: child.name.clone(),
         base: child.base.clone().or_else(|| base.base.clone()),
         props,
@@ -219,7 +214,6 @@ mod tests {
         };
         RawControl {
             owner_ns: "ns".to_owned(),
-            definition_scope: None,
             name: name.to_owned(),
             base: base.map(str::to_owned),
             props,

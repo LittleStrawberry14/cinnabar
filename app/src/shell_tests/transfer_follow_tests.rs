@@ -314,8 +314,7 @@ fn a_core_that_exits_early_fails_the_join_promptly() {
             .as_deref()
             .is_some_and(|message| {
                 message.starts_with("Could not start 127.0.0.1")
-                    && message.contains("bedrock-core exited (exit status: 3)")
-                    && message.contains("before publishing its endpoint")
+                    && message.contains("exited before publishing")
             }),
         "{:?}",
         menu.view().disconnect_message

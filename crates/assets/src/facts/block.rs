@@ -27,8 +27,6 @@ pub struct BlockFact {
     pub survival: SurvivalRule,
     pub render: super::BlockRenderFact,
     pub ambient: super::presentation::AmbientBlock,
-    /// Species-authored falling leaves; ordinary biome-tinted leaves use their world material.
-    pub leaf_particle: Option<super::ParticleEffect>,
     pub placement: super::PlacementRule,
     pub support: super::SupportKind,
     /// Sequential identity of the admitted double slab or matching sign.
@@ -47,7 +45,6 @@ impl Default for BlockFact {
             survival: SurvivalRule::Unresolved,
             render: super::BlockRenderFact::default(),
             ambient: super::presentation::AmbientBlock::Other,
-            leaf_particle: None,
             placement: super::PlacementRule::Unresolved,
             support: super::SupportKind::Unresolved,
             alternate: None,
@@ -105,9 +102,6 @@ impl BlockFacts {
                         survival: r.survival,
                         render: super::block_render_fact(&r.name),
                         ambient: super::presentation_generated::ambient_block(&r.name),
-                        leaf_particle: (r.model_family == ModelFamily::Leaves)
-                            .then(|| super::presentation::leaf_particle(&r.name))
-                            .flatten(),
                         ..BlockFact::default()
                     };
                     fact.identity = names.get(r.name.as_ref()).copied();

@@ -12,15 +12,14 @@ mod status;
 mod tests;
 mod worker;
 
-use super::admission::SettingsSeed;
 use super::{ModRuntime, RELOAD_INTERVAL, VisualTimeOverride, interaction::ModInteraction};
 use assets::RuntimeFontCatalog;
 use bevy::prelude::*;
-use candidate::Candidate;
+use candidate::{Candidate, build_candidate_with_settings};
 use client_extensions::modding::multi::ModHosts;
-use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
+use client_shell::ui_resources::UiPresentationResource;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use mod_host::{ModHost, SettingsSnapshot};
+use mod_host::ModHost;
 use schema::{Entry, Registration, VERSION};
 use std::{
     collections::BTreeMap,
@@ -67,47 +66,8 @@ struct SourceSnapshot {
     registration: Entry,
     identity: [u8; 32],
     component: Vec<u8>,
-    drawing: Option<super::admission::DrawingContext>,
     font: Option<Vec<u8>>,
     ui: Option<Vec<u8>>,
-    settings: SettingsSeed,
-}
-
-impl SourceSnapshot {
-    /// Resolves this snapshot's digest against its captured drawing authority.
-    fn drawing_policy(&self) -> Option<mod_api::drawing::DrawingSession> {
-        use sha2::{Digest, Sha256};
-        self.drawing
-            .as_ref()
-            .map(|drawing| drawing.policy(Sha256::digest(&self.component).into()))
-    }
-
-    /// Selects source edits and recoverable fence changes without reviving a stopped identity.
-    fn needs_admission(&self, admitted: Option<&Admitted>) -> bool {
-        let Some(admitted) = admitted else {
-            return true;
-        };
-        if admitted.source != self.identity {
-            return true;
-        }
-        match &self.drawing {
-            Some(drawing) if !drawing.restartable() => false,
-            Some(drawing) if drawing.needs_restart() => true,
-            _ => admitted.drawing != self.drawing_policy(),
-        }
-    }
-
-    /// Prefers committed preferences to captured disk input, within the requested consent.
-    fn settings_seed(&self, current: Option<&SettingsSnapshot>) -> SettingsSeed {
-        match current {
-            Some(current) => super::admission::settings_seed(
-                self.registration.grants.settings,
-                Some(current),
-                &self.registration.component,
-            ),
-            None => self.settings.clone(),
-        }
-    }
 }
 struct Change {
     entry: Entry,
@@ -168,18 +128,17 @@ struct Desired {
     generation: u64,
     registration: Option<Registration>,
 }
-/// Source and fence accepted by the frame for one registration.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Admitted {
-    source: [u8; 32],
-    drawing: Option<mod_api::drawing::DrawingSession>,
+#[derive(Clone)]
+struct SettingsSnapshot {
+    path: PathBuf,
+    json: String,
 }
 
 enum Message {
     Acknowledge {
         generation: u64,
         request_id: String,
-        installed: BTreeMap<PathBuf, Admitted>,
+        installed: BTreeMap<PathBuf, [u8; 32]>,
         statuses: Vec<Status>,
     },
     AwaitRetirement {
@@ -211,7 +170,6 @@ pub(super) struct Watcher {
     fallback_retired: Mutex<Vec<ModHost>>,
     settings: Arc<Mutex<BTreeMap<PathBuf, SettingsSnapshot>>>,
     companions: Arc<Mutex<Vec<PathBuf>>>,
-    drawing: Arc<Mutex<BTreeMap<PathBuf, super::admission::DrawingContext>>>,
 }
 impl Watcher {
     /// Gives the library a fence that waits off-frame for final settings writes.
@@ -231,8 +189,6 @@ impl Watcher {
         let desired = Arc::new(Mutex::new(Desired::default()));
         let alive = Arc::new(AtomicBool::new(true));
         let settings = Arc::new(Mutex::new(BTreeMap::new()));
-        let drawing = Arc::new(Mutex::new(BTreeMap::new()));
-        let fences = drawing.clone();
         let (generation, selection, life, current) = (
             latest.clone(),
             desired.clone(),
@@ -250,7 +206,6 @@ impl Watcher {
                     generation,
                     selection,
                     current,
-                    fences,
                 );
                 life.store(false, Ordering::Release);
             })
@@ -268,7 +223,6 @@ impl Watcher {
             fallback_retired: Mutex::new(Vec::new()),
             companions: Arc::new(Mutex::new(Vec::new())),
             settings,
-            drawing,
         })
     }
     /// Publishes every surviving settings writer, including environment-loaded instances.
@@ -283,27 +237,23 @@ impl Watcher {
             .collect();
     }
     /// Captures each mod's latest in-memory preferences before preparing replacements.
-    pub(super) fn remember_settings(
-        &self,
-        runtime: Option<&ModRuntime>,
-        ui: Option<&client_ui::ui_runtime::UiRuntime>,
-    ) {
-        self.remember_companions(runtime);
-        let mut drawing = self.drawing.lock().expect("mod drawing fences");
-        drawing.clear();
+    pub(super) fn remember_settings(&self, runtime: &ModRuntime) {
+        self.remember_companions(Some(runtime));
         let mut current = self.settings.lock().expect("mod settings snapshots");
         current.clear();
-        let Some(runtime) = runtime else { return };
         for (index, metadata) in runtime.metadata.iter().enumerate() {
             let Some(registered) = &metadata.registration else {
                 continue;
             };
             let host = runtime.hosts.host(index);
-            if let Some(context) = super::admission::DrawingContext::capture(host, ui) {
-                drawing.insert(registered.entry.component.clone(), context);
-            }
-            if let Some(snapshot) = SettingsSnapshot::capture(host) {
-                current.insert(registered.entry.component.clone(), snapshot);
+            if let Some((path, json)) = host.settings_path().zip(host.settings_snapshot()) {
+                current.insert(
+                    registered.entry.component.clone(),
+                    SettingsSnapshot {
+                        path: path.into(),
+                        json: json.into(),
+                    },
+                );
             }
         }
     }

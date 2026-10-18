@@ -6,25 +6,13 @@
     "messaging",
     "scene",
     "media",
-    "items",
-    "world_draw",
-    "entity_observe",
-    "entity_highlight",
-    "render_through_walls",
-    "render_material",
-    "render_post"
+    "items"
   ],
   "implemented_permissions": [
     "ui",
     "modal_ui",
     "input",
-    "messaging",
-    "world_draw",
-    "entity_observe",
-    "entity_highlight",
-    "render_through_walls",
-    "render_material",
-    "render_post"
+    "messaging"
   ],
   "directions": [
     "to_client",

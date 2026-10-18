@@ -61,15 +61,10 @@ fn client_logging_child() {
         FIXTURE_LOG_LIMIT * 4
     };
     let dir = logging_layout(&root).log_dir();
-    let header = format!(
-        "{} session={}",
-        crash_report::section::CLIENT_SESSION_START,
-        diagnostics::session::id()
-    );
     diagnostics::console::initialize_log(&SessionFiles {
         dir: &dir,
         stem: "client",
-        header: &header,
+        header: "CLIENT_SESSION_START fixture",
         json: false,
         retention: Retention {
             session_bytes: limit,

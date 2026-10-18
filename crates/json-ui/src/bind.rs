@@ -427,10 +427,14 @@ impl<'a> Binder<'a> {
             own
         } else {
             let mut own = std::mem::take(&mut memory.bag);
-            memory.refresh_creation_values(&mut own, &scope.values, &bindings);
+            own.extend(
+                scope
+                    .values
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
             own
         };
-        memory.creation_inputs = Arc::clone(&scope.values);
         if let Some(values) = self.data.controls.get(src.name()) {
             own.extend(
                 values

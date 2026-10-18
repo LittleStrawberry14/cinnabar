@@ -679,7 +679,7 @@ impl UiRuntime {
             }
             Widget::Close => {
                 if self.inventory_open() {
-                    self.toggle_inventory(player_runtime, None);
+                    self.toggle_inventory(player_runtime);
                 }
                 Ok(0)
             }

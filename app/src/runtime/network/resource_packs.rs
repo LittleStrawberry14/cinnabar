@@ -5,7 +5,7 @@ use resource_pack::{LayeredPackView, PackAdmission};
 use super::{
     block_overlay::{CompiledBlockOverlay, compile_block_overlay},
     glyph_sheets::compile_session_glyphs,
-    item_icons::{BlockIcons, compile_session_icons, custom_block_icons_with_tint},
+    item_icons::{BlockIcons, compile_session_icons, custom_block_icons},
 };
 use client_ui::ui_runtime::presentation::{ServerUiPack, SessionGlyphSheets, SessionIcons};
 
@@ -360,41 +360,18 @@ fn compile_application(
                 changes.icons || changes.blocks,
                 previous.and_then(|old| old.item_icons.clone()),
                 icon_keys,
-                |view| {
-                    let item_overlay = super::block_overlay::compile_block_item_overlay(
-                        view,
-                        custom_blocks,
-                        BASE_MATERIAL_KEYS.get().map(|(keys, _)| keys),
-                        max_layers,
-                        base_world_assets(),
-                    );
-                    let grass = super::item_icons::carried_grass_tint(
-                        view,
-                        BASE_MATERIAL_KEYS.get().map(|(keys, _)| keys),
-                    );
-                    let mut block_icons = if let Some((compiled, definitions)) = &item_overlay {
-                        custom_block_icons_with_tint(
-                            &compiled.overlay,
-                            definitions,
-                            false,
-                            &inputs.block_items,
-                            base_world_assets(),
-                            grass,
-                        )
-                    } else {
+                || {
+                    let mut block_icons =
                         overlay
                             .as_deref()
                             .map_or_else(BlockIcons::default, |compiled| {
-                                custom_block_icons_with_tint(
+                                custom_block_icons(
                                     &compiled.overlay,
                                     custom_blocks,
                                     hashed_block_ids,
                                     &inputs.block_items,
-                                    base_world_assets(),
-                                    grass,
                                 )
-                            })
-                    };
+                            });
                     if let (Some(compiled), Some((_, base))) =
                         (overlay.as_deref(), BASE_MATERIAL_KEYS.get())
                     {
@@ -661,7 +638,7 @@ fn compile_icons(
     changed: bool,
     reuse: Option<Arc<SessionIcons>>,
     icon_keys: &[(Arc<str>, Arc<str>)],
-    bake_blocks: impl FnOnce(&LayeredPackView) -> BlockIcons,
+    bake_blocks: impl FnOnce() -> BlockIcons,
 ) -> CompiledIcons {
     pack_runtime::reload_diff::compile_part(
         stack,
@@ -669,7 +646,7 @@ fn compile_icons(
         changed,
         pack_runtime::reload_diff::Subscriber::Icons,
         reuse,
-        |view| compile_session_icons(view, icon_keys, bake_blocks(view)),
+        |view| compile_session_icons(view, icon_keys, bake_blocks()),
     )
 }
 

@@ -1,23 +1,14 @@
 use super::*;
 use preferences::{MAX_PREFERENCE_BYTES, MAX_SERVERS, Preferences};
-use serde_json::{Value, json};
-use web_transport::session::RequestRefusal;
-
-/// Builds a typed account event from a wire fixture.
-fn account_event(value: Value) -> ControlEvent {
-    ControlEvent::Account(serde_json::from_value(value).unwrap())
-}
-
-/// Builds a typed join-progress event from a wire fixture.
-fn connect_event(value: Value) -> ControlEvent {
-    ControlEvent::Connect(serde_json::from_value(value).unwrap())
-}
+use serde_json::json;
 
 /// Delivers a relay account snapshot through the real typed event boundary.
 fn account(adapter: &mut RelayAccount, state: &str) {
-    adapter.observe(&account_event(json!({"state": state,
+    adapter
+        .observe(&ControlEvent::Account(json!({"state": state,
         "verification_uri": "https://example.invalid/device", "user_code": "TEST-CODE",
-        "gamertag": "Fixture"})));
+        "gamertag": "Fixture"})))
+        .unwrap();
 }
 
 #[test]
@@ -41,9 +32,9 @@ fn launcher_refusal_survives_identical_snapshots_and_retry_clears_it() {
     let mut adapter = RelayAccount::default();
     account(&mut adapter, "signed_out");
     adapter.request(AccountIntent::SignIn);
-    adapter.observe(&ControlEvent::RequestRefused(RequestRefusal::Refused(
-        bridge::contract::RefusalCode::SessionBusy,
-    )));
+    adapter
+        .observe(&ControlEvent::Error("session_busy".into()))
+        .unwrap();
     account(&mut adapter, "signed_out");
     assert!(matches!(adapter.state(), AuthState::Failed(_)));
     adapter.request(AccountIntent::SignIn);
@@ -66,9 +57,11 @@ fn launcher_refusal_survives_identical_snapshots_and_retry_clears_it() {
 fn launcher_disconnect_and_new_join_retire_old_presentation() {
     let mut adapter = RelayAccount::default();
     account(&mut adapter, "signed_in");
-    adapter.observe(&connect_event(
-        json!({"stage":"packs", "packs_done":1, "packs_total":2}),
-    ));
+    adapter
+        .observe(&ControlEvent::Connect(
+            json!({"stage":"packs", "packs_done":1, "packs_total":2}),
+        ))
+        .unwrap();
     assert!(adapter.join_stage().is_some());
     adapter.begin_join();
     assert!(adapter.join_stage().is_none());
@@ -100,11 +93,15 @@ fn launcher_idempotent_sign_in_keeps_the_known_prompt_or_identity() {
 #[test]
 fn launcher_handoff_clears_progress_for_the_menu_generating_stage() {
     let mut adapter = RelayAccount::default();
-    adapter.observe(&connect_event(
-        json!({"stage":"packs", "packs_done":1, "packs_total":2}),
-    ));
+    adapter
+        .observe(&ControlEvent::Connect(
+            json!({"stage":"packs", "packs_done":1, "packs_total":2}),
+        ))
+        .unwrap();
     assert!(adapter.join_stage().is_some());
-    adapter.observe(&connect_event(json!({"stage":""})));
+    adapter
+        .observe(&ControlEvent::Connect(json!({"stage":""})))
+        .unwrap();
     assert!(adapter.join_stage().is_none());
 }
 
@@ -114,9 +111,9 @@ fn launcher_refused_sign_out_keeps_the_confirmed_account() {
     account(&mut adapter, "signed_in");
     adapter.request(AccountIntent::SignOut);
     adapter.take_operation();
-    adapter.observe(&ControlEvent::RequestRefused(RequestRefusal::Refused(
-        bridge::contract::RefusalCode::SessionBusy,
-    )));
+    adapter
+        .observe(&ControlEvent::Error("session_busy".into()))
+        .unwrap();
     assert_eq!(adapter.state(), AuthState::Authenticated);
     assert_eq!(adapter.profile().gamertag, "Fixture");
     assert!(adapter.operation_error().is_some());
@@ -177,7 +174,9 @@ fn launcher_retry_refusal_survives_a_delayed_cancellation_snapshot() {
     adapter.take_operation();
     adapter.request(AccountIntent::SignIn);
     adapter.take_operation();
-    adapter.observe(&ControlEvent::RequestRefused(RequestRefusal::RetrySignIn));
+    adapter
+        .observe(&ControlEvent::Error("rate_limited".into()))
+        .unwrap();
     account(&mut adapter, "signed_out");
     assert!(matches!(adapter.state(), AuthState::Failed(_)));
     adapter.request(AccountIntent::SignIn);
@@ -192,12 +191,19 @@ fn launcher_rejects_unsafe_or_incomplete_prompts() {
         "http://example.invalid",
         "https://name:secret@example.invalid",
     ] {
-        adapter.observe(&account_event(
-            json!({"state":"awaiting_code", "verification_uri":uri, "user_code":"TEST"}),
-        ));
+        adapter
+            .observe(&ControlEvent::Account(
+                json!({"state":"awaiting_code", "verification_uri":uri, "user_code":"TEST"}),
+            ))
+            .unwrap();
         assert!(matches!(adapter.state(), AuthState::Failed(_)));
     }
-    adapter.observe(&account_event(json!({"state":"awaiting_code", "verification_uri":"https://example.invalid", "user_code":"TEST&other=value"})));
+    assert!(
+        adapter
+            .observe(&ControlEvent::Account(json!({"state": false})))
+            .is_err()
+    );
+    adapter.observe(&ControlEvent::Account(json!({"state":"awaiting_code", "verification_uri":"https://example.invalid", "user_code":"TEST&other=value"}))).unwrap();
     assert!(matches!(adapter.state(), AuthState::Failed(_)));
 }
 

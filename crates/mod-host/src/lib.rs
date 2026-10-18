@@ -2,7 +2,6 @@
 
 mod declarations;
 mod drawing_policy;
-use drawing_policy::DrawingRestart;
 mod grants;
 pub use declarations::{Declarations, REQUESTED_GRANTS_SECTION, declarations};
 pub mod helper;
@@ -24,7 +23,7 @@ mod screens;
 pub mod server;
 mod settings;
 mod terrain;
-pub use settings::{SettingsSnapshot, settings_companion};
+pub use settings::settings_companion;
 
 pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
 
@@ -108,8 +107,7 @@ pub(crate) const FRAME_FUEL: u64 = 100_000;
 pub(crate) const MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Where a mod came from, which reload reads again.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Source {
+enum Source {
     Component(PathBuf),
     Package(PathBuf),
 }
@@ -127,7 +125,7 @@ pub struct ModHost {
     attempted: [u8; 32],
     admitted_digest: [u8; 32],
     grants: ModGrants,
-    /// The loader's authorization before component or manifest requests narrow it.
+    /// The loader's authorization before the manifest narrows package permissions.
     authorized_grants: ModGrants,
     settings_writer: Option<settings::SettingsWriter>,
     settings_seed: Option<String>,
@@ -136,7 +134,7 @@ pub struct ModHost {
     layout: Option<ScreenLayout>,
     session: Arc<SessionData>,
     drawing_session: Option<mod_api::drawing::DrawingSession>,
-    drawing_restart: DrawingRestart,
+    drawing_restart: bool,
 }
 
 /// Builds an empty, unfocused control snapshot for a frame with no routed input.

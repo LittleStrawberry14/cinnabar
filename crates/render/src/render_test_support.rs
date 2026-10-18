@@ -1,8 +1,5 @@
 //! Headless fixtures for recording the same deferred commands as render systems.
 
-#[path = "render_test_support/scene_raster.rs"]
-pub(crate) mod scene_raster;
-
 use bevy::{
     ecs::{schedule::ScheduleLabel, system::SystemState},
     prelude::*,

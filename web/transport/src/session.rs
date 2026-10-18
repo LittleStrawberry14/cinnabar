@@ -4,17 +4,19 @@
 //! received bearer is echoed in pong. Offline account intent occupies one slot. Caller time
 //! drives six bounded retries with capped backoff and caller-supplied jitter.
 
-use crate::control::{Capability, Event, Hello, Request, parse};
 use crate::{Channel, CloseReason, RelayTransport};
 use bridge::{
     BridgeCodec,
     contract::{
-        MAX_FRAME_LEN, RELAY_CONTROL_BYTES, RELAY_PLAY_MESSAGE_BYTES, RELAY_VERSION, RefusalCode,
+        MAX_FRAME_LEN, RELAY_CHANNEL_CONTROL, RELAY_CHANNEL_PLAY, RELAY_CONTROL_BYTES,
+        RELAY_EVENT_ACCOUNT, RELAY_EVENT_CONNECT, RELAY_EVENT_ERROR, RELAY_EVENT_PING,
+        RELAY_EVENT_WELCOME, RELAY_OP_PONG, RELAY_OP_SIGN_IN, RELAY_OP_SIGN_OUT,
+        RELAY_PLAY_MESSAGE_BYTES, RELAY_VERSION,
     },
 };
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-
+use serde_json::{Value, json};
 use std::time::Duration;
 use tokio_util::codec::Framed;
 
@@ -27,7 +29,6 @@ pub enum State {
     Connecting,
     Ready(u64),
     Playing(u64),
-    Refused(RefusalCode),
     Closed,
 }
 /// Latest desired account operation, coalesced while offline.
@@ -36,28 +37,12 @@ pub enum AccountOperation {
     SignIn,
     SignOut,
 }
-/// A request refusal keeps control ready and identifies the operation the player can retry.
-#[derive(Debug, PartialEq)]
-pub enum RequestRefusal {
-    RetrySignIn,
-    Refused(RefusalCode),
-}
-impl RequestRefusal {
-    /// Describes the available request recovery without exposing provider errors.
-    pub fn message(&self) -> &'static str {
-        match self {
-            Self::RetrySignIn => "The relay cannot accept sign-in right now. Use Sign in to retry.",
-            Self::Refused(RefusalCode::SessionBusy) => "Leave the server before signing in or out.",
-            Self::Refused(_) => "The relay refused this request.",
-        }
-    }
-}
 /// Control observations forwarded to the host's account and progress plumbing.
 #[derive(Debug, PartialEq)]
 pub enum ControlEvent {
-    Account(bridge::Account),
-    Connect(bridge::ConnectProgress),
-    RequestRefused(RequestRefusal),
+    Account(Value),
+    Connect(Value),
+    Error(String),
     Keepalive,
 }
 
@@ -71,7 +56,6 @@ pub struct Session<T: RelayTransport> {
     resumed_account: bool,
     attempts: u32,
     retry_at: Duration,
-    refusal: Option<RefusalCode>,
     pub unknown_events: u64,
 }
 impl<T: RelayTransport> Session<T> {
@@ -86,7 +70,6 @@ impl<T: RelayTransport> Session<T> {
             resumed_account: false,
             attempts: 0,
             retry_at: Duration::ZERO,
-            refusal: None,
             unknown_events: 0,
         }
     }
@@ -111,47 +94,12 @@ impl<T: RelayTransport> Session<T> {
             return false;
         }
         self.retry_at = now
-            .saturating_add(Duration::from_secs(1 << self.attempts.min(4)))
-            .saturating_add(jitter.min(Duration::from_millis(500)));
+            + Duration::from_secs(1 << self.attempts.min(4))
+            + jitter.min(Duration::from_millis(500));
         self.attempts += 1;
         self.state = State::Connecting;
         true
     }
-    /// Observes the next allowed attempt without creating a transport or consuming a retry.
-    pub fn next_retry(&self) -> Result<Duration, CloseReason> {
-        match self.state {
-            State::Offline if self.attempts < RECONNECT_ATTEMPTS => Ok(self.retry_at),
-            State::Offline => Err(CloseReason::RetryExhausted),
-            State::Refused(_) => Err(CloseReason::Refused),
-            State::Closed => Err(CloseReason::Cancelled),
-            _ => Err(CloseReason::Protocol),
-        }
-    }
-
-    /// Returns a safe application refusal independently of transport failure.
-    pub fn refusal(&self) -> Option<RefusalCode> {
-        self.refusal
-    }
-
-    /// Starts a deliberate new account session after refusal or expiry, discarding old intent.
-    pub fn fresh_session(&mut self) {
-        *self = Self::new();
-    }
-
-    /// Restarts an explicit transport/admission retry without bypassing a resume refusal.
-    pub fn restart_retries(&mut self) {
-        if matches!(
-            self.state,
-            State::Offline
-                | State::Refused(RefusalCode::AdmissionRefused | RefusalCode::SessionBusy)
-        ) {
-            self.state = State::Offline;
-            self.refusal = None;
-            self.attempts = 0;
-            self.retry_at = Duration::ZERO;
-        }
-    }
-
     /// Replaces a failed candidate while retaining capability expiry and latest account intent.
     pub(crate) fn replace_transport(&mut self, transport: T) {
         if let Some(old) = &mut self.transport {
@@ -170,10 +118,6 @@ impl<T: RelayTransport> Session<T> {
         }
         self.state = State::Connecting;
         let resume = self.resume(now()).to_owned();
-        if resume.is_empty() && self.bearers.iter().any(Option::is_some) {
-            self.refusal = Some(RefusalCode::ResumeRefused);
-            return Err(CloseReason::Refused);
-        }
         let stream = self
             .transport
             .as_mut()
@@ -182,26 +126,25 @@ impl<T: RelayTransport> Session<T> {
             .await?;
         let mut control = Framed::new(stream, BridgeCodec::with_max(RELAY_CONTROL_BYTES));
         control
-            .send(encode(&Hello::new(Channel::Control, &resume, 0))?)
+            .send(Bytes::from(hello(Channel::Control, &resume, 0).to_string()))
             .await
             .map_err(|_| CloseReason::Transport)?;
         let frame = control
             .next()
             .await
             .ok_or(CloseReason::Transport)?
-            .map_err(read_failure)?;
-        let welcome = match parse(&frame)? {
-            Event::Welcome { capability } => capability,
-            Event::Error { error } => {
-                self.refusal = Some(error);
-                return Err(CloseReason::Refused);
-            }
-            _ => return Err(CloseReason::Protocol),
-        };
-        self.apply_capability(&welcome, now())?;
-        self.state = State::Ready(welcome.generation);
-        self.resumed_account = !resume.is_empty();
+            .map_err(|_| CloseReason::Protocol)?;
+        let welcome = parse(&frame)?;
+        if welcome["type"] == RELAY_EVENT_ERROR {
+            return Err(CloseReason::Refused);
+        }
+        if welcome["type"] != RELAY_EVENT_WELCOME {
+            return Err(CloseReason::Protocol);
+        }
         self.control = Some(control);
+        self.apply_capability(&welcome, now())?;
+        self.state = State::Ready(generation(&welcome)?);
+        self.resumed_account = !resume.is_empty();
         self.attempts = 0;
         Ok(())
     }
@@ -209,11 +152,6 @@ impl<T: RelayTransport> Session<T> {
     pub fn state(&self) -> State {
         self.state
     }
-    /// Reports whether a command still needs a cancellation-safe write boundary.
-    pub fn has_account_intent(&self) -> bool {
-        self.desired.is_some()
-    }
-
     /// Whether the last successful control Hello resumed an existing relay account.
     pub fn resumed_account(&self) -> bool {
         self.resumed_account
@@ -226,10 +164,10 @@ impl<T: RelayTransport> Session<T> {
     pub async fn flush_account(&mut self) -> Result<(), CloseReason> {
         if let Some(operation) = self.desired {
             let op = match operation {
-                AccountOperation::SignIn => Request::SignIn,
-                AccountOperation::SignOut => Request::SignOut,
+                AccountOperation::SignIn => RELAY_OP_SIGN_IN,
+                AccountOperation::SignOut => RELAY_OP_SIGN_OUT,
             };
-            if let Err(reason) = self.send(&op).await {
+            if let Err(reason) = self.send(json!({"op": op})).await {
                 self.close(reason);
                 return Err(reason);
             }
@@ -267,31 +205,41 @@ impl<T: RelayTransport> Session<T> {
             .next()
             .await
             .ok_or(CloseReason::Transport)?
-            .map_err(read_failure)?;
-        match parse(&frame)? {
-            Event::Ping { capability } => {
+            .map_err(|_| CloseReason::Protocol)?;
+        let event = parse(&frame)?;
+        match event["type"].as_str().ok_or(CloseReason::Protocol)? {
+            RELAY_EVENT_PING => {
                 let active = match self.state {
                     State::Ready(g) | State::Playing(g) => g,
                     _ => return Err(CloseReason::Protocol),
                 };
-                if capability.generation != active {
+                if generation(&event)? != active {
                     return Err(CloseReason::Protocol);
                 }
-                self.apply_capability(&capability, now())?;
-                self.send(&Request::Pong {
-                    resume: capability.resume,
-                })
-                .await?;
+                self.apply_capability(&event, now())?;
+                self.send(json!({"op": RELAY_OP_PONG, "resume": event["resume"]}))
+                    .await?;
                 Ok(Some(ControlEvent::Keepalive))
             }
-            Event::Account { account } => Ok(Some(ControlEvent::Account(account))),
-            Event::Connect { connect } => Ok(Some(ControlEvent::Connect(connect))),
-            Event::Error { error } => Ok(Some(ControlEvent::RequestRefused(match error {
-                // Only sign-in consumes admission within an established control session.
-                RefusalCode::AdmissionRefused => RequestRefusal::RetrySignIn,
-                code => RequestRefusal::Refused(code),
-            }))),
-            Event::Unknown => {
+            RELAY_EVENT_ACCOUNT | RELAY_EVENT_CONNECT => {
+                let account = event["type"] == RELAY_EVENT_ACCOUNT;
+                let value = &event[if account { "account" } else { "connect" }];
+                if !value.is_object() {
+                    return Err(CloseReason::Protocol);
+                }
+                Ok(Some(if account {
+                    ControlEvent::Account(value.clone())
+                } else {
+                    ControlEvent::Connect(value.clone())
+                }))
+            }
+            RELAY_EVENT_ERROR => Ok(Some(ControlEvent::Error(
+                event["error"]
+                    .as_str()
+                    .ok_or(CloseReason::Protocol)?
+                    .to_owned(),
+            ))),
+            _ => {
                 self.unknown_events += 1;
                 tracing::debug!(
                     unknown_events = self.unknown_events,
@@ -299,20 +247,18 @@ impl<T: RelayTransport> Session<T> {
                 );
                 Ok(None)
             }
-            Event::Welcome { .. } => Err(CloseReason::Protocol),
         }
     }
     /// Opens play once, writes the relay prefix, then returns the existing bounded bridge
     /// reader/queue/writer. The host spawns the writer locally and drops it on cancellation.
-    pub async fn open_play<N: FnMut() -> Duration, D: std::future::Future<Output = ()>>(
+    pub async fn open_play<N: FnMut() -> Duration>(
         &mut self,
         mut now: N,
-        expires: D,
     ) -> Result<
         (
             bridge::FramedReader<tokio::io::ReadHalf<T::Stream>>,
             bridge::FrameQueue,
-            impl std::future::Future<Output = ()> + use<T, N, D>,
+            impl std::future::Future<Output = ()> + use<T, N>,
         ),
         CloseReason,
     > {
@@ -320,86 +266,69 @@ impl<T: RelayTransport> Session<T> {
             return Err(CloseReason::Protocol);
         };
         self.state = State::Playing(generation);
-        let result = bridge::tasks::until(
-            async {
-                let stream = self
-                    .transport
-                    .as_mut()
-                    .ok_or(CloseReason::Transport)?
-                    .open(Channel::Play)
-                    .await?;
-                let mut play = Framed::new(stream, BridgeCodec::with_max(RELAY_CONTROL_BYTES));
-                play.send(encode(&Hello::new(
-                    Channel::Play,
-                    self.resume(now()),
-                    generation,
-                ))?)
-                .await
-                .map_err(|_| CloseReason::Transport)?;
-                let (read, write) = tokio::io::split(play.into_inner());
-                Ok(bridge::tasks::prepare_bounded_connection(
-                    read,
-                    write,
-                    MAX_FRAME_LEN,
-                    RELAY_PLAY_MESSAGE_BYTES,
-                ))
-            },
-            expires,
-        )
-        .await
-        .unwrap_or(Err(CloseReason::Transport));
+        let result = async {
+            let stream = self
+                .transport
+                .as_mut()
+                .ok_or(CloseReason::Transport)?
+                .open(Channel::Play)
+                .await?;
+            let mut play = Framed::new(stream, BridgeCodec::with_max(RELAY_CONTROL_BYTES));
+            play.send(Bytes::from(
+                hello(Channel::Play, self.resume(now()), generation).to_string(),
+            ))
+            .await
+            .map_err(|_| CloseReason::Transport)?;
+            let (read, write) = tokio::io::split(play.into_inner());
+            Ok(bridge::tasks::prepare_bounded_connection(
+                read,
+                write,
+                MAX_FRAME_LEN,
+                RELAY_PLAY_MESSAGE_BYTES,
+            ))
+        }
+        .await;
         if let Err(reason) = &result {
             self.close(*reason);
         }
         result
     }
-    /// Ends this join and reopens control before any fresh login, retaining the account bearer.
-    /// This gives every sequential join a new control generation and never replays play bytes.
-    pub fn finish_play(&mut self) -> Result<(), CloseReason> {
-        if !matches!(self.state, State::Playing(_)) {
-            return Err(CloseReason::Protocol);
-        }
-        self.close(CloseReason::Transport);
-        Ok(())
-    }
-
     /// Closes the controller and its play channels immediately; deliberate cancellation is final.
     pub fn close(&mut self, reason: CloseReason) {
         if let Some(mut transport) = self.transport.take() {
             transport.close(reason);
         }
         self.control = None;
-        if reason == CloseReason::Refused && self.refusal == Some(RefusalCode::ResumeRefused) {
+        if reason == CloseReason::Refused {
             self.bearers = [None, None];
         }
-        self.state = match (self.state, reason) {
-            (State::Closed, _) | (_, CloseReason::Cancelled) => State::Closed,
-            (State::Refused(code), _) => State::Refused(code),
-            (_, CloseReason::Refused) => {
-                State::Refused(self.refusal.unwrap_or(RefusalCode::Refused))
-            }
-            _ => State::Offline,
+        self.state = if self.state == State::Closed || reason == CloseReason::Cancelled {
+            State::Closed
+        } else {
+            State::Offline
         };
     }
     /// Writes a bounded control request through the same codec as Hello and gameplay.
-    async fn send(&mut self, request: &Request) -> Result<(), CloseReason> {
+    async fn send(&mut self, request: Value) -> Result<(), CloseReason> {
         self.control
             .as_mut()
             .ok_or(CloseReason::Transport)?
-            .send(encode(request)?)
+            .send(Bytes::from(request.to_string()))
             .await
             .map_err(|_| CloseReason::Transport)
     }
     /// Rotates only on a newly observed token; a delayed old observation cannot renew or replace it.
-    fn apply_capability(&mut self, event: &Capability, now: Duration) -> Result<(), CloseReason> {
-        if event.version != RELAY_VERSION || event.generation == 0 {
+    fn apply_capability(&mut self, event: &Value, now: Duration) -> Result<(), CloseReason> {
+        if event["version"] != RELAY_VERSION {
             return Err(CloseReason::Protocol);
         }
-        let token = event.resume.as_str();
-        if token.is_empty() {
-            return Err(CloseReason::Protocol);
-        }
-        let seconds = event.expires_seconds;
+        let token = event["resume"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or(CloseReason::Protocol)?;
+        let seconds = event["expires_seconds"]
+            .as_u64()
+            .ok_or(CloseReason::Protocol)?;
         if !self
             .bearers
             .iter()
@@ -426,18 +355,22 @@ impl<T: RelayTransport> Drop for Session<T> {
         self.close(CloseReason::Cancelled);
     }
 }
-/// Serializes only typed bounded requests and prefixes; the codec enforces the wire byte limit.
-fn encode(value: &impl serde::Serialize) -> Result<Bytes, CloseReason> {
-    serde_json::to_vec(value)
-        .map(Bytes::from)
-        .map_err(|_| CloseReason::Protocol)
+/// Builds both channel prefixes from the shared contract.
+fn hello(channel: Channel, resume: &str, generation: u64) -> Value {
+    json!({"version": RELAY_VERSION, "channel": channel.name(), "channels": [RELAY_CHANNEL_CONTROL, RELAY_CHANNEL_PLAY], "resume": resume, "generation": generation})
 }
-
-/// Distinguishes a lost byte stream from framing that violates the control contract.
-fn read_failure(error: bridge::BridgeError) -> CloseReason {
-    if matches!(error, bridge::BridgeError::Io(_)) {
-        CloseReason::Transport
-    } else {
-        CloseReason::Protocol
+/// Admits an object with a typed event name; extension fields remain forward compatible.
+fn parse(frame: &[u8]) -> Result<Value, CloseReason> {
+    let value: Value = serde_json::from_slice(frame).map_err(|_| CloseReason::Protocol)?;
+    if !value["type"].is_string() {
+        return Err(CloseReason::Protocol);
     }
+    Ok(value)
+}
+/// Requires a nonzero play generation in a Welcome or ping.
+fn generation(event: &Value) -> Result<u64, CloseReason> {
+    event["generation"]
+        .as_u64()
+        .filter(|g| *g != 0)
+        .ok_or(CloseReason::Protocol)
 }

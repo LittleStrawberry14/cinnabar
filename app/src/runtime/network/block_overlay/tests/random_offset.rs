@@ -83,7 +83,6 @@ fn terrain_override_mips_average_unassociated_leaf_alpha_and_colours() {
     let view = view();
     let mut builder = super::super::Builder {
         fallback: None,
-        base_keys: None,
         catalog: super::super::textures::TextureCatalog::new(&view, None),
         base_assets: None,
         vanilla_carried: Vec::new(),
@@ -253,7 +252,6 @@ fn overlay_images(
         terrain_materials: Default::default(),
         overlay: Default::default(),
         fallback: None,
-        base_keys: None,
         sources: images
             .into_iter()
             .map(|image| (super::super::Source::Image(image), 0))
@@ -407,7 +405,6 @@ fn terrain_override_quad_admits_the_declared_uv_pixel_rectangle() {
         &blocks,
         false,
         &[(Arc::from("test:grid"), Arc::from("test:grid"))],
-        None,
     );
     assert_eq!(icons.icons.len(), 1);
     assert!(
@@ -450,7 +447,6 @@ fn terrain_page_rejects_over_budget_sources_without_shrinking() {
     let view = view();
     let mut builder = super::super::Builder {
         fallback: None,
-        base_keys: None,
         catalog: super::super::textures::TextureCatalog::new(&view, None),
         base_assets: None,
         vanilla_carried: Vec::new(),
@@ -535,7 +531,6 @@ fn random_offset_full_block_items_retain_their_cube_faces_in_both_id_spaces() {
             &blocks,
             hashed,
             &items,
-            None,
         );
         assert_eq!(
             icons.block_sheets.len(),

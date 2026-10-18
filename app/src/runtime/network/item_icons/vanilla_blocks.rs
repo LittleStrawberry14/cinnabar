@@ -69,14 +69,13 @@ fn append_routes(
             continue;
         }
         if icons.icons.len() < MAX_SESSION_ICONS
-            && let Some(sprite) =
-                pack_entity_compiler::overlay_cube_icon(&compiled.overlay, faces, None)
+            && let Some(sprite) = pack_entity_compiler::overlay_cube_icon(&compiled.overlay, faces)
         {
             icons.icons.push(session_icon(route, sprite));
         }
         if icons.block_sheets.len() < MAX_SESSION_ICONS
             && let Some(sheet) =
-                render_model::equipment::blocks::overlay_face_sheet(&compiled.overlay, faces, None)
+                render_model::equipment::blocks::overlay_face_sheet(&compiled.overlay, faces)
         {
             icons.block_sheets.push(session_icon(route, sheet));
             let flags = faces.iter().fold(0, |flags, &id| {

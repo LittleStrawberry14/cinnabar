@@ -21,8 +21,6 @@ pub struct ParticleInstance {
     pub axis_y: [f32; 4],
     /// Atlas `u0, v0, du, dv`.
     pub uv: [f32; 4],
-    /// Static texture rectangle for local edge clamping; zero keeps atlas-relative terrain UVs.
-    pub texture_bounds: [f32; 4],
     /// Native gamma RGB tint plus alpha.
     pub color: [f32; 4],
 }
@@ -388,14 +386,6 @@ fn emit_emitter(
                 f32::from(def.particle.lit),
             ],
             uv,
-            texture_bounds: if matches!(
-                def.texture,
-                TextureSource::Path(_) | TextureSource::Cosmetic
-            ) {
-                placement
-            } else {
-                [0.0; 4]
-            },
             color: [
                 color[0].clamp(0.0, 1.0),
                 color[1].clamp(0.0, 1.0),
@@ -475,7 +465,7 @@ impl ParticleSystem {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<ParticleInstance>() == 96);
+const _: () = assert!(std::mem::size_of::<ParticleInstance>() == 80);
 
 #[cfg(test)]
 mod tests {

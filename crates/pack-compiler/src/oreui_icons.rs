@@ -144,7 +144,9 @@ pub fn compile_oreui_icons_to_file(manifest: &Path, out: &Path) -> Result<usize,
     }
     let blob = encode_oreui_icons(canonical_source_manifest_sha256(&source), &icons)
         .map_err(|error| error.to_string())?;
-    assets::write_blob_atomic(out, &blob).map_err(|error| error.to_string())?;
+    let temporary = out.with_extension("tmp");
+    fs::write(&temporary, &blob).map_err(|error| format!("{}: {error}", temporary.display()))?;
+    fs::rename(&temporary, out).map_err(|error| format!("{}: {error}", out.display()))?;
     Ok(icons.len())
 }
 
@@ -179,10 +181,7 @@ mod tests {
             ["still.png", "a.png", "b.png"]
         );
         let out = dir.path().join("out.mcbeoui");
-        let occupied = out.with_extension("tmp");
-        fs::write(&occupied, b"another writer").unwrap();
         assert_eq!(compile_oreui_icons_to_file(&manifest, &out).unwrap(), 2);
-        assert_eq!(fs::read(occupied).unwrap(), b"another writer");
         let icons = decode_oreui_icons(
             &fs::read(&out).unwrap(),
             canonical_source_manifest_sha256(text.as_bytes()),

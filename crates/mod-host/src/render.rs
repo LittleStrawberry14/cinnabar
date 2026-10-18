@@ -21,6 +21,7 @@ fn next_revision() -> u64 {
 
 pub(super) struct RenderState {
     committed: RenderOutput,
+    pub(super) retained: mod_render::retained::Store,
     generation: u64,
     staged_passes: Option<Vec<Pass>>,
     staged_primitives: Primitives,
@@ -32,6 +33,7 @@ impl RenderState {
     pub fn new() -> Self {
         Self {
             committed: RenderOutput::default(),
+            retained: Default::default(),
             generation: next_revision(),
             staged_passes: None,
             staged_primitives: Primitives::default(),
@@ -50,6 +52,7 @@ impl RenderState {
     }
 
     pub fn begin_frame(&mut self) {
+        self.retained.begin();
         self.calls = 0;
         self.compiles_left = mod_api::MAX_PASS_COMPILES_PER_FRAME;
         self.staged_passes = None;
@@ -57,8 +60,17 @@ impl RenderState {
     }
 
     pub fn commit(&mut self) {
+        self.retained.commit();
+        let snapshot = self.retained.snapshot();
+        let retained = if snapshot.geometry.is_empty() && snapshot.instances.is_empty() {
+            Vec::new()
+        } else {
+            vec![Arc::clone(snapshot)]
+        };
+        let retained_changed = self.committed.retained != retained;
+        self.committed.retained = retained;
         let primitives = std::mem::take(&mut self.staged_primitives);
-        let mut changed = false;
+        let mut changed = retained_changed;
         if let Some(mut passes) = self.staged_passes.take() {
             passes.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
             changed |= passes != self.committed.passes;
@@ -75,6 +87,7 @@ impl RenderState {
     }
 
     pub fn revoke(&mut self) {
+        self.retained.revoke();
         self.staged_passes = None;
         self.staged_primitives = Primitives::default();
         if self.committed != RenderOutput::default() {
@@ -83,7 +96,7 @@ impl RenderState {
         }
     }
 
-    fn budget(&mut self) -> Result<()> {
+    pub(super) fn budget(&mut self) -> Result<()> {
         self.calls += 1;
         if self.calls > MAX_RENDER_CALLS {
             bail!("render import budget exhausted");

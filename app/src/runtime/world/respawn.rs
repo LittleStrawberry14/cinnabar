@@ -1,7 +1,7 @@
-//! Searching withholds input; each ready control completes its own handshake.
+//! Searching retains a pending candidate; ready installs it and completes the handshake.
 
 use client_world::CommittedControlEvent;
-use protocol::Packet;
+use protocol::{Packet, RespawnEvent};
 
 use client_interaction::movement::{LocalPhysicsController, MovementTicker};
 use client_session::PacketSendError;
@@ -10,6 +10,7 @@ use client_session::PacketSendError;
 pub(crate) struct RespawnLifecycle {
     session: Option<u64>,
     last_sequence: Option<u64>,
+    pending: Option<RespawnEvent>,
     searching: bool,
     completion_actor: Option<u64>,
 }
@@ -56,6 +57,7 @@ impl RespawnLifecycle {
                     item_use.cancel_for_respawn();
                 }
             }
+            self.pending = Some(*respawn);
             self.searching = true;
             self.completion_actor = None;
             super::control_apply::log_respawn(*respawn);
@@ -64,9 +66,16 @@ impl RespawnLifecycle {
         if !respawn.ready_to_spawn() {
             return true;
         }
+        // Repeated ready packets within the same phase cannot resend action 7.
+        if self.pending.is_some_and(|previous| {
+            previous.ready_to_spawn() && previous.position == respawn.position
+        }) {
+            return true;
+        }
         if let Some(item_use) = item_use {
             item_use.cancel_for_respawn();
         }
+        self.pending = Some(*respawn);
         self.searching = false;
         self.completion_actor = Some(local_actor);
         false

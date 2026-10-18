@@ -26,7 +26,8 @@ impl PlayerInventoryLedger {
 
     /// Admits personal gestures only while the latest intent still wants this screen open.
     pub(super) fn personal_generation_for_gesture(&self) -> Option<u64> {
-        if !self.controls.personal.desired_open {
+        if !self.controls.personal.desired_open || self.controls.personal_covered_by_storage_close()
+        {
             return None;
         }
         match self.personal {
@@ -41,7 +42,6 @@ impl PlayerInventoryLedger {
         }
     }
 
-    /// Queues inventory input for the runtime actor selected when the user pressed it.
     pub fn request_personal_open(&mut self, target_runtime_id: u64) -> bool {
         if self.authority.is_none() || target_runtime_id == 0 || self.storage.is_some() {
             return false;
@@ -86,8 +86,9 @@ impl PlayerInventoryLedger {
         self.reconcile_personal();
     }
 
-    /// Drops an opening screen's gestures without changing its retained intent or wire request.
-    pub(super) fn discard_pending_personal_open(&mut self) {
+    /// Records a closed desire when storage supersedes an opening screen, retaining its wire request.
+    pub(super) fn supersede_pending_personal_open(&mut self) {
+        self.controls.personal.desired_open = false;
         let Some(PersonalWindow::Opening { generation, .. }) = self.personal else {
             return;
         };

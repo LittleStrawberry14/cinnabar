@@ -48,5 +48,7 @@ pub fn compile_weather_textures(pack: &Path) -> Result<Vec<u8>, String> {
 /// Compiles the carrier and writes it to `out` through a temporary sibling file.
 pub fn compile_weather_textures_to_file(pack: &Path, out: &Path) -> Result<(), String> {
     let blob = compile_weather_textures(pack)?;
-    assets::write_blob_atomic(out, &blob).map_err(|error| error.to_string())
+    let temporary = out.with_extension("tmp");
+    fs::write(&temporary, &blob).map_err(|error| format!("{}: {error}", temporary.display()))?;
+    fs::rename(&temporary, out).map_err(|error| format!("{}: {error}", out.display()))
 }

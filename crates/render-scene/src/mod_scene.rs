@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub struct ModRenderScene {
     generation: u64,
     pub passes: Vec<mod_render::Pass>,
+    pub retained: Vec<Arc<mod_render::retained::Resources>>,
     pub vertices: Arc<[ModVertex]>,
     primitives: Arc<mod_render::Primitives>,
     pub marker_vertices: Arc<[ModVertex]>,
@@ -32,6 +33,7 @@ impl ModRenderScene {
         }
         self.generation = generation;
         self.passes.clone_from(&output.passes);
+        self.retained.clone_from(&output.retained);
         if !Arc::ptr_eq(&self.primitives, &output.primitives) {
             self.primitives = Arc::clone(&output.primitives);
             self.vertices = mod_render::geometry::build(&output.primitives).into();
@@ -94,3 +96,6 @@ impl ModRenderScene {
 mod block_highlights_tests;
 #[cfg(test)]
 mod position_box_tests;
+
+/// Same-frame placement and GPU inputs for retained world drawing.
+pub mod retained;

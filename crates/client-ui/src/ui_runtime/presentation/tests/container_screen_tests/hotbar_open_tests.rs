@@ -28,7 +28,7 @@ fn hotbar_swap_works_on_the_first_inventory_frame() {
                 slots: slots.into(),
                 storage_item: NetworkItemStack::empty(),
             }));
-        runtime.toggle_inventory(&mut player, None);
+        runtime.toggle_inventory(&mut player);
         if transport_admitted {
             assert!(
                 runtime
