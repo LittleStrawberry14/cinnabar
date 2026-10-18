@@ -5,6 +5,7 @@ struct ReplayConnection {
     incoming: mpsc::Receiver<Bytes>,
     fifth_read: Option<oneshot::Sender<()>>,
     reads: usize,
+    closed: Option<oneshot::Sender<()>>,
 }
 
 #[tokio::test]
@@ -15,6 +16,7 @@ async fn a_permit_committed_after_receive_error_cannot_strand_its_receipt() {
         incoming: receive,
         fifth_read: None,
         reads: 0,
+        closed: None,
     });
     let PacketSender::Native(sender) = transport.sender() else {
         panic!("native fixture")
@@ -43,6 +45,7 @@ async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingres
         incoming: receive,
         fifth_read: Some(fifth_read),
         reads: 0,
+        closed: None,
     });
     let body =
         crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
@@ -69,6 +72,7 @@ async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
         incoming: receive,
         fifth_read: None,
         reads: 0,
+        closed: None,
     });
     let PacketSender::Native(sender) = transport.sender() else {
         panic!("native fixture")
@@ -109,6 +113,9 @@ impl PacketConnection for ReplayConnection {
     }
 
     async fn close(&mut self) -> io::Result<()> {
+        if let Some(closed) = self.closed.take() {
+            let _ = closed.send(());
+        }
         Ok(())
     }
 }
@@ -122,6 +129,7 @@ async fn write_failure_keeps_a_received_transfer_behind_full_ingress() {
         incoming: receive,
         fifth_read: Some(fifth_read),
         reads: 0,
+        closed: None,
     });
     for _ in 0..QUEUED_BATCHES {
         incoming
@@ -219,10 +227,12 @@ async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
     use bedrock_protocol_1_26_51::{packets, wire};
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
     let (fifth_read, received_fifth) = oneshot::channel();
+    let (closed, observed_close) = oneshot::channel();
     let mut transport = SessionTransport::from_native(ReplayConnection {
         incoming: receive,
         fifth_read: Some(fifth_read),
         reads: 0,
+        closed: Some(closed),
     });
     for index in 0..=QUEUED_BATCHES {
         incoming
@@ -236,7 +246,11 @@ async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
             .unwrap();
     }
     received_fifth.await.unwrap();
-    transport.close().await.unwrap();
+    let super::super::Reader::Native(reader) = &mut transport.reader else {
+        panic!("native reader")
+    };
+    reader.stop.take().unwrap().send(()).unwrap();
+    observed_close.await.unwrap();
     for index in 0..=QUEUED_BATCHES {
         let item = transport
             .recv()
@@ -251,5 +265,6 @@ async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
         };
         assert_eq!(actual.time.0, i32::try_from(index).unwrap());
     }
+    transport.close().await.unwrap();
     drop(incoming);
 }
