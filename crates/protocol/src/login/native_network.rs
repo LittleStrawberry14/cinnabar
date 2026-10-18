@@ -179,7 +179,7 @@ async fn connect<P: Send + 'static>(
             )
         }
         None => (
-            std::sync::Arc::new(
+            Arc::new(
                 SigningKey::try_generate_from_rng(&mut SysRng)
                     .map_err(io::Error::other)
                     .map_err(failure)?,
