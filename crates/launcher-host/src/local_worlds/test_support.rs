@@ -36,6 +36,54 @@ pub(crate) fn scratch() -> tempfile::TempDir {
         .expect("temporary folder")
 }
 
+/// Owns an actual manager opening over the existing in-memory runner, stopping it on fixture drop.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) struct NativeHostFixture {
+    pub manager: super::Manager,
+    pub runner: Arc<FakeRunner>,
+    pub world_id: String,
+    _dir: tempfile::TempDir,
+}
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+impl NativeHostFixture {
+    /// Starts a real manager generation without provisioning a game server or contacting Xbox.
+    pub(crate) fn new() -> Self {
+        use super::{manager::Parts, process::Runner, store::Store};
+        let dir = scratch();
+        let store = Arc::new(Store::open(dir.path().join("worlds")).expect("world store"));
+        let runner = Arc::new(FakeRunner::default());
+        let mut parts = Parts::new(store);
+        let process: Arc<dyn Runner> = runner.clone();
+        parts.runners.dragonfly = Some(process);
+        let manager = super::Manager::from_parts(parts);
+        let world = manager
+            .create(&launcher::local_worlds::world::NewWorld {
+                name: "synthetic-host-world".into(),
+                generator: launcher::local_worlds::world::Generator::Flat,
+                ..Default::default()
+            })
+            .expect("create world");
+        manager.open(&world.id, None).expect("open world");
+        test_time::eventually("native host fixture running", || {
+            manager.status().state == bridge::WorldState::Running
+        });
+        Self {
+            manager,
+            runner,
+            world_id: world.id,
+            _dir: dir,
+        }
+    }
+}
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+impl Drop for NativeHostFixture {
+    fn drop(&mut self) {
+        self.manager.shutdown();
+    }
+}
+
 pub(crate) fn world() -> World {
     World {
         id: "0123456789abcdef".to_owned(),

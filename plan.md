@@ -45,7 +45,19 @@ not grant admission. Retaining this membership through full connection, loading,
 play and every cancellation path is still being integrated; native friend UI
 joining stays unavailable until that lifetime is qualified.
 
-Incomplete: native hosted-world approval and publication, remaining profile and
+The native host directory owner reserves one exact running local-world opening
+and one bounded unresolved-cleanup slot. It acknowledges RTA before retaining a
+single publication attempt, preserves the original account/proof/generation,
+and leaves only its original bound membership under a concrete validator.
+Nonce intent follows complete member snapshots; only an acknowledged exact
+conditional document approves an already authenticated Login XUID. Departures,
+reentry, unresolved writes and world replacement revoke approval. These APIs
+create no runtime, listener, activity, supported route or invitation. Existing
+Go local-world processes and hosting remain unchanged. Source implementation is
+under review; compiled application cancellation and service integration proof
+remain incomplete, including the shared service-library pin update.
+
+Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled
 UI captures, real-account/device/server/network acceptance and Go-baseline
