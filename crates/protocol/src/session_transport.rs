@@ -268,6 +268,13 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         Poll::Ready(more)
     }
 
+    /// Adopts previously unobserved startup packets ahead of unread input, preserving their bodies.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub(crate) fn adopt_startup(&mut self, mut packets: Vec<RawPacket>) {
+        self.record_received(&mut packets, 0);
+        self.prepend(packets);
+    }
+
     /// Puts `packets` back ahead of every unread packet, in their order. The tap has already
     /// seen them and does not see them again.
     pub(crate) fn prepend(&mut self, packets: Vec<RawPacket>) {
@@ -327,11 +334,17 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 tap.reject_batch(len);
             }
         })?;
+        self.record_received(&mut packets, frame);
+        Ok(packets)
+    }
+
+    /// Tags newly received packets and records their original bodies once before delivery.
+    fn record_received(&self, packets: &mut [RawPacket], frame: u64) {
         for (index, packet) in packets.iter_mut().enumerate() {
             packet.trace_position = (frame, index as u32);
         }
         if let Some(tap) = &self.tap {
-            for packet in &mut packets {
+            for packet in packets {
                 packet.record = Some(tap.record(
                     PacketDirection::Clientbound,
                     packet.id as u32,
@@ -339,7 +352,6 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                 ));
             }
         }
-        Ok(packets)
     }
 
     /// Writes `packets` as one Batch frame after every send retained before it, resolving once

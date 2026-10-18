@@ -288,7 +288,7 @@ async fn connect<P: Send + 'static>(
     .await?;
     let deferred = connection.take_deferred();
     let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
-    transport.prepend(deferred);
+    transport.adopt_startup(deferred);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;
     let (initialization, spawned) = super::startup::await_spawn(
