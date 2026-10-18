@@ -39,6 +39,26 @@ pub(crate) struct Connection {
     deferred: DeferredPackets,
     ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
     negotiation_skips: u64,
+    #[cfg(test)]
+    observed_batches: Option<BatchLifetimes>,
+}
+
+/// Weak observations of actual socket input allocations; never retains the bytes being measured.
+#[cfg(test)]
+type BatchLifetimes = std::sync::Arc<std::sync::Mutex<Vec<(usize, std::sync::Weak<()>)>>>;
+
+/// Field order releases the real input allocation before its observation becomes expired.
+#[cfg(test)]
+struct ObservedBatch {
+    bytes: Bytes,
+    _lifetime: std::sync::Arc<()>,
+}
+
+#[cfg(test)]
+impl AsRef<[u8]> for ObservedBatch {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 impl Connection {
@@ -72,7 +92,32 @@ impl Connection {
             deferred: DeferredPackets::default(),
             ciphers: None,
             negotiation_skips: 0,
+            #[cfg(test)]
+            observed_batches: None,
         }
+    }
+
+    /// Instruments actual received batch ownership without replacing transport or codec behavior.
+    #[cfg(test)]
+    pub(super) fn observe_batches(&mut self, observations: BatchLifetimes) {
+        self.observed_batches = Some(observations);
+    }
+
+    /// Adds only a weak lifetime observation around the same real socket bytes before decoding.
+    #[cfg(test)]
+    fn observe_batch(&self, bytes: Bytes) -> Bytes {
+        let Some(observations) = &self.observed_batches else {
+            return bytes;
+        };
+        let lifetime = std::sync::Arc::new(());
+        observations
+            .lock()
+            .unwrap()
+            .push((bytes.len(), std::sync::Arc::downgrade(&lifetime)));
+        Bytes::from_owner(ObservedBatch {
+            bytes,
+            _lifetime: lifetime,
+        })
     }
 
     /// The shared decoded-byte bound for Login and subsequent packets.
@@ -231,6 +276,8 @@ impl Connection {
                 };
                 message = envelope(marker, decryptor.decrypt(body).map_err(io::Error::other)?);
             }
+            #[cfg(test)]
+            let message = self.observe_batch(message);
             match self.codec().decode(message).map_err(io::Error::other)? {
                 DecodeOutcome::Packets {
                     packets,
