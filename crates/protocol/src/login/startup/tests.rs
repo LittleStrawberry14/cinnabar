@@ -421,6 +421,58 @@ mod session {
         }
     }
 
+    /// A refusal wins over later packets without waiting for PlayerSpawn; successful startup keeps its FIFO.
+    #[tokio::test]
+    async fn spawn_reports_login_refusal_before_a_later_disconnect() {
+        let status = PlayStatusType::LoginfailedServerfullsubclient;
+        for (name, mut batch) in [
+            ("spawn-refusal-early", Vec::new()),
+            (
+                "spawn-refusal-late",
+                vec![registry("minecraft:shield", 355), radius(16)],
+            ),
+        ] {
+            batch.extend([
+                Packet::new(PlayStatus { status }),
+                Packet::new(Disconnect::default()),
+            ]);
+            let Pair { transport, .. } = &mut handed_off(name, &[batch]).await;
+            let error = match await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {}).await {
+                Ok(_) => panic!("a refused startup claimed readiness"),
+                Err(error) => error,
+            };
+            assert!(
+                error.to_string().contains(&format!("{status:?}")),
+                "startup lost the original refusal before the later Disconnect: {error}"
+            );
+        }
+
+        let Pair { transport, .. } = &mut handed_off(
+            "spawn-status-success",
+            &[vec![
+                Packet::new(PlayStatus {
+                    status: PlayStatusType::Loginsuccess,
+                }),
+                set_time(1),
+                registry("minecraft:shield", 355),
+                radius(16),
+                player_spawn(),
+                set_time(2),
+            ]],
+        )
+        .await;
+        let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+            .await
+            .expect("LoginSuccess still allows the real PlayerSpawn");
+        assert_eq!(spawned.runtime_id, RUNTIME_ID);
+        assert_eq!(next_time(transport).await, 1);
+        let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
+            panic!("the radius reply retains its FIFO position")
+        };
+        assert_eq!(raw.id, PacketId::ChunkRadiusUpdated);
+        assert_eq!(next_time(transport).await, 2);
+    }
+
     /// The bytes deferred while spawning are bounded across batches.
     #[tokio::test]
     async fn spawn_caps_the_deferred_bytes() {
