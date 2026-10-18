@@ -150,7 +150,7 @@ impl MenuRuntime {
             auth_process: None,
             native_sign_in: false,
             #[cfg(feature = "native-networking")]
-            native_realms: Default::default(),
+            native_catalog: Default::default(),
             auth_attempted: false,
             auth_restart_requested: false,
             account_core: None,

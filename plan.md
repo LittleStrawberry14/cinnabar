@@ -24,9 +24,9 @@ not downgrade the join to signed-out identity. Explicit signed-out joins remain
 available. Native direct and Realm joins do not await an unrelated Go account-core
 readiness check.
 
-Native Realms discovery projects the existing menu cards from a selected-account
-worker. It fences old account/credential revisions and Go Realms replies, while
-leaving unrelated Go feeds available. A click cancels listing before connection
+Native Realms and friend-world discovery project the existing menu cards from one
+selected-account worker. It fences old account/credential revisions and Go catalog
+replies, while leaving unrelated Go feeds available. A click cancels listing before connection
 acquisition; Realm resolution and final key mint retain the same native Minecraft,
 proof and Session-Id owner. Service pending responses retry within the existing
 resolution bound, and the resolved endpoint moves with the authentication handoff.
@@ -34,11 +34,22 @@ Default/RakNet addresses preserve IPv6 text; advertised authenticated NetherNet 
 unknown protocols fail explicitly. Realm-code resolution previews without accepting
 membership. The existing invitation acceptance controller remains Go-owned.
 
+Friend-world discovery queries the followed activity group through the same account
+and projects only listed worlds with usable advertised signaling. The menu preserves
+each successful catalog section if another service fails, skips unavailable observations
+and retains one card per host/world. Acquisition and each sequential service read are
+bounded; cancellation returns the mutable SDK owner after protected refresh persistence.
+A missing activity closed flag retains the pinned baseline zero-value behavior;
+absent related session metadata is skipped. Native friend-world clicks report unavailable
+joining until signed NetherNet and MPSD admission are ready;
+listing does not join sessions or create RTA subscriptions. Existing Xbox people,
+profile, invitations and unrelated catalog services retain their Go owners.
+
 Hosted Xbox profile creation, persistent derived-token reuse, friend and remaining
 service joins, signed NetherNet signaling, hosting, browser transport and the broader
 account, network/device and performance acceptance matrix remain incomplete. Native
-sign-in and Realms HTTP/UI acceptance remain open. No parity gate closes and the
-working Go backend remains required during validation.
+sign-in, Realms and friend-world HTTP/UI acceptance remain open. No parity gate closes
+and the working Go backend remains required during validation.
 
 ## Custom block and item texture inheritance
 

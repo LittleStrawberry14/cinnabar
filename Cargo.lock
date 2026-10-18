@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=1e4dedb1ec355d982da72a57c6415a8584405f0b#1e4dedb1ec355d982da72a57c6415a8584405f0b"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=73023c36f92eae0c76453c5ce41fc34d8de0f5fb#73023c36f92eae0c76453c5ce41fc34d8de0f5fb"
 dependencies = [
  "base64 0.22.1",
  "httpdate",

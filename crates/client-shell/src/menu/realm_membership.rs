@@ -163,7 +163,7 @@ impl MenuRuntime {
         self.focused = 0;
         #[cfg(feature = "native-networking")]
         if success && accept && self.native_sign_in {
-            self.native_realms.refresh();
+            self.native_catalog.refresh();
             return;
         }
         if success

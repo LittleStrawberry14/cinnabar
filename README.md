@@ -77,8 +77,10 @@ verification and account commit complete. Failed or timed-out saved-account chec
 joins with an authentication error. Hosted Xbox profile creation still requires the default
 Go mode. Native Realms browsing and RakNet resolution share the selected account with Login;
 Realms that advertise authenticated NetherNet fail explicitly until native signaling is ready.
-Realm invitation preview/acceptance, other account catalog sections, friends and local worlds
-retain their current Go owners.
+Friend-world browsing uses the same native account and existing cards. Native friend-world
+joining remains unavailable until signed NetherNet admission is ready. Realm invitation
+preview/acceptance, Xbox people/profile services, other account catalog sections and local
+worlds retain their current Go owners.
 
 Authenticated direct joins retain one native account owner across retries and transfers. Refresh
 rotation shares the existing account-cache leases with Go, and private checkpoints retain proof

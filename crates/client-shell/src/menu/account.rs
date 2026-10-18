@@ -117,9 +117,9 @@ impl MenuRuntime {
         self.featured.replace(featured);
         if !self.native_sign_in {
             self.realms.replace(catalog.realms);
+            self.friends
+                .replace(catalog.friends.into_iter().map(Into::into).collect());
         }
-        self.friends
-            .replace(catalog.friends.into_iter().map(Into::into).collect());
         // Service errors may contain URLs, response bodies, or account material.
         // Keep successful sections, but expose only controlled recovery copy.
         self.catalog_message =
@@ -147,7 +147,7 @@ impl MenuRuntime {
     /// check if the menu has not yet; interactive sign-in is abandoned as before.
     pub(super) fn hold_join_for_sign_in(&mut self) {
         #[cfg(feature = "native-networking")]
-        self.native_realms.pause();
+        self.native_catalog.pause();
         self.intents.native_auth_required = self.native_sign_in
             && (self.feeds.account_active_id.is_some()
                 || auth_cache_path(&self.layout).is_some()

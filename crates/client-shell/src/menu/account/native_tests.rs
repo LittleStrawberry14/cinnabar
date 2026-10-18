@@ -53,3 +53,27 @@ fn verified_native_join_does_not_wait_for_the_account_core() {
         assert_eq!(intent.auth_cache, Some(menu.layout.auth_cache()));
     }
 }
+
+/// A one-shot Go catalog arriving late cannot overwrite either native account-backed section.
+#[test]
+fn native_catalog_rejects_late_one_shot_go_social_rows() {
+    let catalog: CatalogFile = serde_json::from_value(serde_json::json!({
+        "realms":[{"name":"legacy","state":"OPEN"}],
+        "friends":[{"gamertag":"legacy","world_name":"legacy","xuid":"456","members":1,"max_members":2}]
+    })).unwrap();
+    let mut menu = MenuRuntime::new(true, 2, "Synthetic".into()).with_native_sign_in(true);
+    let mut native_realm = catalog.realms[0].clone();
+    native_realm.name = "native".into();
+    menu.realms.replace(vec![native_realm]);
+    let mut native_friend: launcher::menu::view::MenuFriendCard = catalog.friends[0].clone().into();
+    native_friend.world_name = "native".into();
+    menu.friends.replace(vec![native_friend]);
+    menu.apply_catalog(catalog.clone());
+    assert_eq!(menu.realms[0].name, "native");
+    assert_eq!(menu.friends[0].world_name, "native");
+
+    let mut go = MenuRuntime::new(true, 2, "Synthetic".into());
+    go.apply_catalog(catalog);
+    assert_eq!(go.realms[0].name, "legacy");
+    assert_eq!(go.friends[0].world_name, "legacy");
+}

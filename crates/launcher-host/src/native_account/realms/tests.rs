@@ -115,13 +115,19 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
     );
     operation.persist().unwrap();
     let cached = operation.cached.as_ref().unwrap();
-    let listing = RealmListing {
-        cards: Vec::new(),
+    let listing = CatalogListing {
+        cards: CatalogCards {
+            realms: Ok(Vec::new()),
+            friends: Ok(Vec::new()),
+        },
         generation: cached.generation.clone(),
         binding: cached.binding,
     };
-    let stale = RealmListing {
-        cards: Vec::new(),
+    let stale = CatalogListing {
+        cards: CatalogCards {
+            realms: Ok(Vec::new()),
+            friends: Ok(Vec::new()),
+        },
         generation: cached.generation.clone(),
         binding: cached.binding,
     };

@@ -80,7 +80,9 @@ impl MenuRuntime {
         {
             self.realms.replace(realms);
         }
-        if let Some(mut friends) = control.friends() {
+        if let Some(mut friends) = control.friends()
+            && !self.native_sign_in
+        {
             // The friends service can list one session twice; show each host's world once.
             let mut seen = std::collections::HashSet::new();
             friends.retain(|friend| seen.insert((friend.xuid.clone(), friend.world_name.clone())));

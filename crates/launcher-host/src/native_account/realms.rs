@@ -7,60 +7,7 @@ use std::num::NonZeroU64;
 
 const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// A list acquired and persisted under one verified sign-in generation/revision.
-/// The menu also checks its request epoch and selected account before publishing these cards.
-pub struct RealmListing {
-    cards: Vec<MenuRealmCard>,
-    generation: String,
-    binding: [u8; 32],
-}
-
-impl RealmListing {
-    /// Moves the existing launcher model out only when the concrete account still owns this result.
-    pub fn into_current_cards(self, account: &NativeAccount) -> Option<Vec<MenuRealmCard>> {
-        let state = account.state.try_lock().ok()?;
-        let cached = state.cached.as_ref()?;
-        (!state.busy
-            && cached.generation == self.generation
-            && cached.binding == self.binding
-            && cached
-                .identity
-                .as_ref()
-                .is_some_and(|identity| identity.current_credential))
-        .then_some(self.cards)
-    }
-}
-
 impl NativeAccount {
-    /// Lists accessible Realms on the caller's runtime, retaining the same Minecraft/session owner.
-    /// Dropping the future cancels HTTP and persists any acquired OAuth rotation through Operation.
-    pub async fn list_realms(self: Arc<Self>) -> io::Result<RealmListing> {
-        tokio::time::timeout(ACQUISITION_TIMEOUT, async {
-            let mut operation = Arc::clone(&self).acquire_verified().await?;
-            operation.promote()?;
-            let values = operation
-                .minecraft()?
-                .realms()
-                .await
-                .map_err(realm_error)?
-                .list()
-                .await
-                .map_err(realm_error)?;
-            operation.persist()?;
-            let cached = operation.cached.as_ref().expect("account owner");
-            let listing = RealmListing {
-                cards: values.into_iter().map(card).collect(),
-                generation: cached.generation.clone(),
-                binding: cached.binding,
-            };
-            // Operation returns its owner before the result can be consumed by the menu.
-            drop(operation);
-            Ok(listing)
-        })
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Realms listing timed out"))?
-    }
-
     /// Resolves a selected Realm and mints on the same mutable Minecraft owner, with no Go fallback.
     /// Direct targets retain their existing preparation; the returned target is the only endpoint dialled.
     pub async fn prepare_connection(
@@ -192,7 +139,7 @@ fn raknet_target(address: RealmAddress) -> io::Result<protocol::NativeConnection
 }
 
 /// Projects the pinned Go catalog's fields without resolving addresses or accepting membership.
-fn card(realm: Realm) -> MenuRealmCard {
+pub(super) fn card(realm: Realm) -> MenuRealmCard {
     let name = realm.name.trim();
     MenuRealmCard {
         name: if name.is_empty() {
@@ -214,7 +161,7 @@ fn card(realm: Realm) -> MenuRealmCard {
 }
 
 /// Retains actionable access failures without exposing response bodies or service URLs.
-fn realm_error(error: bedrock_services::realms::Error) -> io::Error {
+pub(super) fn realm_error(error: bedrock_services::realms::Error) -> io::Error {
     match error {
         bedrock_services::realms::Error::NotFound => {
             io::Error::new(io::ErrorKind::NotFound, "Realm was not found")

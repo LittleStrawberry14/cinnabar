@@ -1,11 +1,11 @@
-//! The opt-in Realms catalog has one selected account and one caller-driven request owner.
+//! The opt-in Realms and friend-world catalog has one selected account and one caller-driven request owner.
 
 use super::*;
 use launcher::menu::CATALOG_REFRESH_INTERVAL;
-use launcher_host::native_account::{NativeAccount, RealmsWorker};
+use launcher_host::native_account::{CatalogCards, CatalogWorker, NativeAccount};
 use std::{sync::Arc, time::Instant};
 
-const FAILURE_MESSAGE: &str = "Realms: Refresh to try again.";
+const FAILURE_MESSAGE: &str = "Realms and friends: Refresh to try again.";
 
 #[derive(Default)]
 pub(super) struct Controller {
@@ -22,13 +22,13 @@ struct Selection {
 }
 struct Request {
     epoch: u64,
-    worker: RealmsWorker,
+    worker: CatalogWorker,
 }
 
 impl std::fmt::Debug for Controller {
     /// Contains no account or network identifiers in diagnostics.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("NativeRealms")
+        f.write_str("NativeCatalog")
     }
 }
 
@@ -85,19 +85,47 @@ impl MenuRuntime {
     /// Takes the catalog's concrete account for a join after cancelling its request.
     /// The acquisition future waits off-frame until the old Operation finishes durable cleanup.
     pub fn native_account_for(&mut self, path: PathBuf) -> Arc<NativeAccount> {
-        self.native_realms.pause();
+        self.native_catalog.pause();
         let identity = self.selected_account_id().map(str::to_owned);
         let device = self.layout.device_profile_file();
-        let (account, changed) = self.native_realms.account(path, identity, device);
+        let (account, changed) = self.native_catalog.account(path, identity, device);
         if changed {
             self.realms.replace(Vec::new());
+            self.friends.replace(Vec::new());
             self.feeds.selected_realm = None;
         }
         account
     }
 
+    /// Replaces successful sections independently and retains rows when one service fails.
+    fn apply_native_catalog(&mut self, cards: CatalogCards) {
+        let mut failed = false;
+        match cards.realms {
+            Ok(cards) => {
+                let selected = self
+                    .feeds
+                    .selected_realm
+                    .and_then(|index| self.realms.get(index))
+                    .map(|realm| realm.target.clone());
+                self.realms.replace(cards);
+                self.feeds.selected_realm = selected
+                    .and_then(|target| self.realms.iter().position(|realm| realm.target == target));
+            }
+            Err(_) => failed = true,
+        }
+        match cards.friends {
+            Ok(cards) => self.friends.replace(cards),
+            Err(_) => failed = true,
+        }
+        if failed {
+            self.catalog_message = Some(FAILURE_MESSAGE.into());
+        } else if self.catalog_message.as_deref() == Some(FAILURE_MESSAGE) {
+            self.catalog_message = None;
+        }
+    }
+
     /// Advances listing after account observations; Go catalog/control results never own this native feed.
-    pub(super) fn poll_native_realms(&mut self, now: Instant) {
+    pub(super) fn poll_native_catalog(&mut self, now: Instant) {
         if !self.native_sign_in {
             return;
         }
@@ -105,75 +133,67 @@ impl MenuRuntime {
             .launcher_auth_cache()
             .filter(|_| !self.account_change_pending())
         else {
-            if self.native_realms.selected.is_some() || !self.realms.is_empty() {
-                self.native_realms.retire();
+            if self.native_catalog.selected.is_some()
+                || !self.realms.is_empty()
+                || !self.friends.is_empty()
+            {
+                self.native_catalog.retire();
                 self.realms.replace(Vec::new());
+                self.friends.replace(Vec::new());
                 self.feeds.selected_realm = None;
             }
             return;
         };
         if !self.visible || self.is_connecting() {
-            self.native_realms.pause();
+            self.native_catalog.pause();
             return;
         }
         let identity = self.selected_account_id().map(str::to_owned);
         let device = self.layout.device_profile_file();
-        let (account, changed) = self.native_realms.account(path, identity, device);
+        let (account, changed) = self.native_catalog.account(path, identity, device);
         if changed {
             self.realms.replace(Vec::new());
+            self.friends.replace(Vec::new());
             self.feeds.selected_realm = None;
         }
         if let Some(result) = self
-            .native_realms
+            .native_catalog
             .request
             .as_mut()
             .and_then(|request| request.worker.poll())
         {
             let request = self
-                .native_realms
+                .native_catalog
                 .request
                 .take()
                 .expect("completed request");
-            if request.epoch == self.native_realms.epoch {
+            if request.epoch == self.native_catalog.epoch {
                 match result
                     .ok()
                     .and_then(|listing| listing.into_current_cards(&account))
                 {
-                    Some(cards) => {
-                        let selected = self
-                            .feeds
-                            .selected_realm
-                            .and_then(|index| self.realms.get(index))
-                            .map(|realm| realm.target.clone());
-                        self.realms.replace(cards);
-                        self.feeds.selected_realm = selected.and_then(|target| {
-                            self.realms.iter().position(|realm| realm.target == target)
-                        });
-                        if self.catalog_message.as_deref() == Some(FAILURE_MESSAGE) {
-                            self.catalog_message = None;
-                        }
-                    }
+                    Some(cards) => self.apply_native_catalog(cards),
                     None => self.catalog_message = Some(FAILURE_MESSAGE.into()),
                 }
             }
-            self.native_realms.next_refresh = Some(now + CATALOG_REFRESH_INTERVAL);
+            self.native_catalog.next_refresh = Some(now + CATALOG_REFRESH_INTERVAL);
         }
-        if self.native_realms.request.is_none()
+        if self.native_catalog.request.is_none()
             && self
-                .native_realms
+                .native_catalog
                 .next_refresh
                 .is_none_or(|next| now >= next)
         {
-            match RealmsWorker::start(account) {
+            match CatalogWorker::start(account) {
                 Ok(worker) => {
-                    self.native_realms.request = Some(Request {
-                        epoch: self.native_realms.epoch,
+                    self.native_catalog.request = Some(Request {
+                        epoch: self.native_catalog.epoch,
                         worker,
                     })
                 }
                 Err(_) => {
                     self.catalog_message = Some(FAILURE_MESSAGE.into());
-                    self.native_realms.next_refresh = Some(now + CATALOG_REFRESH_INTERVAL);
+                    self.native_catalog.next_refresh = Some(now + CATALOG_REFRESH_INTERVAL);
                 }
             }
         }

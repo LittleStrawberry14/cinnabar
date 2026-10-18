@@ -42,7 +42,7 @@ impl MenuRuntime {
         }
         match launcher_account {
             Some(mut account) => {
-                account.0.set_native_realms(self.native_sign_in);
+                account.0.set_native_catalog(self.native_sign_in);
                 let options = self.settings_snapshot().0;
                 account.set_cinnabar_api(
                     options.update_preferences().channel,
@@ -62,7 +62,7 @@ impl MenuRuntime {
             }
         }
         #[cfg(feature = "native-networking")]
-        self.poll_native_realms(std::time::Instant::now());
+        self.poll_native_catalog(std::time::Instant::now());
         if let Some(worlds) = local_worlds {
             self.sync_local_worlds(worlds, in_session);
         }

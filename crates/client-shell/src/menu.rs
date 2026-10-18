@@ -30,7 +30,7 @@ pub mod launcher_account;
 mod launcher_core;
 mod minecraft_import;
 #[cfg(feature = "native-networking")]
-mod native_realms;
+mod native_catalog;
 mod navigation;
 mod presence_targets;
 mod reconnect;
@@ -149,7 +149,7 @@ pub struct MenuRuntime {
     auth_process: Option<AuthSupervisor>,
     native_sign_in: bool,
     #[cfg(feature = "native-networking")]
-    native_realms: native_realms::Controller,
+    native_catalog: native_catalog::Controller,
     auth_attempted: bool,
     auth_restart_requested: bool,
     /// The account core a held join may still use; `None` when it cannot start for the join.
@@ -598,7 +598,7 @@ impl MenuRuntime {
             }
             MenuAction::RefreshCatalog => {
                 #[cfg(feature = "native-networking")]
-                self.native_realms.refresh();
+                self.native_catalog.refresh();
                 self.stop_catalog();
                 self.catalog_started = false;
                 self.catalog_message = None;
@@ -682,7 +682,10 @@ impl MenuRuntime {
             }
             MenuAction::PlayFriend(index) => {
                 if let Some(friend) = self.friends.get(index) {
-                    if friend.xuid.is_empty() {
+                    if self.native_sign_in {
+                        self.message =
+                            Some("Native friend-world joining is not available yet.".into());
+                    } else if friend.xuid.is_empty() {
                         self.message =
                             Some("That friend world has no stable Xbox identity.".to_owned());
                     } else {

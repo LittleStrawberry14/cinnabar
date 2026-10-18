@@ -1,13 +1,16 @@
 //! Selected native account ownership and connection preparation on the caller's async runtime.
 
 mod acquisition;
+mod catalog;
+mod catalog_worker;
+mod friends;
 mod metadata;
 mod operation;
 mod prepare;
 mod realms;
-mod realms_worker;
-pub use realms::{RealmListing, is_realm_target};
-pub use realms_worker::RealmsWorker;
+pub use catalog::{CatalogCards, CatalogListing};
+pub use catalog_worker::CatalogWorker;
+pub use realms::is_realm_target;
 
 use bedrock_services::{
     minecraft,

@@ -83,8 +83,8 @@ struct Snapshot {
     realms: Option<Vec<Realm>>,
     /// Prevents a catalog request started before acceptance from removing the new membership.
     realm_catalog_revision: u64,
-    /// Native mode owns this feed; friends and other account services remain enabled.
-    native_realms: bool,
+    /// Native mode owns Realms and friend-world reads; other account services remain enabled.
+    native_catalog: bool,
     friends: Option<Vec<Friend>>,
     /// Delivered once per fetch.
     featured: Option<Vec<FeaturedServer>>,
@@ -218,13 +218,17 @@ impl LauncherAccount {
         }
     }
 
-    /// Retires Go Realms results and polling when the native menu owns discovery.
-    pub fn set_native_realms(&self, native: bool) {
+    /// Retires Go Realms/friend-world results and polling when the native menu owns discovery.
+    pub fn set_native_catalog(&self, native: bool) {
         self.with(|snapshot| {
-            if snapshot.native_realms != native {
-                snapshot.native_realms = native;
+            if snapshot.native_catalog != native {
+                snapshot.native_catalog = native;
                 snapshot.realm_catalog_revision = snapshot.realm_catalog_revision.wrapping_add(1);
                 snapshot.realms = None;
+                snapshot.friends = None;
+                if let Some(wake) = &snapshot.catalog_wake {
+                    let _ = wake.try_send(());
+                }
             }
         });
     }
