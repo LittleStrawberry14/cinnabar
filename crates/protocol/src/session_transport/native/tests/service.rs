@@ -167,5 +167,10 @@ async fn service_lease_progress_survives_full_native_receive_capacity() {
             .await
             .is_none()
     );
-    (&mut reader.task).await.unwrap();
+    assert!(
+        std::future::poll_fn(|cx| reader.poll_driver(cx))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

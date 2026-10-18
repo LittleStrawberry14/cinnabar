@@ -1,6 +1,8 @@
 use super::*;
 use std::future::Future;
 
+mod public_close;
+
 struct ReplayConnection {
     incoming: mpsc::Receiver<Bytes>,
     fifth_read: Option<oneshot::Sender<()>>,
@@ -26,7 +28,12 @@ async fn a_permit_committed_after_receive_error_cannot_strand_its_receipt() {
     let super::super::Reader::Native(reader) = &mut transport.reader else {
         panic!("native reader")
     };
-    (&mut reader.task).await.unwrap();
+    assert!(
+        std::future::poll_fn(|cx| reader.poll_driver(cx))
+            .await
+            .unwrap()
+            .is_none()
+    );
     let body =
         crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
             .unwrap();
@@ -81,8 +88,13 @@ async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
     let super::super::Reader::Native(reader) = &mut transport.reader else {
         panic!("native reader")
     };
-    reader.task.abort();
-    assert!((&mut reader.task).await.unwrap_err().is_cancelled());
+    reader.task.as_ref().unwrap().abort();
+    assert!(
+        std::future::poll_fn(|cx| reader.poll_driver(cx))
+            .await
+            .unwrap_err()
+            .is_cancelled()
+    );
     assert_eq!(
         sender
             .commit(permit, Bytes::from_static(b"unsent"))
