@@ -16,7 +16,7 @@ use std::{
     io,
     time::{Instant, SystemTime},
 };
-use tokio::sync::watch;
+use tokio::sync::OwnedSemaphorePermit;
 
 /// Retains the acquired SDK proof, current OAuth state and one ephemeral device profile.
 /// No file, protected lease, checkpoint or credential copy exists in this owner.
@@ -26,26 +26,29 @@ pub(super) struct Account {
     gamertag: String,
     profile: NativeDeviceProfile,
     provider: Option<NativeProvider>,
+    // Struct fields drop in order: derived credentials retire before capacity is released.
+    _capacity: OwnedSemaphorePermit,
 }
 
 impl Account {
-    /// Drives one original sign-in future while the caller handles control cancellation.
+    /// Drives one original session-scoped attempt while the service owner handles cancellation.
     pub(super) async fn sign_in(
         deadline: Instant,
-        observation: watch::Sender<Observation>,
+        mut publish: impl FnMut(Observation) -> io::Result<()>,
+        capacity: OwnedSemaphorePermit,
     ) -> io::Result<Self> {
         tokio::time::timeout_at(deadline.into(), async {
             current(deadline)?;
             let mut auth = MicrosoftAuth::new(authentication_policy()).map_err(failed)?;
             let mut attempt = auth.start(SystemTime::now()).await.map_err(failed)?;
             current(deadline)?;
-            observation.send_replace(Observation {
+            publish(Observation {
                 state: AuthState::AwaitingCode,
                 verification_uri: Some(attempt.verification_uri().as_str().into()),
                 user_code: Some(attempt.user_code().into()),
                 gamertag: None,
                 reason: None,
-            });
+            })?;
             let credentials = loop {
                 let wait = attempt
                     .next_poll()
@@ -81,6 +84,7 @@ impl Account {
                 minecraft::DeviceId::compact(NativeDeviceProfile::service_device_id(&xuid)?),
             );
             Ok(Self {
+                _capacity: capacity,
                 services: minecraft::Minecraft::new(xbox, config).map_err(failed)?,
                 xuid,
                 gamertag,

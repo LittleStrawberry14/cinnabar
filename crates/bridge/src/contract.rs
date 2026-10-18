@@ -47,6 +47,45 @@ pub const LATENCY_TRACE_ENV: &str = "CINNABAR_LATENCY_TRACE";
 /// Vanilla's player limit for a hosted local world, the host included.
 pub const HOSTED_WORLD_MAX_PLAYERS: u32 = 8;
 
+/// Maximum retained relay accounts and transport connections.
+pub const RELAY_MAX_SESSIONS: usize = 256;
+
+/// Maximum relay accounts or connections admitted per peer address.
+pub const RELAY_MAX_PER_IP: usize = 4;
+
+/// Original idle lifetime of a detached relay account.
+pub const RELAY_IDLE_SECONDS: u32 = 600;
+
+/// Original lifetime of each independently issued resume bearer.
+pub const RELAY_RESUME_SECONDS: u32 = 120;
+
+/// Original pre-Hello and control write budget.
+pub const RELAY_HELLO_SECONDS: u32 = 10;
+
+/// Random bytes in one relay resume capability.
+pub const RELAY_RESUME_BYTES: usize = 32;
+
+/// Control request token-bucket burst.
+pub const RELAY_CONTROL_REQUEST_BURST: u32 = 4;
+
+/// Time to replenish one per-peer admission action.
+pub const RELAY_ACTION_REFILL_MILLIS: u32 = 5000;
+
+/// Per-peer admission action token-bucket burst.
+pub const RELAY_ACTION_BURST: u32 = 6;
+
+/// Maximum remembered peer action limiters.
+pub const RELAY_MAX_ACTION_CLIENTS: usize = 1024;
+
+/// Original overall interactive sign-in budget.
+pub const RELAY_SIGN_IN_SECONDS: u32 = 900;
+
+/// Original play upload pacing rate.
+pub const RELAY_UPLOAD_BYTES_PER_SECOND: u32 = 262144;
+
+/// Original delay coalescing control join progress.
+pub const RELAY_PROGRESS_COALESCE_MILLIS: u32 = 100;
+
 /// Browser relay protocol version.
 pub const RELAY_VERSION: u32 = 2;
 

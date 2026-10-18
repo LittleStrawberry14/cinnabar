@@ -36,6 +36,9 @@ pub enum Request {
     SignOut,
     #[serde(rename = "pong")]
     Pong { resume: String },
+    /// An unsupported well-formed operation receives the existing bounded refusal.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Known events require their typed payload; optional future event kinds are ignored.

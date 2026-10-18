@@ -33,6 +33,32 @@ const (
 	LatencyTraceEnv = "CINNABAR_LATENCY_TRACE"
 	// HostedWorldMaxPlayers: Vanilla's player limit for a hosted local world, the host included.
 	HostedWorldMaxPlayers = 8
+	// RelayMaxSessions: Maximum retained relay accounts and transport connections.
+	RelayMaxSessions = 256
+	// RelayMaxPerIP: Maximum relay accounts or connections admitted per peer address.
+	RelayMaxPerIP = 4
+	// RelayIdleSeconds: Original idle lifetime of a detached relay account.
+	RelayIdleSeconds = 600
+	// RelayResumeSeconds: Original lifetime of each independently issued resume bearer.
+	RelayResumeSeconds = 120
+	// RelayHelloSeconds: Original pre-Hello and control write budget.
+	RelayHelloSeconds = 10
+	// RelayResumeBytes: Random bytes in one relay resume capability.
+	RelayResumeBytes = 32
+	// RelayControlRequestBurst: Control request token-bucket burst.
+	RelayControlRequestBurst = 4
+	// RelayActionRefillMillis: Time to replenish one per-peer admission action.
+	RelayActionRefillMillis = 5000
+	// RelayActionBurst: Per-peer admission action token-bucket burst.
+	RelayActionBurst = 6
+	// RelayMaxActionClients: Maximum remembered peer action limiters.
+	RelayMaxActionClients = 1024
+	// RelaySignInSeconds: Original overall interactive sign-in budget.
+	RelaySignInSeconds = 900
+	// RelayUploadBytesPerSecond: Original play upload pacing rate.
+	RelayUploadBytesPerSecond = 262144
+	// RelayProgressCoalesceMillis: Original delay coalescing control join progress.
+	RelayProgressCoalesceMillis = 100
 	// RelayVersion: Browser relay protocol version.
 	RelayVersion = 2
 	// RelayControlBytes: Largest relay Hello or control JSON payload in bytes.
