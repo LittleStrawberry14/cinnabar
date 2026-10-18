@@ -114,7 +114,7 @@ pub(crate) async fn run<H: Host>(
                 && requested.is_none()
                 && playing.is_none()
                 && !paused.get()
-                && !halted
+                && sign_out_deadline.get().is_none()
                 && generation == intent.generation.get(),
         );
         let ready = matches!(session.state(), State::Ready(_) | State::Playing(_));

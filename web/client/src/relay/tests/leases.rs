@@ -399,3 +399,43 @@ fn busy_sign_out_waits_for_the_control_request_refill() {
     );
     assert_eq!(host.closes.get(), 0);
 }
+
+#[test]
+fn browser_sign_out_confirmation_restores_offline_play_readiness() {
+    let intent = Rc::new(Intent::default());
+    let host = Rc::new(Observations::default());
+    host.live.set(true);
+    let (mut commands, pending) = mpsc::channel(4);
+    let (mut joins, join_requests) = mpsc::channel(1);
+    let (_lifecycle, changed) = mpsc::channel(1);
+    let (_cancel, cancelled) = oneshot::channel();
+    let mut task = Box::pin(run(
+        FakeHost(Rc::clone(&host)),
+        pending,
+        join_requests,
+        changed,
+        Rc::new(Cell::new(false)),
+        Rc::clone(&intent),
+        cancelled,
+    ));
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    commands
+        .try_send(intent.account(AccountOperation::SignOut))
+        .unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(!intent.ready.get(), "pending sign-out must gate joins");
+    deliver(
+        &host,
+        json!({"type":"account", "account":{"state":"signed_out"}}),
+    );
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(
+        intent.ready.get(),
+        "confirmed sign-out must admit offline play"
+    );
+    let (reply, response) = oneshot::channel();
+    joins.try_send(play::Request { reply }).unwrap();
+    assert!(task.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(response.now_or_never(), Some(Ok(Ok(_)))));
+}
