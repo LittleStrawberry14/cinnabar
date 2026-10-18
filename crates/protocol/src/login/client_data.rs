@@ -105,6 +105,8 @@ pub struct LoginSettings {
     pub view_distance_chunks: u8,
     /// Trusted local archive directory, never sent in the upstream login claims.
     pub resource_pack_cache_dir: Option<std::path::PathBuf>,
+    /// Opts native archive acquisition into bounded parallel URL reads; never sent in login claims.
+    pub parallel_resource_pack_urls: bool,
 }
 
 impl Default for LoginSettings {
@@ -118,6 +120,7 @@ impl Default for LoginSettings {
             filter_profanity: false,
             view_distance_chunks: super::startup::DEFAULT_CHUNK_RADIUS,
             resource_pack_cache_dir: None,
+            parallel_resource_pack_urls: false,
         }
     }
 }

@@ -19,12 +19,12 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 
-const VERSION: &str = "1.0.0";
+pub(super) const VERSION: &str = "1.0.0";
 const HTTP_HEADER_LIMIT: usize = 8192;
 type Hold = (oneshot::Sender<()>, oneshot::Receiver<()>);
 
 /// Serves original archive bytes, optionally holding the real response body after its header.
-async fn http_archive(listener: TcpListener, bytes: Vec<u8>, hold: Option<Hold>) {
+pub(super) async fn http_archive(listener: TcpListener, bytes: Vec<u8>, hold: Option<Hold>) {
     let (mut socket, _) = listener.accept().await.unwrap();
     let mut request = Vec::new();
     while !request.ends_with(b"\r\n\r\n") {
@@ -49,7 +49,7 @@ async fn http_archive(listener: TcpListener, bytes: Vec<u8>, hold: Option<Hold>)
 }
 
 /// Advertises exactly the original synthetic archive to the real pack negotiation owner.
-fn offer(id: uuid::Uuid, bytes: &[u8], address: SocketAddr) -> PackInfoData {
+pub(super) fn offer(id: uuid::Uuid, bytes: &[u8], address: SocketAddr) -> PackInfoData {
     let mut offer = PackInfoData::default();
     offer.pack_id_version.pack_uuid = id;
     offer.pack_id_version.pack_version.version = VERSION.into();
