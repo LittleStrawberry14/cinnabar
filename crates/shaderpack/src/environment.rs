@@ -20,7 +20,8 @@ pub enum GpuVendor {
 }
 
 /// The Iris release whose behaviour the translator and host follow, and whose
-/// `IRIS_VERSION` packs see.
+/// `IRIS_VERSION` packs see. The Java reference rig runs the same release on the Java
+/// Edition named by the pinned GeyserMC mappings ([`assets::facts::java_mapping::java_edition`]).
 pub const EMULATED_IRIS_VERSION: &str = "1.11.7";
 
 /// Iris's numeric form of a dotted version (`StandardMacros.formatVersionString`): the
@@ -39,7 +40,7 @@ pub fn iris_version_number(version: &str) -> Option<u32> {
 /// tests through `MC_GL_ARB_*` is advertised because the translated code targets GLSL 4.50.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Environment {
-    /// `MC_VERSION`, e.g. 12111 for 1.21.11.
+    /// `MC_VERSION`, e.g. 260300 for 26.3.
     pub mc_version: u32,
     /// `MC_GL_VERSION` and `MC_GLSL_VERSION`.
     pub gl_version: u32,
@@ -67,7 +68,8 @@ impl Default for Environment {
     /// Provides the default macro environment for standalone translation.
     fn default() -> Environment {
         Environment {
-            mc_version: 12111,
+            mc_version: iris_version_number(assets::facts::java_mapping::java_edition())
+                .unwrap_or_default(),
             gl_version: 460,
             iris_version: iris_version_number(EMULATED_IRIS_VERSION).unwrap_or_default(),
             os: HostOs::Windows,
@@ -224,6 +226,9 @@ impl Environment {
         if self.distant_horizons {
             add("DISTANT_HORIZONS", String::new());
         }
+        d.extend(crate::biomes::biome_defines(
+            assets::facts::java_mapping::JavaBlockMapping::pinned().ok(),
+        ));
         d
     }
 }
@@ -259,8 +264,10 @@ mod tests {
 
     #[test]
     fn default_macros_match_iris_on_the_reference_rig() {
-        // The Java reference rig runs Iris 1.11.7.
+        // The pinned mappings and the Java rig are Java 26.3 with Iris 1.11.7.
+        assert_eq!(assets::facts::java_mapping::java_edition(), "26.3");
         let d = Environment::default().standard_defines();
+        assert_eq!(define(&d, "MC_VERSION"), Some("260300"));
         assert_eq!(define(&d, "IRIS_VERSION"), Some("11107"));
         assert_eq!(define(&d, "MC_GL_VERSION"), Some("460"));
         assert_eq!(define(&d, "MC_GLSL_VERSION"), Some("460"));

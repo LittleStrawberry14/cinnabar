@@ -8,11 +8,13 @@
 //! because the first matching block entry wins. Malformed entries never fail a file; they
 //! become [`PropertiesDiagnostic`]s whose message starts with the file name.
 
+mod bedrock;
 mod block;
 mod legacy;
 #[cfg(test)]
 mod tests;
 
+pub use bedrock::UNMAPPED_BLOCK_ID;
 pub use block::{BlockIdMap, RenderLayer};
 
 use std::collections::{BTreeMap, HashMap};

@@ -442,7 +442,7 @@ forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 [[crates]]
 name = "shaderpack"
 path = "crates/shaderpack"
-allowed_dependencies = []
+allowed_dependencies = ["assets"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 forbidden_transitive_dependencies = ["bevy", "bevy_*", "wgpu*"]
 

@@ -1187,8 +1187,15 @@ screen-effect parity remain incomplete.
   a Bedrock id several Java ids share takes the same-named one, else the first Geyser registers
   (entities) or the first by Java id (items), so `minecraft:banner` is `minecraft:black_banner`:
   Bedrock item data values (banner colours, map kinds) are not distinguished.
-- Incomplete: nothing reads the carrier yet; Java shader packs' block, item and entity ids,
-  biome uniforms and Java sky colours are its first consumers.
+- `shaderpack` reads the carrier: the per-Bedrock-state `mc_Entity` table from a pack's
+  `block.properties` (`BlockIdMap::bedrock_block_ids`), Bedrock entity and item pack ids through
+  their Java ids (`NamedIdMap::bedrock_entity_id`/`bedrock_item_id`; an id the mapping lacks
+  keeps its own name), `MC_VERSION` from the pinned Java edition, Iris's biome uniforms and
+  `BIOME_*`/`CAT_*`/`PPT_*` macros, and Java's `skyColor`/`fogColor`. `biome`/`BIOME_*` number
+  biomes in Java's network registry order, not Iris's `Biomes.register` order; comparisons
+  agree. The snow line omits Java's temperature noise and the frozen modifier; lightning,
+  boss-fight darkening, blindness/darkness fog and underwater colour easing are not modelled.
+- Incomplete: no render host uploads these values yet.
 
 ## Anvil screen
 

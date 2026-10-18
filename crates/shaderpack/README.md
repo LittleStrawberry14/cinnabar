@@ -22,10 +22,16 @@ programs can still translate.
 
 `ShaderPack::id_maps` reads `block.properties`, `item.properties` and
 `entity.properties` with Iris precedence; a pack without `block.properties` gets
-Iris's legacy numeric block ids. `discover_packs` lists the pack folders and zips
-in a directory. Each texture reads through the sampler Iris gives it: render
-targets clamp, depth textures take the nearest texel, and custom textures follow
-their `.mcmeta`.
+Iris's legacy numeric block ids. Through the pinned Bedrock-to-Java mapping in
+`assets`, `BlockIdMap::bedrock_block_ids` builds the `mc_Entity` table for every
+Bedrock block state, and `NamedIdMap::bedrock_entity_id` and `bedrock_item_id`
+give Bedrock entities and items the ids of their Java counterparts. The standard
+macros report that mapping's Java Edition as `MC_VERSION` and define Iris's
+`BIOME_*`, `CAT_*` and `PPT_*` macros; `BiomeUniforms` supplies the biome
+uniforms and `sky_fog` Java's `skyColor` and `fogColor` for a host to upload.
+`discover_packs` lists the pack folders and zips in a directory. Each texture
+reads through the sampler Iris gives it: render targets clamp, depth textures
+take the nearest texel, and custom textures follow their `.mcmeta`.
 
 Try the command-line report with an original fixture pack:
 

@@ -11,6 +11,7 @@
 //! locations shared between stages), then naga's GLSL frontend and validator. Errors are
 //! [`Diagnostic`]s located in the pack's own files; a failing program never stops the others.
 
+mod biomes;
 mod buffers;
 mod compile;
 mod custom_uniforms;
@@ -21,6 +22,7 @@ mod dispatch;
 mod environment;
 mod expr;
 mod ids;
+mod java_sky;
 mod options;
 mod pack;
 mod preprocess;
@@ -34,6 +36,7 @@ mod token;
 mod transform;
 mod translate;
 
+pub use biomes::{BiomeCategory, BiomeUniforms};
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use compile::CompiledStage;
 pub use custom_uniforms::{CustomUniformError, CustomUniforms, UniformValue};
@@ -41,7 +44,10 @@ pub use diagnostics::{Diagnostic, Phase, SourceLocation};
 pub use discover::{DiscoveredPack, discover_packs};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
-pub use ids::{BlockIdMap, IdMaps, NamedIdMap, RenderLayer};
+pub use ids::{BlockIdMap, IdMaps, NamedIdMap, RenderLayer, UNMAPPED_BLOCK_ID};
+pub use java_sky::{
+    BiomeColors, FogMedium, SkyDimension, SkyFogColors, SkyFogInputs, sky_fog, sunrise_color,
+};
 pub use options::{OptionKind, OptionValues, PackOption};
 pub use pack::{PackTranslation, ShaderPack, TranslateConfig};
 pub use preprocess::ConstDirective;
