@@ -11,7 +11,7 @@
     },
     "gophertunnel-parallel-pack-downloads": {
       "repository": "HashimTheArab/gophertunnel",
-      "revision": "8eb979f58d5501c5fbb91006da07c003c426a01a"
+      "revision": "bdc937334fd64fda588971a24bbdcd93754c4db2"
     }
   },
   "watches": [
@@ -30,6 +30,6 @@
   ],
   "pull_requests": [
     {"repository": "bedrock-crustaceans/raknet", "number": 8, "reference": "raknet-pr8-replacement", "observed_at": "2026-10-18T17:16:49Z"},
-    {"repository": "HashimTheArab/gophertunnel", "number": 221, "reference": "gophertunnel-parallel-pack-downloads", "observed_at": "2026-10-18T20:54:53Z"}
+    {"repository": "HashimTheArab/gophertunnel", "number": 221, "reference": "gophertunnel-parallel-pack-downloads", "observed_at": "2026-10-18T21:15:27Z"}
   ]
 }
