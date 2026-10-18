@@ -39,6 +39,9 @@ pub trait SessionCompanion: Send + 'static {
 
 impl SessionCompanion for () {}
 
+#[cfg(test)]
+mod terminal_tests;
+
 /// Gives the network's accepted terminal priority, and keeps services alive while any queue blocks it.
 pub(super) async fn run_with_companion(
     work: impl Future<Output = ()>,
