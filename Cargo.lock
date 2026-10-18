@@ -808,7 +808,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=46aee7a7508dfd3e1223909611213615388e1d8a#46aee7a7508dfd3e1223909611213615388e1d8a"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=c280b067a4028ee56d6c1caecaacdf19ef4747d1#c280b067a4028ee56d6c1caecaacdf19ef4747d1"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -8051,7 +8051,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "raknet"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/raknet?rev=e45ee626c5ea0eec83070af1c8be988ae08da53b#e45ee626c5ea0eec83070af1c8be988ae08da53b"
+source = "git+https://github.com/cinnabar-mc/raknet?rev=64c50dda0e1dc21409b0f42f746d66786697a86b#64c50dda0e1dc21409b0f42f746d66786697a86b"
 dependencies = [
  "byteorder",
  "facet",
