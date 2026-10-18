@@ -76,7 +76,8 @@ process transitions and real-account presence qualification remain open.
 Native sign-in reads the selected account's profile overview and independent
 friend/follower counts on the existing profile worker. Reads reuse the leased
 SDK owner, preserve unavailable counts and pass through the existing artwork
-cache, then recheck the selected generation and verified Xbox identity before
+cache. Its optional image budget preserves loaded data and completed image paths.
+Reads recheck the selected generation and verified Xbox identity before
 publication. Independent facets release the account lease between requests.
 Account replacement or worker retirement cancels active presentation work; refresh
 wakes coalesce without restarting an accepted read. Native persona artwork,

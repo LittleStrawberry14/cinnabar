@@ -29,7 +29,7 @@ mod artwork_tests;
 
 /// Pins each actual fetch/artwork phase across same-account refresh wakes.
 /// Generation/source changes and terminal stop drop it before a replacement starts.
-/// Fetch and artwork retain their original independent finite time budgets.
+/// Fetch has a hard deadline; the image owner returns partial artwork at its own finite budget.
 pub(super) async fn run(
     socket_dir: &std::path::Path,
     images: &ImageDirectory,
@@ -45,7 +45,7 @@ pub(super) async fn run(
             shared,
             selection,
             requests,
-            AsyncInstant::now() + timeout,
+            Some(AsyncInstant::now() + timeout),
             &mut queued_refresh,
         )
         .await?
@@ -58,7 +58,7 @@ pub(super) async fn run(
             shared,
             selection,
             requests,
-            AsyncInstant::now() + ARTWORK_BUDGET,
+            None,
             &mut queued_refresh,
         )
         .await
@@ -73,13 +73,14 @@ pub(super) async fn run(
     }
 }
 
-/// Polls a single retained phase until completion, its original deadline or account retirement.
+/// Retains one phase through completion or retirement, enforcing a caller deadline only when supplied.
+/// Optional image work owns its finite budget and drains unfinished downloads before returning paths.
 async fn wait<T>(
     operation: impl Future<Output = T>,
     shared: &Mutex<Snapshot>,
     selection: &Selection,
     requests: &mut watch::Receiver<Wake>,
-    deadline: AsyncInstant,
+    deadline: Option<AsyncInstant>,
     queued_refresh: &mut bool,
 ) -> Result<T, Exit> {
     tokio::pin!(operation);
@@ -94,7 +95,7 @@ async fn wait<T>(
         if !selection.current(&shared.lock().unwrap_or_else(|poison| poison.into_inner())) {
             return Err(Exit::Retired);
         }
-        if AsyncInstant::now() >= deadline {
+        if deadline.is_some_and(|deadline| AsyncInstant::now() >= deadline) {
             return Err(Exit::TimedOut);
         }
         tokio::select! {
@@ -102,9 +103,18 @@ async fn wait<T>(
                 if changed.is_err() { return Err(Exit::Stopped); }
                 *queued_refresh = true;
             },
-            _ = tokio::time::sleep_until(deadline) => return Err(Exit::TimedOut),
+            _ = async {
+                match deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => return Err(Exit::TimedOut),
             result = &mut operation => {
-                return if AsyncInstant::now() >= deadline { Err(Exit::TimedOut) } else { Ok(result) };
+                return if deadline.is_some_and(|deadline| AsyncInstant::now() >= deadline) {
+                    Err(Exit::TimedOut)
+                } else {
+                    Ok(result)
+                };
             },
         }
     }
@@ -132,7 +142,7 @@ mod tests {
             &shared,
             &selection,
             &mut requests,
-            AsyncInstant::now() + RESPONSE_TIMEOUT,
+            Some(AsyncInstant::now() + RESPONSE_TIMEOUT),
             &mut queued_refresh,
         ));
         let mut context = Context::from_waker(Waker::noop());
@@ -150,7 +160,7 @@ mod tests {
             &shared,
             &selection,
             &mut requests,
-            AsyncInstant::now() + RESPONSE_TIMEOUT,
+            Some(AsyncInstant::now() + RESPONSE_TIMEOUT),
             &mut queued_refresh,
         ));
         assert!(phase.as_mut().poll(&mut context).is_pending());
