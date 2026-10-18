@@ -233,7 +233,7 @@ fn account_responses_from_before_sign_out_are_discarded() {
     let mut account = LauncherAccount {
         snapshot: Arc::clone(&snapshot),
         sign_out,
-        profile_refresh: crossbeam_channel::bounded(1).0,
+        profile_refresh: profile_worker::channel().0,
         _alive: alive,
         socket_dir: PathBuf::new(),
         message_reports: crossbeam_channel::unbounded().0,

@@ -77,6 +77,22 @@ successful HTTP responses do not prove ordering of a previously ambiguous write.
 Owning host, bridge and shell presence tests pass. End-to-end protected HTTP,
 process transitions and real-account presence qualification remain open.
 
+Native sign-in reads the selected account's profile overview and independent
+friend/follower counts on the existing profile worker. Reads reuse the leased
+SDK owner, preserve unavailable counts and pass through the existing artwork
+cache. Its optional image budget preserves loaded data and completed image paths.
+Reads recheck the selected generation and verified Xbox identity before
+publication. Independent facets release the account lease between requests.
+Account replacement or worker retirement cancels active presentation work; refresh
+wakes coalesce without restarting an accepted read. Native optional statistics,
+achievement summaries, persona avatar and featured screenshot metadata enrich the
+retained overview using only the remaining original fetch budget. A cutoff keeps
+completed facets as partial; persona bytes are decoded before publication through
+the bounded atomic image cache. Retail selection/projection have shared Go/Rust
+conformance fixtures. The pending SDK APIs and optional image dependency still need
+common resolution, source review and owning execution. Live profile acceptance
+remains open; the Go profile remains the default.
+
 Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled

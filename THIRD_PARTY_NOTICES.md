@@ -20,6 +20,12 @@ The self-signed login ID derivation and its regression vectors in
 `crates/launcher-host/src/native_account/metadata.rs` are adapted from
 [Gophertunnel](https://github.com/HashimTheArab/gophertunnel/tree/81e65c54fb21587a6492014857710e32740c2a4f/minecraft/protocol/login).
 
+The native profile statistics selection and aggregation in
+`core/catalog/native_profile_policy.json` and
+`crates/launcher-host/src/native_account/profile/statistics.rs` also follow
+[Gophertunnel's userstats profile owner](https://github.com/HashimTheArab/gophertunnel/blob/81e65c54fb21587a6492014857710e32740c2a4f/minecraft/service/userstats/profile.go).
+The shared conformance responses are original synthetic fixtures.
+
 MIT License
 
 Copyright (c) 2019 Sandertv
