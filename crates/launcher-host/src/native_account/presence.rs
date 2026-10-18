@@ -27,11 +27,13 @@ impl NativeAccount {
         Ok(scope)
     }
 
-    /// Performs one explicit update on the same original generation; the caller owns its deadline.
+    /// Performs one original-generation update, retaining final dispatch evidence if the caller cancels.
+    /// The caller owns the absolute deadline and the evidence beyond this borrowed future.
     pub(crate) async fn update_title_presence(
         self: Arc<Self>,
         scope: &PresenceScope,
         state: &bridge::XboxPresenceState,
+        dispatched: &mut bool,
     ) -> io::Result<Option<Duration>> {
         let mut operation = self.acquire_verified_for(Some(&scope.generation)).await?;
         operation.check_presence_scope(scope)?;
@@ -44,8 +46,18 @@ impl NativeAccount {
         .map_err(service_error)?;
         let update = TitleUpdate::new(PresenceState::Active).with_rich_presence(rich);
         let result = match &mut operation.cached.as_mut().expect("account owner").owner {
-            Owner::Xbox(account) => account.title_presence().update(&update).await,
-            Owner::Minecraft(services) => services.title_presence().update(&update).await,
+            Owner::Xbox(account) => {
+                account
+                    .title_presence()
+                    .update_with_dispatch(&update, || *dispatched = true)
+                    .await
+            }
+            Owner::Minecraft(services) => {
+                services
+                    .title_presence()
+                    .update_with_dispatch(&update, || *dispatched = true)
+                    .await
+            }
         }
         .map_err(service_error);
         operation.persist()?;

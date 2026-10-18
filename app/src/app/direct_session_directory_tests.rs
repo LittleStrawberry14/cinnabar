@@ -60,6 +60,86 @@ fn native_cli_endpoint_normalizes_bare_host_and_ipv6_addresses() {
     }
 }
 
+/// Go-owned service locators retain an actual scoped Core endpoint despite native direct opt-in.
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_cli_service_destinations_keep_core_directory_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    for address in [
+        format!(
+            "{}{}",
+            launcher::menu::EXPERIENCE_ADDRESS_PREFIX,
+            "00000000-0000-0000-0000-000000000007"
+        ),
+        format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
+    ] {
+        let parsed = run_args(&[
+            "client",
+            "--address",
+            &address,
+            "--native-networking",
+            "raknet",
+        ]);
+        let directory = root.path().join(format!("direct-{}", std::process::id()));
+        let endpoint = parsed.session_endpoint(directory.clone()).unwrap();
+        assert_eq!(endpoint.core_directory(), Some(directory.as_path()));
+        let holder = bind_direct_session_directory(&parsed, directory.clone()).unwrap();
+        assert!(
+            directory.is_dir(),
+            "Go provisioning requires its actual owned directory"
+        );
+        drop(holder);
+        assert!(
+            !directory.exists(),
+            "the fallback directory lost scoped cleanup"
+        );
+    }
+}
+
+/// Native preference alone starts the launcher without creating a fictitious connection directory.
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_cli_menu_without_address_does_not_bind_a_session_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("menu-runtime");
+    let parsed = run_args(&["client", "--native-networking", "raknet"]);
+    assert!(!parsed.connection_requested());
+    let _holder = bind_direct_session_directory(&parsed, directory.clone()).unwrap();
+    assert!(!directory.exists());
+}
+
+/// Realm namespaces stay opaque and account-resolved, including an existing invite or case alias.
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_cli_realms_keep_opaque_locators_for_account_resolution() {
+    let root = tempfile::tempdir().unwrap();
+    for address in [
+        format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
+        format!(
+            " {}7 ",
+            bridge::contract::REALM_TARGET_PREFIX.to_ascii_uppercase()
+        ),
+        format!("{}synthetic-code", bridge::contract::REALM_CODE_PREFIX),
+    ] {
+        assert!(launcher_host::native_account::is_realm_target(&address));
+        let parsed = run_args(&[
+            "client",
+            "--address",
+            &address,
+            "--native-networking",
+            "nethernet-lan",
+        ]);
+        let protocol::SessionEndpoint::Native(target) = parsed
+            .session_endpoint(root.path().join("native-session"))
+            .unwrap()
+        else {
+            panic!("Realm locator lost its native account resolution owner");
+        };
+        assert_eq!(target.address, address.trim());
+        assert_eq!(target.transport, protocol::NativeTransport::RakNet);
+    }
+}
+
 fn run_args(arguments: &[&str]) -> args::ClientArgs {
     match args::ClientArgs::parse_from(arguments.to_vec()) {
         Ok(ParseOutcome::Run(parsed)) => *parsed,

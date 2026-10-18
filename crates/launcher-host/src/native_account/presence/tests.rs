@@ -103,15 +103,21 @@ async fn replacement_generation_cannot_receive_original_presence_update_or_remov
         xuid: "123".into(),
     };
     for removal in [false, true] {
+        let mut dispatched = false;
         let result = if removal {
             Arc::clone(&account).remove_title_presence(&scope).await
         } else {
             Arc::clone(&account)
-                .update_title_presence(&scope, &bridge::XboxPresenceState::default())
+                .update_title_presence(
+                    &scope,
+                    &bridge::XboxPresenceState::default(),
+                    &mut dispatched,
+                )
                 .await
                 .map(|_| ())
         };
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(!dispatched, "retired account reached title dispatch");
         assert!(account.state.lock().unwrap().cached.is_none());
         assert!(account.store.try_native_lease().is_ok());
     }

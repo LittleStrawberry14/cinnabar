@@ -31,6 +31,8 @@ use std::time::Instant;
 
 mod client_id;
 #[cfg(feature = "native-networking")]
+pub(crate) mod destination;
+#[cfg(feature = "native-networking")]
 mod native_account;
 #[cfg(feature = "native-networking")]
 mod native_friend;
@@ -103,13 +105,13 @@ impl SessionController {
         }
     }
 
-    /// Local worlds and friend destinations retain their existing provisioning owner.
+    /// Local worlds and Go-owned service destinations retain their existing provisioning owner.
     fn native_direct_enabled(&self, address: &str, local_world: bool) -> bool {
         #[cfg(feature = "native-networking")]
         {
-            self.native_transport.is_some()
-                && !local_world
-                && !address.starts_with(bridge::contract::FRIEND_TARGET_PREFIX)
+            self.native_transport
+                .and_then(|transport| destination::native_target(address, transport, local_world))
+                .is_some()
         }
         #[cfg(not(feature = "native-networking"))]
         {
@@ -238,26 +240,18 @@ impl SessionController {
         generation: u64,
     ) -> Result<JoinStage, String> {
         #[cfg(feature = "native-networking")]
-        if let Some(transport) = self
+        if let Some(target) = self
             .native_transport
-            .filter(|_| self.native_direct_enabled(address, self.local_world))
+            .and_then(|transport| destination::native_target(address, transport, self.local_world))
         {
             let realm = launcher_host::native_account::is_realm_target(address);
             if realm && auth_cache.is_none() {
                 return Err("Joining a Realm requires a verified native account.".into());
             }
-            let transport = if realm {
-                protocol::NativeTransport::RakNet
-            } else {
-                transport
-            };
-            if auth_cache.is_some() && transport != protocol::NativeTransport::RakNet {
+            if auth_cache.is_some() && target.transport != protocol::NativeTransport::RakNet {
                 return Err("Authenticated native joins currently require RakNet.".into());
             }
-            return Ok(JoinStage::Native(protocol::NativeConnectionTarget {
-                address: address.to_owned(),
-                transport,
-            }));
+            return Ok(JoinStage::Native(target));
         }
         // Namespaced by process id like the `--address` path: a bare
         // generation counter restarts at the same value every launch, so a

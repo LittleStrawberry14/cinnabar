@@ -323,6 +323,12 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     // Bound before the core guard is declared so Rust's reverse local-drop
     // order always stops the core before releasing this directory, including
     // every startup `?` before the app takes ownership of the guard.
+    let endpoint = connection_requested
+        .then(|| args.session_endpoint(socket_dir.clone()))
+        .transpose()?;
+    let core_connection = endpoint
+        .as_ref()
+        .is_some_and(|endpoint| endpoint.core_directory().is_some());
     let _direct_session_directory = bind_direct_session_directory(&args, socket_dir.clone())?;
     let mut core_process = CoreProcessGuard::default();
     let selected_assets =
@@ -501,11 +507,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
 
     // Validate local carriers before starting a connection: an asset failure
     // must not launch the core or wait on a server the client cannot render.
-    if let Some(address) = args
-        .address
-        .as_deref()
-        .filter(|_| args.native_transport.is_none())
-    {
+    if let Some(address) = args.address.as_deref().filter(|_| core_connection) {
         let child = spawn_core_for_address(
             &layout,
             &socket_dir,
@@ -520,7 +522,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             launcher_host::core_process::stop_core_then(&mut core_process, |_| ());
             return Err(error).with_context(|| format!("wait for Go core endpoint for {address}"));
         }
-    } else if connection_requested && args.native_transport.is_none() {
+    } else if core_connection {
         preflight_bridge_endpoint(&socket_dir)?;
     }
 
@@ -546,14 +548,14 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     #[cfg(feature = "native-networking")]
     let menu = menu.with_native_sign_in(args.native_transport.is_some());
     crate::runtime::network::await_overlay_texture_device();
-    let network = if connection_requested {
+    let network = if let Some(endpoint) = endpoint {
         match spawn_network(NetworkConfig {
             registry_base: crate::runtime::network::session_registries::RegistryBase::new(
                 &runtime_assets,
                 &collision_registries,
             ),
             session_generation: simulation_clock::identity::SessionGeneration::new(1),
-            endpoint: args.session_endpoint(socket_dir)?,
+            endpoint,
             #[cfg(feature = "native-networking")]
             native_account: None,
             #[cfg(feature = "native-networking")]

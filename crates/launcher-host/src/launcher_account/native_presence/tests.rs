@@ -30,10 +30,11 @@ impl Service for LeaseContendedService<'_> {
         &self,
         scope: &PresenceScope,
         state: &bridge::XboxPresenceState,
+        dispatched: &mut bool,
     ) -> io::Result<Option<Duration>> {
         self.attempted.send(()).await.unwrap();
         Arc::clone(&self.account)
-            .update_title_presence(scope, state)
+            .update_title_presence(scope, state, dispatched)
             .await
     }
 
@@ -97,8 +98,10 @@ impl Service for Fixture {
         &self,
         _: &(),
         state: &bridge::XboxPresenceState,
+        dispatched: &mut bool,
     ) -> io::Result<Option<Duration>> {
         self.updates.send(state.clone()).await.unwrap();
+        *dispatched = true;
         let release = self.update_release.lock().unwrap().pop();
         let outcome = if let Some(release) = release {
             release.await.unwrap()

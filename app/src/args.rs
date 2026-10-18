@@ -477,12 +477,12 @@ impl ClientArgs {
             if !self.socket_dir_explicit
                 && let Some(address) = &self.address
             {
-                return Ok(protocol::SessionEndpoint::Native(
-                    protocol::NativeConnectionTarget {
-                        address: address.clone(),
-                        transport,
+                return Ok(
+                    match crate::session::destination::native_target(address, transport, false) {
+                        Some(target) => protocol::SessionEndpoint::Native(target),
+                        None => protocol::SessionEndpoint::Core(directory),
                     },
-                ));
+                );
             }
             let _ = transport;
             return Err(ArgsError::NativeNetworkingUnavailable);

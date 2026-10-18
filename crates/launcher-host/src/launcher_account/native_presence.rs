@@ -14,10 +14,12 @@ trait Service {
     /// Captures the current original generation before any title publication.
     async fn bind(&self) -> io::Result<Self::Scope>;
     /// Commits one latest activity without replacing its actual request on unrelated wakes.
+    /// Sets caller-retained evidence only at the final signed HTTP dispatch boundary.
     async fn update(
         &self,
         scope: &Self::Scope,
         state: &bridge::XboxPresenceState,
+        dispatched: &mut bool,
     ) -> io::Result<Option<Duration>>;
     /// Attempts only the original account's cleanup before authority can be released.
     async fn remove(&self, scope: &Self::Scope) -> io::Result<()>;
@@ -40,9 +42,10 @@ impl Service for NativeService<'_> {
         &self,
         scope: &PresenceScope,
         state: &bridge::XboxPresenceState,
+        dispatched: &mut bool,
     ) -> io::Result<Option<Duration>> {
         Arc::clone(&self.account)
-            .update_title_presence(scope, state)
+            .update_title_presence(scope, state, dispatched)
             .await
     }
     async fn remove(&self, scope: &PresenceScope) -> io::Result<()> {
@@ -83,18 +86,19 @@ async fn publish(
         let state = latest(shared);
         // Keep this actual future pinned by the enclosing async lifetime, even when state changes.
         // Retirement waits for its original finite budget before starting the sole cleanup.
-        wrote = true;
+        let mut dispatched = false;
         let result = bounded_until(
             tokio::time::Instant::now() + REQUEST_BUDGET,
-            service.update(&scope, &state),
+            service.update(&scope, &state, &mut dispatched),
         )
         .await;
+        wrote |= dispatched;
         let delay = match result {
             Ok(Ok(heartbeat)) => heartbeat
                 .filter(|d| !d.is_zero())
                 .unwrap_or(FALLBACK_HEARTBEAT),
             Ok(Err(error)) => {
-                uncertain_write = true;
+                uncertain_write |= dispatched;
                 tracing::warn!("native title presence update failed");
                 if error.kind() == io::ErrorKind::PermissionDenied {
                     lifetime.retire();
@@ -102,7 +106,7 @@ async fn publish(
                 RETRY_INTERVAL
             }
             Err(_) => {
-                uncertain_write = true;
+                uncertain_write |= dispatched;
                 tracing::warn!("native title presence update timed out");
                 RETRY_INTERVAL
             }
