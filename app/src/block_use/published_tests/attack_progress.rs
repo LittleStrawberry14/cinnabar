@@ -915,7 +915,7 @@ fn browser_canvas_pick_binding_publishes_one_request_per_press() {
                     }
                     _ => unreachable!(),
                 }
-                world.insert_non_send_resource(InputSource(Box::new(move || DeviceFrame {
+                world.insert_non_send(InputSource(Box::new(move || DeviceFrame {
                     keyboard_mouse: Some(keyboard.clone()),
                     window_focus_lost: focus_lost,
                     ..Default::default()
