@@ -250,3 +250,6 @@ impl Transport {
         }
     }
 }
+
+#[cfg(test)]
+mod early_spawn_tests;
