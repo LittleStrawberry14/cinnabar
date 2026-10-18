@@ -17,6 +17,11 @@ pass, including the held-I/O regressions; broader client/server and device
 acceptance remain open. Required final integration and dependency reviews remain
 pending.
 
+Networking dependencies inherit workspace pins shared with the reusable libraries.
+CI rejects multiple locked Git identities for one repository, including different
+references resolving to the same commit. Native protocol and account test targets
+compile with the shared service, transport and optional image dependencies.
+
 Native device-code sign-in and saved-account validation use the existing menu and
 account mutation worker. Interactive attempts release file leases while awaiting
 approval and publish only after Xbox identity verification. Protected checkpoints
@@ -89,8 +94,8 @@ achievement summaries, persona avatar and featured screenshot metadata enrich th
 retained overview using only the remaining original fetch budget. A cutoff keeps
 completed facets as partial; persona bytes are decoded before publication through
 the bounded atomic image cache. Retail selection/projection have shared Go/Rust
-conformance fixtures. The pending SDK APIs and optional image dependency still need
-common resolution, source review and owning execution. Live profile acceptance
+conformance fixtures. The shared SDK APIs and optional image dependency resolve and
+compile; final source review and owning execution remain pending. Live profile acceptance
 remains open; the Go profile remains the default.
 
 Incomplete: native hosting transport and application adoption, remaining profile and

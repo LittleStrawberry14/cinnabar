@@ -49,7 +49,7 @@ zip = { version = "7", default-features = false, features = ["deflate-flate2-zli
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bedrock-net = { workspace = true, features = ["messaging"], optional = true }
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "cbc8c6847f5d3eab8f8b0b8bc352624c4f816ea7", features = ["rta-tokio"], optional = true }
+bedrock-services = { workspace = true, features = ["rta-tokio"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }

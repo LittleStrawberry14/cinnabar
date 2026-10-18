@@ -68,8 +68,8 @@ cap-fs-ext = "3.4.5"
 bedrock-net = { workspace = true, features = ["raknet", "login", "messaging"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
-nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "46bffc13d2c48ca78957cd02b66c1cb9ec11025f", optional = true }
-nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "46bffc13d2c48ca78957cd02b66c1cb9ec11025f", optional = true }
+nethernet-tokio = { workspace = true, optional = true }
+nethernet = { workspace = true, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]
