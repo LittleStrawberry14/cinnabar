@@ -444,15 +444,25 @@ impl FriendJoin {
     /// Recovers possibly applied membership without repeating an ambiguous handle PUT.
     async fn reconcile(&mut self, deadline: Instant) -> io::Result<()> {
         let mut operation = self.operation(deadline).await?;
-        match bounded(
-            deadline,
-            operation
-                .minecraft()?
-                .mpsd()
-                .read(&self.selection.reference),
-        )
-        .await?
-        {
+        let mut directory = operation.minecraft()?.mpsd();
+        let read = directory.read(&self.selection.reference);
+        let result = if self.closing {
+            bounded(deadline, read).await?
+        } else {
+            service(
+                self.socket
+                    .as_mut()
+                    .ok_or_else(|| invalid("friend RTA is unavailable"))?,
+                self.subscription
+                    .ok_or_else(|| invalid("friend subscription is unavailable"))?,
+                &self.selection.reference,
+                &mut self.changed,
+                deadline,
+                read,
+            )
+            .await?
+        };
+        match result {
             Ok(session) => {
                 if !session.is_bound(
                     self.binding
