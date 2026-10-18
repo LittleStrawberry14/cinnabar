@@ -9,9 +9,7 @@ use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::HashSet};
 use uuid::Uuid;
 
-pub(super) const NETHERNET_TRANSPORT: i64 = 2;
-const WEBSOCKET_SIGNALING: i64 = 3;
-pub(super) const JSON_RPC_SIGNALING: i64 = 7;
+use super::world_metadata::{JSON_RPC_SIGNALING, NETHERNET_TRANSPORT, WEBSOCKET_SIGNALING, field};
 
 /// One visible world and its optional complete, generation-bound native selection.
 /// Display fields never supply transport authority.
@@ -167,16 +165,6 @@ fn usable_id(value: &str) -> bool {
         .parse::<u64>()
         .is_ok_and(|id| id != 0 && id.to_string() == value)
         || Uuid::parse_str(value).is_ok()
-}
-
-/// Go's title metadata decoding compares JSON field names without ASCII case sensitivity.
-pub(super) fn field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
-    object.get(name).or_else(|| {
-        object
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value)
-    })
 }
 
 /// Missing/null title strings retain their zero value; a supplied wrong type rejects this observation.

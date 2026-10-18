@@ -1,6 +1,6 @@
 //! Interpretation of title metadata from a complete joined directory snapshot.
 
-use super::super::friends::{JSON_RPC_SIGNALING, NETHERNET_TRANSPORT, field};
+use super::super::world_metadata::{JSON_RPC_SIGNALING, NETHERNET_TRANSPORT, field};
 use super::{FriendAdmission, Scope, invalid};
 use bedrock_services::xbox::mpsd;
 use serde_json::{Map, Value};
@@ -112,13 +112,6 @@ fn usable_network_id(value: &str) -> bool {
         .parse::<u64>()
         .is_ok_and(|id| id != 0 && id.to_string() == value)
         || Uuid::parse_str(value).is_ok_and(|id| !id.is_nil())
-}
-
-/// Validates a canonical, nonzero Xbox identity without retaining malformed service text.
-pub(super) fn xuid(value: &str) -> bool {
-    value
-        .parse::<u64>()
-        .is_ok_and(|id| id != 0 && id.to_string() == value)
 }
 
 /// Borrows a supplied title string without coercing other JSON types.

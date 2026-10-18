@@ -97,6 +97,29 @@ fn open_runs_the_world_and_close_stops_its_server() {
     assert_eq!(manager.core_report(), LocalWorld::default());
 }
 
+/// The native directory token follows the actual live instance, including failure before watcher delivery.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+#[test]
+fn native_host_opening_survives_noop_open_and_is_revoked_when_its_instance_exits() {
+    let runner = Arc::new(FakeRunner::default());
+    let fixture = with_runner(&runner);
+    let manager = &fixture.manager;
+    let world = manager.create(&flat("w")).unwrap();
+    manager.open(&world.id, None).unwrap();
+    wait_for(manager, WorldState::Running);
+    let opening = HostOpening::capture(manager).unwrap();
+    manager.open(&world.id, None).unwrap();
+    let unchanged = HostOpening::capture(manager).unwrap();
+    assert!(opening.same(&unchanged));
+    opening.validate().unwrap();
+    runner.last().exit();
+    assert_eq!(
+        opening.validate().unwrap_err().kind(),
+        std::io::ErrorKind::NotConnected
+    );
+    wait_for(manager, WorldState::Failed);
+}
+
 /// Reopening a world that still saves starts its server only once the old one has exited.
 #[test]
 fn reopening_while_the_last_server_saves_waits_for_it() {

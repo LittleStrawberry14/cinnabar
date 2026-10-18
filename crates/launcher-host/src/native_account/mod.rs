@@ -3,8 +3,10 @@
 mod acquisition;
 mod catalog;
 mod catalog_worker;
+mod directory;
 mod friend_join;
 mod friends;
+mod hosted_world;
 mod messaging;
 mod metadata;
 mod operation;
@@ -12,12 +14,15 @@ mod prepare;
 mod provider;
 mod realms;
 mod restore;
+mod world_metadata;
 pub use catalog::{CatalogCards, CatalogListing};
 pub use catalog_worker::CatalogWorker;
 pub use friend_join::{
     FriendAdmission, FriendJoin, FriendSelection, JoinProgress, NativeFriendSelection,
 };
 pub use friends::NativeFriendWorld;
+pub(crate) use hosted_world::HostSlot;
+pub use hosted_world::{HostedApproval, NativeHostedWorld};
 pub use realms::is_realm_target;
 
 use bedrock_services::{

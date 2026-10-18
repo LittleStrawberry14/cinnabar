@@ -14,12 +14,14 @@ mod process;
 mod provision;
 mod store;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 mod unpack;
 mod world;
 
 pub use core_link::{CoreLink, CoreRoute};
 pub use import::{WORLD_ARCHIVE_EXTENSION, is_world_archive};
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) use manager::HostOpening;
 pub use manager::Manager;
 pub use world::WorldError;
 

@@ -11,10 +11,10 @@ fn snapshot() -> Value {
         },
         "properties":{"system":{"closed":false}, "custom":{
             "ownerId":"456", "protocol":protocol::PROTOCOL_VERSION,
-            "TransportLayer":super::super::friends::NETHERNET_TRANSPORT,
+            "TransportLayer":super::super::world_metadata::NETHERNET_TRANSPORT,
             "SupportedConnections":[
                 {"ConnectionType":999},
-                {"ConnectionType":super::super::friends::JSON_RPC_SIGNALING,
+                {"ConnectionType":super::super::world_metadata::JSON_RPC_SIGNALING,
                     "NetherNetId":42, "PmsgId":Uuid::from_u128(7)}
             ],
             "nonces":{"123":"synthetic-player-admission", "456":"another-player"}

@@ -1,12 +1,11 @@
 //! Validated selection identity, separate from authoritative membership and transport readiness.
 
+use super::super::world_metadata::{WORLD_TEMPLATE, xuid};
 use super::{invalid, world};
 use bedrock_services::xbox::{mpsd, social};
 use std::{io, time::SystemTime};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
-
-const WORLD_TEMPLATE: &str = "MinecraftLobby";
 
 /// One explicitly selected service handle and its expected host/session identity.
 /// Activity properties supply no transport authority; only the later join can do so.
@@ -71,7 +70,7 @@ impl FriendSelection {
                 .ok_or_else(|| invalid("friend invitation has no session reference"))?,
         )
         .map_err(|_| invalid("invalid friend invitation reference"))?;
-        if !invitation.sender_xuid.as_deref().is_some_and(world::xuid) {
+        if !invitation.sender_xuid.as_deref().is_some_and(xuid) {
             return Err(invalid("friend invitation has no valid sender"));
         }
         let recipient = invitation
@@ -106,10 +105,8 @@ impl FriendSelection {
         expires: Option<SystemTime>,
     ) -> io::Result<Self> {
         if handle.is_nil()
-            || !world::xuid(&host)
-            || recipient
-                .as_deref()
-                .is_some_and(|value| !world::xuid(value))
+            || !xuid(&host)
+            || recipient.as_deref().is_some_and(|value| !xuid(value))
             || reference.service_config_id() != bedrock_services::minecraft::SERVICE_CONFIG_ID
             || !reference
                 .template_name()
