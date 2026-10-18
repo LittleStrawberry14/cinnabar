@@ -213,12 +213,16 @@ impl fmt::Display for PacketName {
 /// as serverbound. Reads only lengths and headers; bodies stay views of `frame`.
 #[cfg(test)]
 pub(crate) fn record_serverbound(tap: &dyn PacketTap, frame: &Bytes) {
-    record_serverbound_body(tap, &frame.slice(1..));
+    record_serverbound_entries(tap, frame, 1);
 }
 
 /// Reports encoded Bedrock entries without depending on a transport envelope.
 pub(crate) fn record_serverbound_body(tap: &dyn PacketTap, frame: &Bytes) {
-    let mut offset = 0;
+    record_serverbound_entries(tap, frame, 0);
+}
+
+/// Reports entries starting at `offset`, keeping bodies borrowed from `frame`.
+fn record_serverbound_entries(tap: &dyn PacketTap, frame: &Bytes, mut offset: usize) {
     while offset < frame.len() {
         let Some((length, length_bytes)) = read_varuint32(&frame[offset..]) else {
             return;
