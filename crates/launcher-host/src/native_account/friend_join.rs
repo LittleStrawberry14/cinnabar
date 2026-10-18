@@ -320,15 +320,22 @@ impl FriendJoin {
         {
             let mut operation = self.operation(deadline).await?;
             let session = self.session.as_mut().expect("checked membership");
-            if session.needs_sync() {
+            if session.needs_sync() || self.changed {
                 bounded(deadline, operation.minecraft()?.mpsd().sync(session))
                     .await?
                     .map_err(directory_error)?;
+                self.changed = false;
             }
             if !session.is_closed() {
-                match bounded(deadline, operation.minecraft()?.mpsd().leave(session))
-                    .await?
-                    .map_err(directory_error)?
+                let binding = self
+                    .binding
+                    .ok_or_else(|| invalid("friend cleanup binding is unavailable"))?;
+                match bounded(
+                    deadline,
+                    operation.minecraft()?.mpsd().leave_bound(session, binding),
+                )
+                .await?
+                .map_err(directory_error)?
                 {
                     mpsd::Update::Closed => {}
                     _ => {
