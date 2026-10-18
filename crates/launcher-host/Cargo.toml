@@ -14,7 +14,7 @@ reads = [
 
 [features]
 test-support = []
-native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "protocol/native-networking"]
+native-networking = ["dep:bedrock-services", "bedrock-services/signaling-tokio", "dep:bedrock-net", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "protocol/native-networking"]
 
 [dependencies]
 cosmetics = { path = "../cosmetics" }
@@ -46,7 +46,8 @@ url = "2"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "afaacea6bf0de1a282f9b094ecb594489cb8788d", optional = true }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "7f8b480fb7f4b66c42358409da19ad520b20b47a", optional = true }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "159e10dbdd67a913094a5ca70b4c0d6a0e8c4170", features = ["messaging"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }

@@ -10,23 +10,33 @@ use std::{
 
 const CLAIMS_LEEWAY: Duration = Duration::from_secs(60);
 
-/// Applies the configured Go verifier's hard expiry plus its subsequent claims/IdentityData checks.
-/// Subject must be present for native provider qualification; it is not assumed to equal Xbox XUID.
-pub(super) fn validate(
+/// Binds an already verified signed identity to the selected account and minted connection proof.
+pub(super) fn validate_binding(
     claims: &Claims,
     selected_xuid: &str,
     key: &VerifyingKey,
-    now: SystemTime,
 ) -> io::Result<()> {
-    if claims.subject().is_none_or(str::is_empty)
-        || claims.xuid() != Some(selected_xuid)
+    if claims.xuid() != Some(selected_xuid)
         || selected_xuid.is_empty()
         || selected_xuid.parse::<i64>().is_err()
         || claims.client_public_key().map_err(|_| rejected())? != *key
+    {
+        return Err(rejected());
+    }
+    Ok(())
+}
+
+/// Validates each signed peer's own identity and finite time claims without local account binding.
+pub(super) fn validate_identity(claims: &Claims, now: SystemTime) -> io::Result<()> {
+    if claims.subject().is_none_or(str::is_empty)
+        || claims
+            .xuid()
+            .is_none_or(|xuid| xuid.is_empty() || xuid.parse::<i64>().is_err())
         || claims.expiry().is_none_or(|expiry| now >= expiry)
     {
         return Err(rejected());
     }
+    claims.client_public_key().map_err(|_| rejected())?;
     let latest = now.checked_add(CLAIMS_LEEWAY).ok_or_else(rejected)?;
     for name in ["nbf", "iat"] {
         if claims

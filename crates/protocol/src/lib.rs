@@ -20,6 +20,8 @@ mod item;
 mod item_capacity;
 mod login;
 mod session_endpoint;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use session_endpoint::NativeMessagingTarget;
 pub use session_endpoint::{NativeConnectionTarget, NativeTransport, SessionEndpoint};
 mod movement;
 mod nbt_tree;

@@ -63,11 +63,11 @@ uuid = { workspace = true, features = ["js"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c280b067a4028ee56d6c1caecaacdf19ef4747d1", features = ["raknet", "login"], optional = true }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "159e10dbdd67a913094a5ca70b4c0d6a0e8c4170", features = ["raknet", "login", "messaging"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
-nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "298c89b6d229dbc0c1870a3337e558bf8cddbe44", optional = true }
-nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "298c89b6d229dbc0c1870a3337e558bf8cddbe44", optional = true }
+nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c604b6fd321ac7ba5c28b74674803df4556518a4", optional = true }
+nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "c604b6fd321ac7ba5c28b74674803df4556518a4", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]

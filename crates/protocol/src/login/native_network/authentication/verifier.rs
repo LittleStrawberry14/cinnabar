@@ -19,6 +19,7 @@ const MAX_RSA_MODULUS_TEXT: usize = 1024;
 
 /// Trusted keys and issuer acquired from the configured authorization environment.
 /// No transport crypto types, HTTP client, refresh task or unverified trust mode are exposed.
+#[derive(Clone)]
 pub struct NativeTokenVerifier {
     issuer: String,
     keys: JwkSet,
@@ -126,6 +127,14 @@ impl NativeTokenVerifier {
         xuid: &str,
         now: SystemTime,
     ) -> io::Result<Claims> {
+        let claims = self.verify_peer(token, now)?;
+        claims::validate_binding(&claims, xuid, key)?;
+        Ok(claims)
+    }
+
+    /// Shares issuer, audience, signature and temporal policy with remote SDP verification.
+    /// A remote peer is not required to carry the local selected account's XUID or proof key.
+    pub(super) fn verify_peer(&self, token: &str, now: SystemTime) -> io::Result<Claims> {
         let token = parsed(token)?;
         if !self
             .keys
@@ -152,8 +161,19 @@ impl NativeTokenVerifier {
         {
             return Err(rejected());
         }
-        claims::validate(&claims, xuid, key, now)?;
+        claims::validate_identity(&claims, now)?;
         Ok(claims)
+    }
+}
+
+impl nethernet::identity::TokenVerifier for NativeTokenVerifier {
+    /// Pure provider policy for the remote peer's own claims, before SDP fingerprint binding.
+    fn verify(&self, token: &str, now: SystemTime) -> nethernet::identity::error::Result<Claims> {
+        self.verify_peer(token, now).map_err(|_| {
+            nethernet::identity::error::IdentityError::Untrusted(
+                "configured native multiplayer verification failed".to_owned(),
+            )
+        })
     }
 }
 

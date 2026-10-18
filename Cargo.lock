@@ -831,13 +831,17 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=c280b067a4028ee56d6c1caecaacdf19ef4747d1#c280b067a4028ee56d6c1caecaacdf19ef4747d1"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=159e10dbdd67a913094a5ca70b4c0d6a0e8c4170#159e10dbdd67a913094a5ca70b4c0d6a0e8c4170"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
+ "bedrock-services",
  "bytes",
  "ctr 0.10.1",
  "flate2",
+ "futures",
+ "nethernet",
+ "nethernet-tokio",
  "p384",
  "raknet",
  "serde",
@@ -847,6 +851,7 @@ dependencies = [
  "subtle",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
  "zeroize",
 ]
 
@@ -883,9 +888,10 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=afaacea6bf0de1a282f9b094ecb594489cb8788d#afaacea6bf0de1a282f9b094ecb594489cb8788d"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=7f8b480fb7f4b66c42358409da19ad520b20b47a#7f8b480fb7f4b66c42358409da19ad520b20b47a"
 dependencies = [
  "base64 0.22.1",
+ "futures-util",
  "httpdate",
  "ipnet",
  "p256",
@@ -898,8 +904,12 @@ dependencies = [
  "sha2 0.11.1",
  "thiserror 2.0.18",
  "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-websockets",
  "url",
  "uuid",
+ "webpki-roots",
  "zeroize",
 ]
 
@@ -5750,6 +5760,7 @@ version = "0.1.20"
 dependencies = [
  "anyhow",
  "async-io",
+ "bedrock-net",
  "bedrock-services",
  "bridge",
  "cosmetics",
@@ -6609,7 +6620,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=298c89b6d229dbc0c1870a3337e558bf8cddbe44#298c89b6d229dbc0c1870a3337e558bf8cddbe44"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=c604b6fd321ac7ba5c28b74674803df4556518a4#c604b6fd321ac7ba5c28b74674803df4556518a4"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6633,7 +6644,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=298c89b6d229dbc0c1870a3337e558bf8cddbe44#298c89b6d229dbc0c1870a3337e558bf8cddbe44"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=c604b6fd321ac7ba5c28b74674803df4556518a4#c604b6fd321ac7ba5c28b74674803df4556518a4"
 dependencies = [
  "bytes",
  "futures",
@@ -6644,6 +6655,7 @@ dependencies = [
  "nethernet",
  "rand",
  "reqwest 0.13.5",
+ "rtc",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -10111,6 +10123,27 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-websockets"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d52efb639344a7c6adb8e62c6f3d2c19c001ff1b79a5041ba1c6ed42e19c6aa5"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "getrandom 0.4.3",
+ "http",
+ "httparse",
+ "rustls-pki-types",
+ "simdutf8",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
 ]
 
 [[package]]

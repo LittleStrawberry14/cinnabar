@@ -1,6 +1,7 @@
 //! Selected native account ownership and connection preparation on the caller's async runtime.
 
 mod acquisition;
+mod messaging;
 mod metadata;
 mod operation;
 mod prepare;

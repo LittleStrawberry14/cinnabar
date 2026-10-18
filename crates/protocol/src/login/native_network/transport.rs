@@ -1,7 +1,9 @@
 //! Exclusive native transport ownership for one direct connection.
 
 mod inbox;
+mod messaging;
 use inbox::Inbox;
+use messaging::MessagingTransport;
 
 use super::{NativeConnectionTarget, NativeTransport};
 use bedrock_net::{
@@ -11,29 +13,42 @@ use bedrock_net::{
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
 use p384::ecdsa::SigningKey;
-use std::{io, net::SocketAddr, time::Instant};
+use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 const LAN_CONNECTION_TYPE: u8 = 4;
 
 pub(super) enum Transport {
     RakNet {
         connection: RakNetConnection,
-        key: SigningKey,
+        key: Arc<SigningKey>,
     },
     NetherNetLan {
         connection: NetherClient,
-        key: SigningKey,
+        key: Arc<SigningKey>,
         nonce: String,
         inbox: Inbox,
     },
+    Messaging(MessagingTransport),
 }
 
 impl Transport {
     /// Resolves the requested endpoint and establishes its explicitly selected transport.
     pub(super) async fn connect(
         target: &NativeConnectionTarget,
-        key: SigningKey,
+        key: Arc<SigningKey>,
+        messaging: Option<super::authentication::MessagingAdmission>,
     ) -> io::Result<Self> {
+        if target.transport == NativeTransport::NetherNetMessaging {
+            return MessagingTransport::connect(target, key, messaging)
+                .await
+                .map(Self::Messaging);
+        }
+        if messaging.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "messaging handoff requires its exact target",
+            ));
+        }
         let address = tokio::net::lookup_host(&target.address)
             .await?
             .next()
@@ -124,6 +139,9 @@ impl Transport {
                     inbox: Inbox::default(),
                 })
             }
+            NativeTransport::NetherNetMessaging => {
+                unreachable!("handled before endpoint resolution")
+            }
         }
     }
 
@@ -131,13 +149,15 @@ impl Transport {
     pub(super) fn key(&self) -> &SigningKey {
         match self {
             Self::RakNet { key, .. } | Self::NetherNetLan { key, .. } => key,
+            Self::Messaging(transport) => transport.key(),
         }
     }
 
-    /// Borrows the LAN discovery admission challenge, absent on RakNet.
+    /// Borrows the explicit discovery or joined-session challenge, absent on RakNet.
     pub(super) fn nonce(&self) -> &str {
         match self {
             Self::NetherNetLan { nonce, .. } => nonce,
+            Self::Messaging(transport) => transport.nonce(),
             _ => "",
         }
     }
@@ -147,6 +167,7 @@ impl Transport {
         match self {
             Self::RakNet { .. } => BatchHeader::RakNet,
             Self::NetherNetLan { .. } => BatchHeader::NetherNet,
+            Self::Messaging(_) => BatchHeader::NetherNet,
         }
     }
 
@@ -162,6 +183,7 @@ impl Transport {
         deadline: Option<Instant>,
     ) -> io::Result<()> {
         match self {
+            Self::Messaging(transport) => transport.send_until(message, deadline).await,
             Self::RakNet { connection, .. } => {
                 let capacity = connection.wait_send_capacity(message.len());
                 match deadline {
@@ -203,6 +225,7 @@ impl Transport {
     /// Receives one complete message; both drivers retain partial input on cancellation.
     pub(super) async fn recv(&mut self) -> io::Result<Bytes> {
         match self {
+            Self::Messaging(transport) => transport.recv().await,
             Self::RakNet { connection, .. } => connection.recv().await.map_err(io::Error::other),
             Self::NetherNetLan {
                 connection, inbox, ..
@@ -224,6 +247,7 @@ impl Transport {
     /// Sends a graceful close while the owner remains alive.
     pub(super) async fn close(&mut self) -> io::Result<()> {
         match self {
+            Self::Messaging(transport) => transport.close().await,
             Self::RakNet { connection, .. } => connection.close().await.map_err(io::Error::other),
             Self::NetherNetLan { connection, .. } => {
                 connection.close().await.map_err(io::Error::other)

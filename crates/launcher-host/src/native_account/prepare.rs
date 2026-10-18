@@ -42,9 +42,22 @@ impl NativeAccount {
     pub(super) async fn prepare_owned(
         &self,
         mut operation: Operation,
+        claims: Value,
+        random_id: protocol::ClientRandomId,
+    ) -> io::Result<protocol::NativeAuthentication> {
+        self.prepare_borrowed(&mut operation, claims, random_id)
+            .await
+    }
+
+    /// Retains the same account lease for a subsequent protected signaling upgrade.
+    pub(super) async fn prepare_borrowed(
+        &self,
+        operation: &mut Operation,
         mut claims: Value,
         random_id: protocol::ClientRandomId,
     ) -> io::Result<protocol::NativeAuthentication> {
+        // Later acquisition can rotate OAuth after promotion already published a checkpoint.
+        operation.published = false;
         let fresh = serde_json::to_vec(&metadata::DeviceProfile::fresh())
             .map_err(|_| io::Error::other("serialize native device profile"))?;
         let profile = loop {

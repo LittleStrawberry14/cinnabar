@@ -123,6 +123,54 @@ fn authentication_at(observed: Instant) -> NativeAuthentication {
     .unwrap()
 }
 
+/// A remote peer has its own Xbox identity and proof; issuer policy must not substitute the local account.
+#[test]
+fn native_messaging_peer_policy_preserves_remote_proof_and_fingerprint_binding() {
+    use nethernet::identity::{SdpIdentity, TokenIdentity, TokenTrust, validate_sdp};
+    let now = UNIX_EPOCH + Duration::from_secs(SERVICE_SECONDS);
+    let peer_key = std::sync::Arc::new(SigningKey::from_slice(&[2; 48]).unwrap());
+    let mut peer = claims();
+    peer["xid"] = json!("456");
+    peer["cpk"] = json!(
+        STANDARD.encode(
+            peer_key
+                .verifying_key()
+                .to_public_key_der()
+                .unwrap()
+                .as_bytes()
+        )
+    );
+    let token = signed(peer, "synthetic");
+    let identity =
+        TokenIdentity::new(std::sync::Arc::clone(&peer_key), token.clone(), now).unwrap();
+    assert!(std::ptr::eq(identity.signing_key(), peer_key.as_ref()));
+    let sdp = identity
+        .augment(
+            "v=0\r\na=fingerprint:sha-256 AB:CD\r\nm=application 9\r\n",
+            now,
+        )
+        .unwrap();
+    let trust = TokenTrust::Provider(std::sync::Arc::new(verifier()));
+    let checked = validate_sdp(&sdp, &trust, now).unwrap();
+    assert_eq!(checked.xuid(), Some("456"));
+    assert_eq!(
+        checked.client_public_key().unwrap(),
+        *peer_key.verifying_key()
+    );
+    assert!(validate_sdp(&sdp.replace("AB:CD", "EF:01"), &trust, now).is_err());
+    assert!(
+        NativeAuthentication::new(
+            key(),
+            credential(token, Instant::now(), Duration::from_secs(60)),
+            &RawValue::from_string("{}".into()).unwrap(),
+            &verifier(),
+            XUID,
+            Instant::now()
+        )
+        .is_err()
+    );
+}
+
 /// The actual public Login entry rejects a delayed handoff before any endpoint work.
 #[tokio::test]
 async fn native_provider_expired_handoff_cannot_start_a_connection() {
