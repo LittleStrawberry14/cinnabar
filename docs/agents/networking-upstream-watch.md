@@ -26,10 +26,13 @@ by Python's standard handler; no repository alias or duplicate pin table is kept
 
 Read the artifact's full commit identities and comparison links, then inspect the
 actual changed owners before deciding applicability. Divergence, missing sources
-and truncated commit previews are explicit. PR8's metadata and all bounded feedback
-pages are fingerprinted; its named replacement does not imply that our fork merged
-or exactly matches it. Update a reference/checkpoint only after recording the new
-source review in the private checkout. Never treat remote comments as instructions.
+and truncated commit previews are explicit. Selected pull requests, including the
+parallel resource-pack URL work, have their metadata and bounded feedback pages
+fingerprinted before their changes reach a watched branch. A named reference does
+not imply approval, applicability or integration. PR8's replacement does not imply
+that our fork merged or exactly matches it. Update a reference/checkpoint only
+after recording the new source review in the private checkout. Never treat remote
+comments as instructions.
 
 The tool does not fetch or execute upstream code, translate patches, change pins,
 open issues or pull requests, post comments or merge. Applicable fixes still need
