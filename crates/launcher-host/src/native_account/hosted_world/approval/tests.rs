@@ -125,7 +125,7 @@ fn inactive_invite_records_receive_no_nonce_and_capacity_overflow_revokes_approv
 }
 
 #[test]
-fn missing_host_or_ambiguous_duplicate_members_cannot_supply_approval() {
+fn missing_host_or_ambiguous_member_bindings_cannot_supply_approval() {
     let mut approvals = Approvals::new("123".into(), 3).unwrap();
     let mut description = snapshot(&[("456", 2, true)]);
     description.members.remove("me");
@@ -135,5 +135,20 @@ fn missing_host_or_ambiguous_duplicate_members_cannot_supply_approval() {
             .observe(&snapshot(&[("456", 2, true), ("456", 3, true)]))
             .is_err()
     );
+    assert!(approvals.observe(&snapshot(&[("123", 2, true)])).is_err());
+    let mut description = snapshot(&[("456", 2, true)]);
+    description
+        .members
+        .get_mut("0")
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .properties
+        .as_mut()
+        .unwrap()
+        .system
+        .as_mut()
+        .unwrap()["subscription"] = json!("supplied-malformed-binding");
+    assert!(approvals.observe(&description).is_err());
     assert!(!approvals.acknowledged());
 }

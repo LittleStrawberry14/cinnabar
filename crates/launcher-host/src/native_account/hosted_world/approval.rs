@@ -102,6 +102,9 @@ impl Approvals {
                 continue;
             }
             if owner == self.host {
+                if host {
+                    return Err(invalid());
+                }
                 host = true;
                 continue;
             }
@@ -109,15 +112,17 @@ impl Approvals {
                 return Err(invalid());
             }
             let connection = system.and_then(|value| value.get("connection"));
-            let subscription = system
-                .and_then(|value| value.get("subscription"))
-                .and_then(|value| value.get("id"));
+            let subscription = match system.and_then(|value| value.get("subscription")) {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(subscription)) => identifier(subscription.get("id"))?,
+                _ => return Err(invalid()),
+            };
             members.insert(
                 owner.to_owned(),
                 MemberIdentity {
                     slot: slot.clone(),
                     connection: identifier(connection)?,
-                    subscription: identifier(subscription)?,
+                    subscription,
                 },
             );
         }
