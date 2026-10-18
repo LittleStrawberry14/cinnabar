@@ -9,7 +9,7 @@ pub enum NativeTransport {
     NetherNetLan,
 }
 
-/// One explicit direct connection. Account-authorized targets use the existing backend.
+/// One explicit direct connection; account policy is supplied separately at Login.
 #[derive(Debug, Clone)]
 pub struct NativeConnectionTarget {
     /// Numeric endpoint or DNS name with its port.

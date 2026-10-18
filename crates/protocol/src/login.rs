@@ -33,6 +33,8 @@ pub use session_join::NativeJoinPreparation;
 pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod native_network;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use native_network::NativeAuthentication;
 mod unused_packets;
 mod web_handoff;
 use boundary::boundary_wakeup;

@@ -10,8 +10,7 @@ use bedrock_net::{
 };
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
-use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
-use rand::rngs::SysRng;
+use p384::ecdsa::SigningKey;
 use std::{io, net::SocketAddr};
 
 const LAN_CONNECTION_TYPE: u8 = 4;
@@ -31,7 +30,10 @@ pub(super) enum Transport {
 
 impl Transport {
     /// Resolves the requested endpoint and establishes its explicitly selected transport.
-    pub(super) async fn connect(target: &NativeConnectionTarget) -> io::Result<Self> {
+    pub(super) async fn connect(
+        target: &NativeConnectionTarget,
+        key: SigningKey,
+    ) -> io::Result<Self> {
         let address = tokio::net::lookup_host(&target.address)
             .await?
             .next()
@@ -47,7 +49,6 @@ impl Transport {
                 "native endpoint port is zero",
             ));
         }
-        let key = SigningKey::try_generate_from_rng(&mut SysRng).map_err(io::Error::other)?;
         match target.transport {
             NativeTransport::RakNet => Ok(Self::RakNet {
                 connection: RakNetConnection::connect(address, RakNetOptions::default())
