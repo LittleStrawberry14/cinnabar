@@ -143,6 +143,9 @@ impl Registry {
         }
         let generation = account.generation.checked_add(1).ok_or_else(closed)?;
         account.rotate(resume, now)?;
+        if resume.is_empty() {
+            account.token_pending = false;
+        }
         account.control.cancel();
         account.control = CancellationToken::new();
         account.generation = generation;
@@ -155,6 +158,7 @@ impl Registry {
             session,
             generation,
             cancel,
+            controller: true,
         })
     }
 
@@ -196,6 +200,7 @@ impl Registry {
             session,
             generation,
             cancel,
+            controller: false,
         })
     }
 
@@ -420,10 +425,15 @@ pub(super) struct Attachment {
     pub(super) session: Arc<Session>,
     pub(super) generation: u64,
     pub(super) cancel: CancellationToken,
+    controller: bool,
 }
 
 impl Drop for Attachment {
     fn drop(&mut self) {
+        if self.controller {
+            // Cancel this exact token: a resumed controller has a different token.
+            self.cancel.cancel();
+        }
         let mut state = self
             .session
             .state

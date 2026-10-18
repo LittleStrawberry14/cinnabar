@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub(super) struct Session {
     pub(super) state: Mutex<State>,
     pub(super) observation: watch::Sender<Observation>,
+    pub(super) progress: watch::Sender<bridge::ConnectProgress>,
     pub(super) changed: Notify,
     guest: NativeDeviceProfile,
 }
@@ -41,6 +42,7 @@ impl Session {
     /// Starts one signed-out memory-only account without acquiring credentials.
     pub(super) fn new(client: std::net::IpAddr, now: Instant) -> io::Result<Arc<Self>> {
         let (observation, _) = watch::channel(signed_out());
+        let (progress, _) = watch::channel(progress(bridge::ConnectStage::Idle));
         Ok(Arc::new(Self {
             state: Mutex::new(State {
                 generation: 0,
@@ -60,6 +62,7 @@ impl Session {
                 last_join: 0,
             }),
             observation,
+            progress,
             changed: Notify::new(),
             guest: NativeDeviceProfile::fresh(),
         }))
@@ -165,7 +168,7 @@ impl Session {
         Ok(())
     }
 
-    /// Claims the sole play owner after any retired controller's actual previous play has ended.
+    /// Claims a newer join only after the previous concrete play owner has retired.
     pub(super) async fn begin_play(
         self: &Arc<Self>,
         generation: u64,
@@ -184,11 +187,7 @@ impl Session {
                 if join == 0 || join <= state.last_join || state.sign_in.is_some() {
                     return Err(busy());
                 }
-                if let Some((active, _)) = state.play {
-                    if active == generation {
-                        return Err(busy());
-                    }
-                } else {
+                if state.play.is_none() {
                     state.last_join = join;
                     state.play = Some((generation, join));
                     return Ok(PlayLease {
@@ -298,6 +297,18 @@ pub(super) struct PlayLease {
 }
 
 impl PlayLease {
+    /// Publishes only the still-current join without exposing upstream addresses or provider causes.
+    pub(super) fn progress(&self, value: bridge::ConnectProgress) -> io::Result<()> {
+        let state = self
+            .session
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.check(&state)?;
+        self.session.progress.send_replace(value);
+        Ok(())
+    }
+
     /// Rejects original-controller/account retirement immediately before output admission.
     pub(super) fn current(&self) -> io::Result<()> {
         let state = self
@@ -305,6 +316,11 @@ impl PlayLease {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.check(&state)
+    }
+
+    /// Checks the original tuple while the caller holds the account mutation boundary.
+    fn check(&self, state: &State) -> io::Result<()> {
         state.check(self.generation)?;
         if state.revision != self.revision || state.play != Some((self.generation, self.join)) {
             return Err(closed());
@@ -322,6 +338,9 @@ impl Drop for PlayLease {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.play == Some((self.generation, self.join)) {
             state.play = None;
+            self.session
+                .progress
+                .send_replace(progress(bridge::ConnectStage::Idle));
             if !state.closed && state.revision == self.revision {
                 state.account = self.account.take();
             }
@@ -350,4 +369,15 @@ pub(super) fn closed() -> io::Error {
 /// Identifies the original account/play mutual exclusion without exposing its state.
 pub(super) fn busy() -> io::Error {
     io::Error::new(io::ErrorKind::WouldBlock, "gateway session is busy")
+}
+
+/// Starts a stage observation without inventing unavailable download counters.
+pub(super) fn progress(stage: bridge::ConnectStage) -> bridge::ConnectProgress {
+    bridge::ConnectProgress {
+        stage,
+        packs_done: 0,
+        packs_total: 0,
+        received_bytes: 0,
+        total_bytes: 0,
+    }
 }

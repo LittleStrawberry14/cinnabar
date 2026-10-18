@@ -17,7 +17,7 @@ carry the notice “(c) Mojang AB. All rights reserved.” and are subject to th
 ## Gophertunnel login identifier
 
 The self-signed login ID derivation and its regression vectors in
-`crates/launcher-host/src/native_account/metadata.rs` are adapted from
+`crates/protocol/src/login/client_data/native_profile.rs` are adapted from
 [Gophertunnel](https://github.com/HashimTheArab/gophertunnel/tree/81e65c54fb21587a6492014857710e32740c2a4f/minecraft/protocol/login).
 
 The native profile statistics selection and aggregation in

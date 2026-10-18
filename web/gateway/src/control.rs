@@ -76,6 +76,7 @@ async fn serve(
         }
     };
     let mut observation = attachment.session.observation.subscribe();
+    let mut progress = attachment.session.progress.subscribe();
     let capability = attachment
         .session
         .state
@@ -85,6 +86,7 @@ async fn serve(
     let mut writing = Some(output(frames.clone(), Event::Welcome { capability }, true)?);
     let mut errors = VecDeque::new();
     let mut account_changed = false;
+    let mut progress_changed = false;
     let mut keepalive_due = false;
     let period = Duration::from_secs(u64::from(RELAY_KEEPALIVE_SECONDS));
     let mut keepalive = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
@@ -113,6 +115,11 @@ async fn serve(
                 account_changed = false;
                 Some(Event::Account {
                     account: observation.borrow_and_update().clone(),
+                })
+            } else if progress_changed {
+                progress_changed = false;
+                Some(Event::Connect {
+                    connect: *progress.borrow_and_update(),
                 })
             } else {
                 None
@@ -151,6 +158,10 @@ async fn serve(
                 changed.map_err(failed)?;
                 account_changed = true;
             }
+            changed = progress.changed() => {
+                changed.map_err(failed)?;
+                progress_changed = true;
+            }
             _ = keepalive.tick() => { keepalive_due = true; }
         }
     }
@@ -158,7 +169,7 @@ async fn serve(
 
 /// Reads exactly one nonempty bounded Hello under its original application-handshake budget.
 pub(super) async fn read_hello(
-    reader: &mut (impl FrameRead + Unpin),
+    reader: &mut (impl futures::Stream<Item = Result<Bytes, bridge::BridgeError>> + Unpin),
     channel: &str,
 ) -> io::Result<Hello> {
     let frame = tokio::time::timeout(

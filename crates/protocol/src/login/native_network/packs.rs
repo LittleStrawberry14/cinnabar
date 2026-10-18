@@ -15,20 +15,32 @@ use std::{path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
-/// Tries cache and CDN before requesting missing archives on the retained game connection.
+/// The desktop's guarded local cache/CDN edge, or gateway transfer on the existing game socket only.
+#[derive(Clone, Copy)]
+pub(super) enum Acquisition<'a> {
+    Desktop(Option<&'a Path>),
+    InBand,
+}
+
+/// Drives the same typed pack negotiation without constructing HTTP or filesystem work for an in-band caller.
 pub(super) async fn acquire(
     connection: &mut Connection,
     mut preloading: ClientPackOffer,
-    cache_root: Option<&Path>,
+    policy: Acquisition<'_>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
     let offers = preloading.offers().cloned().collect::<Vec<_>>();
-    let cache = if offers.is_empty() {
+    let cache = if offers.is_empty() || matches!(policy, Acquisition::InBand) {
         None
     } else {
+        let Acquisition::Desktop(cache_root) = policy else {
+            unreachable!("in-band transfer never opens cache")
+        };
         wait_io(connection, acquisition::open_cache(cache_root)).await
     };
-    let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
+    let client = if matches!(policy, Acquisition::Desktop(_))
+        && offers.iter().any(|offer| !offer.cdn_url.is_empty())
+    {
         acquisition::http_client().ok()
     } else {
         None

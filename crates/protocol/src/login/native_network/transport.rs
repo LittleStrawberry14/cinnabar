@@ -18,7 +18,7 @@ use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
 use std::{io, net::SocketAddr, time::Instant};
 
-const LAN_CONNECTION_TYPE: u8 = 4;
+pub(super) const LAN_CONNECTION_TYPE: u8 = 4;
 
 pub(super) enum Transport {
     RakNet(RakNetTransport),
@@ -27,6 +27,11 @@ pub(super) enum Transport {
 }
 
 impl Transport {
+    /// Retains the caller's already-established exact numeric RakNet socket without resolving again.
+    pub(super) fn from_raknet(connection: RakNetConnection) -> Self {
+        Self::RakNet(RakNetTransport::new(connection))
+    }
+
     /// Resolves the requested endpoint and establishes its explicitly selected transport.
     pub(super) async fn connect(
         target: &NativeConnectionTarget,
@@ -212,7 +217,7 @@ fn closing() -> io::Error {
 }
 
 #[cfg(test)]
-mod early_spawn_tests;
+pub(super) mod early_spawn_tests;
 
 #[cfg(test)]
 mod early_packet_tap_tests;
