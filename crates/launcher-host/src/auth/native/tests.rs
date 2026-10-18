@@ -68,9 +68,14 @@ fn cancelled_later_exchange_preserves_pending_refresh_and_discards_late_ui_compl
     let lease = pending_store.try_native_lease().unwrap();
     assert_eq!(lease.refresh_token(), "rotated-refresh");
     drop(lease);
-    store
-        .try_discard_native_pending("synthetic-attempt")
-        .unwrap();
+    test_time::eventually(
+        "the cancelled native attempt to release its pending files",
+        || match store.try_discard_native_pending("synthetic-attempt") {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
+            Err(error) => panic!("pending cleanup failed: {error}"),
+        },
+    );
     assert!(!store.pending_cache().exists());
 }
 
