@@ -260,7 +260,15 @@ async fn dropping_cdn_acquisition_closes_the_pending_body_without_cache_objects(
             .await
             .unwrap();
         started.send(()).unwrap();
-        assert_eq!(socket.read(&mut [0_u8; 1]).await.unwrap(), 0);
+        match socket.read(&mut [0_u8; 1]).await {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+                ) => {}
+            result => panic!("canceled download must close its pending body: {result:?}"),
+        }
     });
     let mut preload = Box::pin(acquisition::preload(
         Download::new(offered).unwrap(),
@@ -273,7 +281,10 @@ async fn dropping_cdn_acquisition_closes_the_pending_body_without_cache_objects(
         result = ready => result.unwrap(),
     }
     drop(preload);
-    peer.await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), peer)
+        .await
+        .expect("canceled download retained its peer socket")
+        .unwrap();
     assert!(
         std::fs::read_dir(root.path().join("native-v1"))
             .unwrap()
