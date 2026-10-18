@@ -150,6 +150,10 @@ pub use inventory::{
     repeated_container_open_warning_packet, validate_item_nbt_size,
 };
 pub use inventory::{
+    CraftingRules, FurnaceKind, FurnaceLayout, FurnaceOptions, FurnaceOptionsEvent, FurnaceTab,
+    furnace_options_packet,
+};
+pub use inventory::{
     CreativeCategory, CreativeContentEvent, CreativeGroup, CreativeItem, MAX_CREATIVE_GROUPS,
     MAX_CREATIVE_ITEMS,
 };
@@ -163,10 +167,6 @@ pub use inventory::{
     WINDOW_TYPE_WORKBENCH, WindowKind, WindowSegment, is_chest_like_name, is_open_window_name,
     is_result_preview_name, open_cell_request, open_name_first_cell, ui_slot_container_name,
     ui_slot_for_name, ui_slot_request_container,
-};
-pub use inventory::{
-    FurnaceKind, FurnaceLayout, FurnaceOptions, FurnaceOptionsEvent, FurnaceTab,
-    furnace_options_packet,
 };
 pub use inventory::{
     IngredientObservation, MAX_RECIPE_OBSERVATIONS, RecipeObservation, RecipeObservations,
@@ -186,9 +186,9 @@ pub use item::{
     MAX_ITEM_REGISTRY_ENTRIES, NetworkItemStack, held_items_match, item_banner_patterns, item_book,
     item_bundle_id, item_charged_projectile, item_custom_color, item_display,
     item_enchantment_level, item_enchantment_level_value, item_extra_damage,
-    item_extra_damage_value, item_extra_unbreakable, item_has_enchantment_list, item_stack_damage,
-    item_use_progress_packet, offhand_equipment_packet, select_hotbar_slot_packet,
-    vanilla_item_registry,
+    item_extra_damage_integer, item_extra_damage_value, item_extra_unbreakable,
+    item_has_enchantment_list, item_stack_damage, item_use_progress_packet,
+    offhand_equipment_packet, select_hotbar_slot_packet, vanilla_item_registry,
 };
 pub use item::{
     ItemAnvilData, ItemNbtEdit, book_init_extra, book_needs_init, edit_item_extra, item_anvil_data,
@@ -264,17 +264,18 @@ pub use world::{
     CustomStateValue, CustomTransformation, CustomVisualComponents, DaylightCycleUpdateEvent,
     DimensionHeightDiagnostic, DimensionRange, GameRulesEvent, HeightmapDiagnostic,
     LevelChunkEvent, LevelChunkMode, MAP_IMAGE_SIDE, MAX_BIOME_DEFINITIONS, MAX_BIOME_NAME_BYTES,
-    MAX_BLOCK_LAYERS, MAX_DIMENSION_DEFINITIONS, MAX_SUB_CHUNK_REQUESTS, MapDataEvent,
+    MAX_DIMENSION_DEFINITIONS, MAX_SUB_CHUNK_COLUMN_HEIGHT, MAX_SUB_CHUNK_REQUESTS, MapDataEvent,
     MovePlayerEvent, MovePlayerMode, MovementCorrectionSubject, MovementEffectEvent,
     MovementEffectKind, NETHER_DIMENSION_ID, OVERWORLD_CLOCK_ID, OVERWORLD_CLOCK_NAME,
     OpenSignEvent, PLAYER_NETWORK_OFFSET, PlayerGameMode, PlayerMovementCorrectionEvent,
     PublisherUpdateEvent, RespawnEvent, STANDING_PLAYER_EYE_HEIGHT, SetTimeEvent,
     SubChunkBatchEvent, SubChunkDiagnostic, SubChunkEntryEvent, SubChunkReplyAdmissionEvent,
-    SubChunkResult, SubChunkUnavailable, SyncedBlockUpdateEvent, WeatherChannel,
-    WeatherUpdateEvent, WorldBootstrap, WorldClockDefinition, WorldClockState,
-    WorldClockUpdateEvent, WorldEnvironmentBootstrap, WorldEvent, WorldPacketError,
-    WorldSpawnEvent, WorldWireError, air_network_id, block_name_sort_key, block_state_network_hash,
-    into_world_event, request_sub_chunk_column, vanilla_dimension_range,
+    SubChunkRequestMember, SubChunkRequestReceipt, SubChunkResult, SubChunkUnavailable,
+    SyncedBlockUpdateEvent, WeatherChannel, WeatherUpdateEvent, WorldBootstrap,
+    WorldClockDefinition, WorldClockState, WorldClockUpdateEvent, WorldEnvironmentBootstrap,
+    WorldEvent, WorldPacketError, WorldSpawnEvent, WorldWireError, air_network_id,
+    block_name_sort_key, block_state_network_hash, into_world_event, request_sub_chunk_column,
+    request_sub_chunks, sub_chunk_request_offset, vanilla_dimension_range,
 };
 
 mod movement_transport;
