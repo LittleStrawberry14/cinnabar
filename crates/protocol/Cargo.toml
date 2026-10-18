@@ -11,6 +11,7 @@ autotests = false
 platform-specific = ["windows", "macos"]
 reads = [
     "core/go.mod",
+    "core/authcache/service_device_namespace.txt",
     "core/proxy/resource_pack_window.txt",
     "assets/bedrock-target.json",
     "assets/block-data-sources.json",
@@ -23,7 +24,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:md-5", "uuid/serde", "uuid/v5"]
 
 [[test]]
 name = "it"
@@ -62,6 +63,9 @@ bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen",
 uuid = { workspace = true, features = ["js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+provider_http = { package = "reqwest", version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+url = { version = "2", optional = true }
+md-5 = { version = "0.10", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"

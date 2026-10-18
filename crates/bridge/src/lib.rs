@@ -20,6 +20,7 @@ pub use cinnabar_api::{
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod contract;
 pub mod gateway_egress;
+pub mod relay_control;
 pub use contract::{
     AuthState, Backend, CinnabarRelease, ConnectStage, ConnectTarget, GameMode, Lifecycle,
     MAX_FRAME_LEN, PackAcquisition, PackApplication, PackDownstreamOutcome, PackOffer, Transport,

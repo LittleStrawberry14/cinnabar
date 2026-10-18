@@ -1,7 +1,9 @@
 //! Native direct joins using the shared Rust spawn and play sequence.
 
 mod authentication;
-pub use authentication::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
+pub use authentication::{
+    NativeAuthentication, NativeCredential, NativeProvider, NativeTokenVerifier,
+};
 mod connection;
 mod negotiated;
 mod packs;

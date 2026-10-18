@@ -12,6 +12,7 @@ members = [
     "crates/assets",
     "crates/bridge",
     "web/transport",
+    "web/gateway",
     "web/client",
     "crates/block-transform",
     "crates/bootstrap-ui",
@@ -97,6 +98,7 @@ edition = "2024"
 rust-version = "1.99.0"
 
 [workspace.dependencies]
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "cbc8c6847f5d3eab8f8b0b8bc352624c4f816ea7" }
 bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "ab9be22217b7ef31a20dc3cd5842267ad000abbc" }
 bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "ab9be22217b7ef31a20dc3cd5842267ad000abbc" }
 bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "ab9be22217b7ef31a20dc3cd5842267ad000abbc" }

@@ -1,6 +1,8 @@
 //! Qualified provider credentials and their original finite validity.
 
 mod messaging;
+mod provider;
+pub use provider::NativeProvider;
 mod verifier;
 pub(super) use messaging::MessagingAdmission;
 pub use verifier::NativeTokenVerifier;
@@ -78,6 +80,7 @@ pub struct NativeAuthentication {
     pub(super) token: Zeroizing<String>,
     pub(super) claims: Map<String, Value>,
     pub(super) expires: Instant,
+    pub(super) identity: crate::session_wire::SessionIdentity,
     clock: ServiceClock,
     verifier: Arc<NativeTokenVerifier>,
     messaging: Option<(
@@ -157,6 +160,7 @@ impl NativeAuthentication {
             claims,
             expires,
             clock: credential.clock,
+            identity: verifier::session_identity(&identity)?,
             verifier: Arc::new(verifier.clone()),
             messaging: None,
         })
@@ -206,6 +210,7 @@ impl NativeAuthentication {
             token: self.token,
             claims: self.claims,
             expires: self.expires,
+            identity: self.identity,
             messaging,
         })
     }
@@ -217,6 +222,7 @@ pub(super) struct AuthenticationHandoff {
     pub(super) token: Zeroizing<String>,
     pub(super) claims: Map<String, Value>,
     pub(super) expires: Instant,
+    pub(super) identity: crate::session_wire::SessionIdentity,
     pub(super) messaging: Option<MessagingAdmission>,
 }
 

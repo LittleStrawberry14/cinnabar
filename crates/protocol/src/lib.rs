@@ -191,7 +191,10 @@ pub use login::{
     network_stack_latency_reply,
 };
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use login::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
+pub use login::{
+    NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
+    NativeTokenVerifier,
+};
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,
     InteractionEncodeError, MAX_BLOCK_ACTIONS_PER_INPUT, MovementPredictionSync,

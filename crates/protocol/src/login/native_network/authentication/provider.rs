@@ -1,8 +1,8 @@
-//! One account's bounded, caller-driven OpenID provider cache.
+//! Bounded provider acquisition shared by actual native account owners.
 
+use super::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
 use p384::ecdsa::SigningKey;
-use protocol::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
-use reqwest::{Client, StatusCode};
+use provider_http::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::{
@@ -16,7 +16,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Owns reusable public verification metadata alongside the concrete account operation.
 /// No mutex, task, timer or runtime is created here.
-pub(super) struct Provider {
+pub struct NativeProvider {
     issuer: Url,
     expected_issuer: String,
     client: Client,
@@ -32,23 +32,27 @@ struct Configuration {
     id_token_signing_alg_values_supported: Option<Vec<String>>,
 }
 
-impl Provider {
-    /// Builds an unauthenticated, redirect-free HTTPS client only when qualification is first needed.
-    pub(super) fn new(issuer: &str) -> io::Result<Self> {
+impl NativeProvider {
+    /// Builds the existing redirect-free HTTPS client with the owning service's user agent.
+    /// The caller retains this cache alongside its concrete account and original deadline.
+    ///
+    /// # Errors
+    /// Rejects malformed provider URLs or unavailable HTTP/TLS configuration.
+    pub fn new(issuer: &str, user_agent: &str) -> io::Result<Self> {
         let expected_issuer = intended_issuer(issuer)?;
         Ok(Self {
             issuer: secure_url(&expected_issuer)?,
             expected_issuer,
             client: Client::builder()
                 .https_only(true)
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(provider_http::redirect::Policy::none())
                 .no_gzip()
                 .no_brotli()
                 .no_deflate()
                 .no_zstd()
                 .timeout(REQUEST_TIMEOUT)
                 .connect_timeout(REQUEST_TIMEOUT)
-                .user_agent(bedrock_services::minecraft::USER_AGENT)
+                .user_agent(user_agent)
                 .build()
                 .map_err(|_| failed())?,
             configuration: None,
@@ -57,14 +61,20 @@ impl Provider {
         })
     }
 
-    /// Prevents an account from reusing keys acquired for a different discovered environment.
-    pub(super) fn matches(&self, issuer: &str) -> io::Result<bool> {
+    /// Prevents reuse across a different discovered environment.
+    ///
+    /// # Errors
+    /// Rejects a malformed discovered issuer before comparing policy.
+    pub fn matches(&self, issuer: &str) -> io::Result<bool> {
         Ok(self.expected_issuer == intended_issuer(issuer)?)
     }
 
     /// Qualifies one key-bound credential without replacing its original service-time observation.
     /// Known keys are reused; an unknown kid can refresh only after the baseline's 30-minute interval.
-    pub(super) async fn authentication(
+    ///
+    /// # Errors
+    /// Rejects expired, malformed, wrong-account/key or untrusted credentials and bounded HTTP failures.
+    pub async fn authentication(
         &mut self,
         key: SigningKey,
         credential: NativeCredential,
