@@ -26,7 +26,7 @@ use client_interaction::movement::{
 
 use client_interaction::movement::LocomotionState;
 
-/// Groups movement policy resources within Bevy's system parameter limit.
+/// Reads user movement settings and any native extension policy in one system parameter.
 #[derive(SystemParam)]
 pub(crate) struct MovementSettings<'w> {
     settings: Option<Res<'w, RuntimeSettings>>,
@@ -47,7 +47,7 @@ pub(crate) fn advance_local_physics(
     mut movement_speed: ResMut<LocalMovementSpeedAuthority>,
     mut movement_ticker: ResMut<MovementTicker>,
     mut view: ResMut<LocalViewPose>,
-    settings: MovementSettings,
+    settings: MovementSettings<'_>,
     player: Option<Res<PlayerRuntime>>,
     item_use: Option<Res<client_interaction::item_use::ItemUseRuntime>>,
     mut locals: ResMut<LocomotionState>,
