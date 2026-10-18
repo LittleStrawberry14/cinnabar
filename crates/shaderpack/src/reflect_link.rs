@@ -7,7 +7,9 @@ use crate::reflection::ValueType;
 use naga::{Binding, TypeInner};
 use std::collections::BTreeMap;
 
-/// Requires every fragment input to have a compatible vertex output at its location.
+/// Requires every fragment input to have a compatible vertex output at its location: the
+/// same scalar type and at most the output's component count, the rule WebGPU applies (a
+/// fragment input reading `.xy` of a `vec4` output, as GL drivers also accept).
 pub(crate) fn validate(stages: &[&CompiledStage]) -> Result<(), String> {
     let Some(vertex) = stages.iter().find(|stage| stage.stage == StageKind::Vertex) else {
         return Ok(());
@@ -47,7 +49,7 @@ pub(crate) fn validate(stages: &[&CompiledStage]) -> Result<(), String> {
                     "fragment input location {location} has no vertex output"
                 ));
             }
-            Some(output) if output != &input => {
+            Some(output) if !reads_from(input, *output) => {
                 return Err(format!(
                     "vertex output and fragment input at location {location} have different types"
                 ));
@@ -56,6 +58,19 @@ pub(crate) fn validate(stages: &[&CompiledStage]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether a fragment input of type `input` can read a vertex output of type `output`.
+fn reads_from(input: ValueType, output: ValueType) -> bool {
+    let scalar_and_size = |ty| match ty {
+        ValueType::Scalar(scalar) => Some((scalar, 1)),
+        ValueType::Vector { size, scalar } => Some((scalar, size)),
+        ValueType::Matrix { .. } => None,
+    };
+    match (scalar_and_size(input), scalar_and_size(output)) {
+        (Some((input, read)), Some((output, written))) => input == output && read <= written,
+        _ => input == output,
+    }
 }
 
 /// Collects typed user locations from direct values or entry-point interface structs.

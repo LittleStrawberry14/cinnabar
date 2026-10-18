@@ -1742,6 +1742,11 @@ literal = "active"
 reason = "GLSL reserved word that 1.20 shaders may use as a name."
 
 [[identifier_literal_exceptions]]
+path = "crates/shaderpack/src/dimensions.rs"
+literal = "the_end"
+reason = "Java Edition dimension id in OptiFine/Iris's default dimension.properties (the_end -> world1), a shader-pack folder mapping rather than a Bedrock identifier."
+
+[[identifier_literal_exceptions]]
 path = "crates/shaderpack/src/custom_uniforms/compile.rs"
 literal = "log2"
 reason = "GLSL built-in function name in the custom-uniform expression language, not a game identifier."

@@ -158,6 +158,20 @@ fn stage_interface_requires_compatible_vertex_outputs() {
 }
 
 #[test]
+fn fragment_inputs_may_read_fewer_components_than_the_vertex_writes() {
+    success(
+        "#version 330\nout vec4 uv; void main() { uv = vec4(0.5); gl_Position = vec4(0.0); }",
+        "#version 330\nin vec2 uv; out vec4 color; void main() { color = vec4(uv, 0.0, 1.0); }",
+    );
+    let mismatched = translate(
+        "#version 330\nout vec4 uv; void main() { uv = vec4(0.5); gl_Position = vec4(0.0); }",
+        "#version 330\nflat in ivec2 uv; out vec4 color; void main() { color = vec4(uv, 0.0, 1.0); }",
+    );
+    let failed = program(&mismatched, "composite");
+    assert!(failed.diagnostics.iter().any(|d| d.phase == Phase::Link));
+}
+
+#[test]
 fn unfed_fragment_inputs_read_zero() {
     // Iris declares a fragment input no vertex output feeds and initializes it to zero;
     // WebGPU rejects a pipeline whose fragment input has no vertex output.
