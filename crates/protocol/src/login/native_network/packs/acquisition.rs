@@ -1,8 +1,10 @@
 //! Runtime-only HTTP and persistent archive I/O for native direct joins.
 
-use super::transfer::{Completion, Download};
+use bedrock_client::packs::PackNegotiation;
+use bedrock_protocol_1_26_51::types::PackInfoData;
 use resource_pack::cache::{ArchiveCache, ArchiveCacheKey, DEFAULT_CACHE_QUOTA};
 use std::{
+    collections::BTreeMap,
     io,
     path::Path,
     sync::{
@@ -51,22 +53,28 @@ pub(super) fn http_client() -> io::Result<reqwest::Client> {
         .map_err(|_| io::Error::other("pack HTTP client could not initialize"))
 }
 
-/// Tries an exact verified cache hit, then CDN; a failed CDN leaves in-band fallback available.
+/// The result of caller-owned cache/CDN acquisition, before protocol admission.
+pub(super) struct Preload {
+    pub(super) archive: Option<Vec<u8>>,
+    pub(super) cache_hit: bool,
+}
+
+/// Tries an exact verified cache hit, then CDN; failure retains in-band fallback.
 pub(super) async fn preload(
-    mut download: Download,
+    offer: &PackInfoData,
     cache: Option<Arc<ArchiveCache>>,
     client: Option<reqwest::Client>,
     cancelled: Arc<AtomicBool>,
-) -> Download {
-    let id = download.offer.pack_id_version.pack_uuid;
-    let version = download
-        .offer
+) -> Preload {
+    let id = offer.pack_id_version.pack_uuid;
+    let version = offer
         .pack_id_version
         .pack_version
         .version
         .to_string_lossy()
         .into_owned();
-    let key = ArchiveCacheKey::new(id, &version, download.size).ok();
+    let size = offer.pack_size.0;
+    let key = ArchiveCacheKey::new(id, &version, size).ok();
     if let (Some(cache), Some(key)) = (&cache, &key) {
         let (cache, key, cancelled) = (Arc::clone(cache), key.clone(), Arc::clone(&cancelled));
         match tokio::task::spawn_blocking(move || {
@@ -75,20 +83,20 @@ pub(super) async fn preload(
         .await
         {
             Ok(Ok(Some(bytes))) => {
-                download.complete = Some(Completion::Archive(Arc::new(bytes)));
-                download.cache_hit = true;
-                return download;
+                return Preload {
+                    archive: Some(bytes),
+                    cache_hit: true,
+                };
             }
             Ok(Ok(None)) => {}
             _ => tracing::warn!(%id, "native pack cache read failed; downloading again"),
         }
     }
-    if !download.offer.cdn_url.is_empty()
+    if !offer.cdn_url.is_empty()
         && let Some(client) = client
     {
         let result = async {
-            let url = download
-                .offer
+            let url = offer
                 .cdn_url
                 .to_str()
                 .map_err(|_| invalid("invalid pack CDN URL"))?;
@@ -110,7 +118,7 @@ pub(super) async fn preload(
             }
             if response
                 .content_length()
-                .is_some_and(|length| length > download.size)
+                .is_some_and(|length| length > size)
             {
                 return Err(invalid("pack CDN length exceeds advertised size"));
             }
@@ -120,7 +128,7 @@ pub(super) async fn preload(
                 .await
                 .map_err(|_| invalid("pack CDN body failed"))?
             {
-                if bytes.len() as u64 + chunk.len() as u64 > download.size {
+                if bytes.len() as u64 + chunk.len() as u64 > size {
                     return Err(invalid("pack CDN body exceeds advertised size"));
                 }
                 bytes
@@ -128,35 +136,43 @@ pub(super) async fn preload(
                     .map_err(|_| invalid("pack CDN allocation failed"))?;
                 bytes.extend_from_slice(&chunk);
             }
-            let bytes = Arc::new(bytes);
-            verify(Arc::clone(&bytes), id, version).await?;
-            Ok(bytes)
+            verify(bytes, id, version).await
         }
         .await;
         match result {
-            Ok(bytes) => download.complete = Some(Completion::Archive(bytes)),
+            Ok(bytes) => {
+                return Preload {
+                    archive: Some(bytes),
+                    cache_hit: false,
+                };
+            }
             Err(_) => {
                 tracing::warn!(%id, "native pack CDN acquisition failed; requesting game chunks")
             }
         }
     }
-    download
+    Preload {
+        archive: None,
+        cache_hit: false,
+    }
 }
 
-/// Checks archive structure and manifest identity on a blocking worker.
-async fn verify(bytes: Arc<Vec<u8>>, id: uuid::Uuid, version: String) -> io::Result<()> {
+/// Moves original bytes through off-thread ZIP/manifest identity validation without copying.
+async fn verify(bytes: Vec<u8>, id: uuid::Uuid, version: String) -> io::Result<Vec<u8>> {
     tokio::task::spawn_blocking(move || {
         resource_pack::verify_archive_identity(&bytes, id, &version)
+            .map_err(|_| invalid("pack archive or manifest identity is invalid"))?;
+        Ok(bytes)
     })
     .await
     .map_err(|_| invalid("pack validation worker failed"))?
-    .map_err(|_| invalid("pack archive or manifest identity is invalid"))
 }
 
 /// Joins bounded cache writes before releasing the application's original archive bytes.
 pub(super) struct Stores {
     jobs: JoinSet<()>,
     slot: Arc<Semaphore>,
+    pending: BTreeMap<uuid::Uuid, (ArchiveCacheKey, u64)>,
 }
 
 impl Stores {
@@ -165,54 +181,60 @@ impl Stores {
         Self {
             jobs: JoinSet::new(),
             slot: Arc::new(Semaphore::new(1)),
+            pending: BTreeMap::new(),
         }
     }
 
-    /// Queues a best-effort write without copying or delaying the completion response.
-    pub(super) fn queue(
+    /// Registers one admitted non-cache-hit offer for a future best-effort write.
+    pub(super) fn register(&mut self, offer: &PackInfoData) {
+        let id = offer.pack_id_version.pack_uuid;
+        if let Ok(key) = ArchiveCacheKey::new(
+            id,
+            &offer.pack_id_version.pack_version.version.to_string_lossy(),
+            offer.pack_size.0,
+        ) {
+            self.pending.insert(id, (key, offer.pack_size.0));
+        }
+    }
+
+    /// Queues each completed original archive once, without copying or delaying responses.
+    pub(super) fn queue_completed(
         &mut self,
         cache: &Option<Arc<ArchiveCache>>,
-        download: &Download,
+        negotiation: &PackNegotiation,
         cancelled: &Arc<AtomicBool>,
     ) {
-        if download.cache_hit {
-            return;
-        }
-        let (Some(cache), Some(Completion::Archive(bytes))) = (cache, &download.complete) else {
+        let Some(cache) = cache else {
             return;
         };
-        let Ok(key) = ArchiveCacheKey::new(
-            download.offer.pack_id_version.pack_uuid,
-            &download
-                .offer
-                .pack_id_version
-                .pack_version
-                .version
-                .to_string_lossy(),
-            download.offer.pack_size.0,
-        ) else {
-            return;
-        };
-        if bytes.len() as u64 != download.offer.pack_size.0 {
-            return;
-        }
-        let (cache, bytes, cancelled, slot) = (
-            Arc::clone(cache),
-            Arc::clone(bytes),
-            Arc::clone(cancelled),
-            Arc::clone(&self.slot),
-        );
-        self.jobs.spawn(async move {
-            let Ok(_permit) = slot.acquire_owned().await else {
-                return;
-            };
-            if !matches!(
-                tokio::task::spawn_blocking(move || cache.store(&key, &bytes, &cancelled)).await,
-                Ok(Ok(()))
-            ) {
-                tracing::warn!("native pack cache write failed");
+        let ready = self
+            .pending
+            .keys()
+            .filter_map(|id| negotiation.completed_archive(*id).map(|bytes| (*id, bytes)))
+            .collect::<Vec<_>>();
+        for (id, bytes) in ready {
+            let (key, size) = self.pending.remove(&id).expect("registered cache identity");
+            if bytes.len() as u64 != size {
+                continue;
             }
-        });
+            let (cache, cancelled, slot) = (
+                Arc::clone(cache),
+                Arc::clone(cancelled),
+                Arc::clone(&self.slot),
+            );
+            self.jobs.spawn(async move {
+                let Ok(_permit) = slot.acquire_owned().await else {
+                    return;
+                };
+                if !matches!(
+                    tokio::task::spawn_blocking(move || cache.store(&key, &bytes, &cancelled))
+                        .await,
+                    Ok(Ok(()))
+                ) {
+                    tracing::warn!("native pack cache write failed");
+                }
+            });
+        }
     }
 
     /// Waits until all workers have dropped their shared archive references.

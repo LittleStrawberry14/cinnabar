@@ -1,9 +1,9 @@
 //! Copies a user pack directory into a bounded in-memory archive for ordinary validation.
 
 use crate::{
-    AdmissionError, LibraryError, MAX_ARCHIVE_BYTES, MAX_DECLARED_BYTES_PER_PACK,
-    MAX_ENTRIES_PER_PACK, MAX_FILE_BYTES,
+    AdmissionError, LibraryError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK, MAX_FILE_BYTES,
 };
+use bedrock_packs::MAX_ARCHIVE_BYTES;
 use std::{
     fs,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},

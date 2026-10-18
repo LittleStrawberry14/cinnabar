@@ -1,12 +1,11 @@
+use bedrock_packs::{MAX_PACKS, ResourcePackArchive, ResourcePackHandoff};
 use std::io::{Cursor, Write};
 
-use crate::{ResourcePackArchive, ResourcePackHandoff};
 use uuid::Uuid;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use super::{
-    AdmissionError, LayeredPackView, MAX_PACKS, PackRejection, validate_handoff,
-    validate_handoff_for_device,
+    AdmissionError, LayeredPackView, PackRejection, validate_handoff, validate_handoff_for_device,
 };
 
 const PACK_ID: Uuid = Uuid::from_u128(0x11111111_2222_3333_4444_555555555555);

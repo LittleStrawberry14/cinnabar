@@ -403,7 +403,7 @@ fn literal_bone_transform(
 ) -> Option<ItemDisplayTransform> {
     let source = animation_sources.get(identifier)?;
     let bytes = payloads.get(*source)?;
-    let document: Value = pack_json::parse_jsonc(bytes).ok()?;
+    let document: Value = bedrock_packs::jsonc::parse_jsonc(bytes).ok()?;
     let bones = document
         .get("animations")?
         .get(identifier)?
@@ -465,7 +465,7 @@ fn literal_clip_bones(
     slot: Option<&str>,
 ) -> Option<Box<[AttachablePoseBone]>> {
     let source = animation_sources.get(identifier)?;
-    let document: Value = pack_json::parse_jsonc(payloads.get(*source)?).ok()?;
+    let document: Value = bedrock_packs::jsonc::parse_jsonc(payloads.get(*source)?).ok()?;
     let bones = document
         .get("animations")?
         .get(identifier)?

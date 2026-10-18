@@ -9,9 +9,14 @@ still uses signed-out identity; directed NetherNet LAN is available without acco
 signaling. The Go backend remains the default.
 
 Native resource-pack acquisition tries the bounded persistent archive cache and
-CDN before requesting missing data in-band. The resource-pack crate owns archive
-handoffs independently of protocol, and existing Rust presentation, spawn and play
-owners consume them directly.
+CDN before requesting missing data in-band. The external bedrock-client crate
+owns generated-packet negotiation and bounded transfer state; bedrock-packs owns
+JSONC, archive handoffs and shared compressed-byte limits. Cinnabar retains cache
+and HTTP I/O, selected install paths and presentation/admission. Go, web and native
+handoffs use the same external types directly. The generated codec is one pinned
+protocolgen Git dependency; its target fingerprint and ownership gates remain.
+This extraction is pending executable validation. Full Login, connection and
+spawn ownership remains to be moved into the reusable client library.
 
 Opt-in native Microsoft device-code sign-in and saved-account validation use the
 existing menu presenter and account mutation worker. Interactive attempts release

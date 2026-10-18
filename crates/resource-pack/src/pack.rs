@@ -1,5 +1,6 @@
 //! Admitted packs and the server-ordered stack they form.
 
+use bedrock_packs::{MAX_PACKS, MAX_STACK_ARCHIVE_BYTES};
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
@@ -9,7 +10,7 @@ use std::{
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive};
 
-use pack_json::normalize_jsonc;
+use bedrock_packs::jsonc::normalize_jsonc;
 
 use crate::{AdmissionError, MAX_FILE_BYTES, crypto::ContentKey};
 
@@ -249,9 +250,7 @@ impl std::fmt::Debug for ValidatedPackStack {
 impl ValidatedPackStack {
     /// Combines optional layers in increasing precedence, sharing archive bytes.
     pub fn compose(lower: &Self, higher: &Self) -> Result<Self, AdmissionError> {
-        use crate::{
-            MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK, MAX_PACKS, MAX_STACK_ARCHIVE_BYTES,
-        };
+        use crate::{MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK};
         let layers = lower.packs.iter().chain(higher.packs.iter());
         if layers.clone().count() > MAX_PACKS {
             return Err(AdmissionError::TooManyPacks);

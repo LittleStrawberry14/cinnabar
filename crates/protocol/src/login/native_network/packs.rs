@@ -1,147 +1,99 @@
-//! Bounded native CDN/chunk acquisition and persistent original archive caching.
+//! Runtime-only acquisition around the reusable caller-driven pack negotiation.
 
 mod acquisition;
-mod builtins;
-mod transfer;
 
 use super::{Connection, disconnected, failure};
 use crate::ProtocolError;
-use bedrock_protocol_1_26_51::{packets, types::ResourcePackClientResponseData};
+use bedrock_client::packs::{PackError, PackEvent, PackNegotiation, PackTransferLimits};
+use bedrock_packs::ResourcePackHandoff;
+use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
-use resource_pack::ResourcePackHandoff;
-use std::{collections::BTreeMap, io, path::Path, sync::Arc};
+use std::{io, path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
-/// Tries cache and CDN before requesting missing archives over the game connection.
-/// The same connection and FIFO survive every response and final stack transition.
+/// Tries cache and CDN before requesting missing archives on the retained game connection.
 pub(super) async fn acquire(
     connection: &mut Connection,
     offer: packets::ResourcePacksInfo,
     cache_root: Option<&Path>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
-    let (downloads, mut budget) = transfer::Budget::offers(offer.resource_packs);
-    let cache = if downloads.is_empty() {
+    let mut negotiation =
+        PackNegotiation::new(offer, PackTransferLimits::default()).map_err(pack_failure)?;
+    let offers = negotiation.offers().cloned().collect::<Vec<_>>();
+    let cache = if offers.is_empty() {
         None
     } else {
         acquisition::open_cache(cache_root).await
     };
-    let client = if downloads
-        .iter()
-        .any(|download| !download.offer.cdn_url.is_empty())
-    {
+    let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
         acquisition::http_client().ok()
     } else {
         None
     };
-    let mut preloads = stream::iter(downloads.into_iter().enumerate().map(|(index, download)| {
-        let preload = acquisition::preload(
-            download,
-            cache.clone(),
-            client.clone(),
-            Arc::clone(&cancelled.0),
-        );
-        async move { (index, preload.await) }
+    let mut preloads = stream::iter(offers.into_iter().enumerate().map(|(index, offer)| {
+        let (cache, client, cancelled) = (cache.clone(), client.clone(), Arc::clone(&cancelled.0));
+        async move {
+            let result = acquisition::preload(&offer, cache, client, cancelled).await;
+            (index, offer, result)
+        }
     }))
     .buffer_unordered(MAX_CDN_DOWNLOADS)
     .collect::<Vec<_>>()
     .await;
-    preloads.sort_unstable_by_key(|(index, _)| *index);
-    let mut downloads = BTreeMap::new();
-    let mut requested = Vec::new();
+    preloads.sort_unstable_by_key(|(index, _, _)| *index);
     let mut stores = acquisition::Stores::new();
-    for (_, download) in preloads {
-        if download.complete.is_some() {
-            stores.queue(&cache, &download, &cancelled.0);
-        } else {
-            requested.push(download.name.clone());
+    for (_, offer, preload) in preloads {
+        if cache.is_some() && !preload.cache_hit {
+            stores.register(&offer);
         }
-        downloads.insert(download.offer.pack_id_version.pack_uuid, download);
+        if let Some(bytes) = preload.archive {
+            negotiation
+                .supply_preloaded(offer.pack_id_version.pack_uuid, bytes)
+                .map_err(pack_failure)?;
+        }
     }
-    let response = if requested.is_empty() {
-        finished()
-    } else {
-        ResourcePackClientResponseData::Downloading {
-            response_type: "downloading".into(),
-            downloading_packs: requested,
-        }
-    };
+    stores.queue_completed(&cache, &negotiation, &cancelled.0);
     connection
-        .send(packets::ResourcePackClientResponse { response })
+        .send(negotiation.start().map_err(pack_failure)?)
         .await?;
     loop {
         let packet = connection.next_packet().await.map_err(failure)?;
-        match *packet.data {
-            packets::Packet::ResourcePackDataInfo(info) => {
-                let id = pack_id(
-                    info.resource_name
-                        .to_str()
-                        .map_err(|_| invalid("pack identity is not UTF-8"))?,
-                )?;
-                let download = downloads
-                    .get_mut(&id)
-                    .ok_or_else(|| invalid("pack data info was not advertised"))?;
-                send_requests(connection, budget.begin(download, info)?).await?;
+        if matches!(&*packet.data, packets::Packet::ResourcePackStack(_)) {
+            // The library transfers exclusive archive ownership at the stack boundary.
+            stores.finish().await;
+        }
+        match negotiation.receive(*packet.data).map_err(pack_failure)? {
+            PackEvent::Send(packets) => {
+                stores.queue_completed(&cache, &negotiation, &cancelled.0);
+                send_packets(connection, packets).await?;
             }
-            packets::Packet::ResourcePackChunkData(chunk) => {
-                let id = pack_id(
-                    chunk
-                        .resource_name
-                        .to_str()
-                        .map_err(|_| invalid("pack identity is not UTF-8"))?,
-                )?;
-                let download = downloads
-                    .get_mut(&id)
-                    .ok_or_else(|| invalid("chunk pack was not advertised"))?;
-                let complete_before = download.complete.is_some();
-                send_requests(connection, download.chunk(chunk)?).await?;
-                if !complete_before && download.complete.is_some() {
-                    stores.queue(&cache, download, &cancelled.0);
-                    if downloads
-                        .values()
-                        .all(|download| download.complete.is_some())
-                    {
-                        connection
-                            .send(packets::ResourcePackClientResponse {
-                                response: finished(),
-                            })
-                            .await?;
-                    }
-                }
-            }
-            packets::Packet::ResourcePackStack(stack) => {
-                // Cache workers release their shared bytes before the application takes ownership.
-                stores.finish().await;
-                let handoff = transfer::finish(downloads, stack, offer.resource_pack_required)?;
-                connection
-                    .send(packets::ResourcePackClientResponse {
-                        response: ResourcePackClientResponseData::ResourcePackStackFinished {
-                            response_type: "resourcepackstackfinished".into(),
-                        },
-                    })
-                    .await?;
+            PackEvent::Finished { response, handoff } => {
+                connection.send(response).await?;
                 return Ok(handoff);
             }
-            packets::Packet::PlayStatus(status)
-                if status.status
-                    == bedrock_protocol_1_26_51::enums::PlayStatusType::Loginsuccess => {}
-            packets::Packet::Disconnect(packet) => return Err(disconnected(packet)),
-            other => {
-                if let Some(error) = connection.negotiation_failure(other) {
-                    return Err(error);
+            PackEvent::Unhandled(packet) => match *packet {
+                packets::Packet::PlayStatus(status)
+                    if status.status
+                        == bedrock_protocol_1_26_51::enums::PlayStatusType::Loginsuccess => {}
+                packets::Packet::Disconnect(packet) => return Err(disconnected(packet)),
+                other => {
+                    if let Some(error) = connection.negotiation_failure(other) {
+                        return Err(error);
+                    }
                 }
-            }
+            },
         }
     }
 }
 
-/// Coalesces each request window into immediate batches under the shared packet-count limit.
-async fn send_requests(
+/// Sends each generated response immediately under the existing batch packet limit.
+async fn send_packets(
     connection: &mut Connection,
-    requests: Vec<packets::ResourcePackChunkRequest>,
+    packets: Vec<packets::Packet>,
 ) -> Result<(), ProtocolError> {
-    let packets = requests
+    let packets = packets
         .into_iter()
         .map(crate::Packet::new)
         .collect::<Vec<_>>();
@@ -151,22 +103,9 @@ async fn send_requests(
     Ok(())
 }
 
-/// Produces the completion response for both an all-cached offer and the final chunk.
-fn finished() -> ResourcePackClientResponseData {
-    ResourcePackClientResponseData::DownloadingFinished {
-        response_type: "downloadingfinished".into(),
-    }
-}
-
-/// Accepts UUID or UUID_version resource names without treating server text as a path.
-fn pack_id(name: &str) -> Result<uuid::Uuid, ProtocolError> {
-    uuid::Uuid::parse_str(name.split('_').next().unwrap_or(name))
-        .map_err(|_| invalid("pack identity is not a UUID"))
-}
-
-/// Reports malformed pack framing without including keys, URLs or archive contents.
-fn invalid(message: &'static str) -> ProtocolError {
-    failure(io::Error::new(io::ErrorKind::InvalidData, message))
+/// Retains the existing native transport failure classification without exposing server data.
+fn pack_failure(error: PackError) -> ProtocolError {
+    failure(io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 #[cfg(test)]

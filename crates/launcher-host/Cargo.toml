@@ -17,6 +17,7 @@ test-support = []
 native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "protocol/native-networking"]
 
 [dependencies]
+bedrock-packs.workspace = true
 cosmetics = { path = "../cosmetics" }
 anyhow.workspace = true
 bridge = { path = "../bridge" }

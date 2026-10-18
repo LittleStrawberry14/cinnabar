@@ -15,7 +15,7 @@ pub fn layered_pack_view(layers: &[&[(String, Vec<u8>)]]) -> crate::LayeredPackV
         .rev()
         .map(|(index, files)| {
             let id = format!("00000000-0000-0000-0000-{:012x}", index + 17);
-            crate::ResourcePackArchive::unencrypted(
+            bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
                 String::new(),
@@ -24,7 +24,7 @@ pub fn layered_pack_view(layers: &[&[(String, Vec<u8>)]]) -> crate::LayeredPackV
         })
         .collect();
     crate::LayeredPackView::new(crate::validate_handoff(
-        crate::ResourcePackHandoff::from_archives(archives),
+        bedrock_packs::ResourcePackHandoff::from_archives(archives),
     ))
 }
 

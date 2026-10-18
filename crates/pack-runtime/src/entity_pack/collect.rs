@@ -129,7 +129,7 @@ pub fn collect_files(
     );
     let mut references = References::default();
     for (_, bytes) in entities.iter().chain(&attachables) {
-        if let Ok(actor) = pack_json::parse_jsonc::<Value>(bytes) {
+        if let Ok(actor) = bedrock_packs::jsonc::parse_jsonc::<Value>(bytes) {
             references.read(&actor);
         }
     }

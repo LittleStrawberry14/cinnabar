@@ -382,6 +382,8 @@ jobs:
           go -C tools/registrygen test ./... -count=1
           unset GOFLAGS
           go -C tools/registrygen vet ./...
+      - name: Fetch pinned Rust sources for protocol ID contracts
+        run: cargo fetch --locked
       - name: Test protocol packet fixtures and ID contracts
         env:
           GOFLAGS: ${{ env.RACE_TEST_FLAGS }}

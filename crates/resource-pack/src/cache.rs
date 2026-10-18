@@ -38,9 +38,9 @@ impl ArchiveCacheKey {
     pub fn new(id: Uuid, version: &str, size: u64) -> io::Result<Self> {
         if id.is_nil()
             || version.is_empty()
-            || version.len() > crate::MAX_PACK_VERSION_BYTES
+            || version.len() > bedrock_packs::MAX_PACK_VERSION_BYTES
             || size == 0
-            || size > crate::MAX_ARCHIVE_BYTES as u64
+            || size > bedrock_packs::MAX_ARCHIVE_BYTES as u64
         {
             return Err(invalid("invalid archive cache identity"));
         }

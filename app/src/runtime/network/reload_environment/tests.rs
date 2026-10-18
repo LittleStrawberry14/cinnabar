@@ -21,10 +21,10 @@ pub(super) fn stack(layers: &[&[(&str, &[u8])]]) -> LayeredPackView {
             writer.start_file(path, SimpleFileOptions::default()).unwrap();
             writer.write_all(bytes).unwrap();
         }
-        resource_pack::ResourcePackArchive::unencrypted(id, "1.0.0".into(), String::new(), writer.finish().unwrap().into_inner())
+        bedrock_packs::ResourcePackArchive::unencrypted(id, "1.0.0".into(), String::new(), writer.finish().unwrap().into_inner())
     }).collect();
     LayeredPackView::new(resource_pack::validate_handoff(
-        resource_pack::ResourcePackHandoff::from_archives(archives),
+        bedrock_packs::ResourcePackHandoff::from_archives(archives),
     ))
 }
 
@@ -379,9 +379,9 @@ fn supplied_skybox_pack_fixture_survives_archive_admission_and_reload() {
         .join(".");
     drop(zip);
     let archive =
-        resource_pack::ResourcePackArchive::unencrypted(id, version, String::new(), bytes);
+        bedrock_packs::ResourcePackArchive::unencrypted(id, version, String::new(), bytes);
     let view = LayeredPackView::new(resource_pack::validate_handoff(
-        resource_pack::ResourcePackHandoff::from_archives(vec![archive]),
+        bedrock_packs::ResourcePackHandoff::from_archives(vec![archive]),
     ));
     let prepared = prepare_atmosphere(&view, &atmosphere_base());
     let cube = prepared

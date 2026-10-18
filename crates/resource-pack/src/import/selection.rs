@@ -1,6 +1,7 @@
 //! Lenient parsing of an explicitly selected global resource pack list.
 
-use crate::{MAX_PACKS, manifest::Version};
+use crate::manifest::Version;
+use bedrock_packs::MAX_PACKS;
 use uuid::Uuid;
 
 /// An active pack reference, in highest-priority-first file order.

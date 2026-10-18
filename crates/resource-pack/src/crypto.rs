@@ -7,7 +7,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
-use pack_json::normalize_jsonc;
+use bedrock_packs::jsonc::normalize_jsonc;
 
 use crate::{AdmissionError, MAX_ENTRIES_PER_PACK, MAX_PATH_BYTES};
 

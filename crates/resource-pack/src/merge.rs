@@ -4,7 +4,7 @@
 
 use serde_json::{Map, Value};
 
-use pack_json::normalize_jsonc;
+use bedrock_packs::jsonc::normalize_jsonc;
 
 use crate::LayeredPackView;
 

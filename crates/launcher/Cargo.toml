@@ -20,6 +20,7 @@ reads = [
 test-support = []
 
 [dependencies]
+bedrock-packs.workspace = true
 cosmetics = { path = "../cosmetics" }
 bridge = { path = "../bridge" }
 json-ui = { path = "../json-ui" }

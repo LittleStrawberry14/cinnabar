@@ -1,6 +1,6 @@
 //! Receives web archive delivery at the same handoff boundary as native sessions.
 
-use resource_pack::ResourcePackHandoff;
+use bedrock_packs::ResourcePackHandoff;
 use std::{
     collections::VecDeque,
     future::Future,

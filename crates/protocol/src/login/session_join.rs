@@ -1,7 +1,7 @@
 //! Joins through the core's session endpoint: the core makes the only login and acquires the packs,
 //! and this client continues from StartGame with its own spawn sequence.
 
-use resource_pack::{ResourcePackArchive, ResourcePackHandoff};
+use bedrock_packs::{ResourcePackArchive, ResourcePackHandoff};
 use std::path::Path;
 use std::sync::Arc;
 

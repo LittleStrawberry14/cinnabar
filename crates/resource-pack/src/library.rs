@@ -1,9 +1,9 @@
 //! Installed global packs and an editable, highest-priority-first selection.
 
 use crate::{
-    AdmissionError, MAX_ARCHIVE_BYTES, MAX_PACKS, ValidatedPackStack,
-    parser::validate_archive_parts, subpacks as tiers,
+    AdmissionError, ValidatedPackStack, parser::validate_archive_parts, subpacks as tiers,
 };
+use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
