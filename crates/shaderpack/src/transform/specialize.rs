@@ -14,6 +14,9 @@ struct Template {
     name: String,
     toks: Vec<Tok>,
     params: Vec<Param>,
+    /// Index of the first non-template item after the template: its instances go there,
+    /// after the globals and helpers it may use.
+    anchor: usize,
 }
 
 /// An instantiated source overload and the global resource bound to each opaque parameter.
@@ -38,7 +41,7 @@ pub(super) fn specialize_opaque_params(
         })
         .flatten()
         .collect();
-    let mut templates = Vec::new();
+    let mut templates: Vec<Template> = Vec::new();
     let mut output = Vec::new();
     for item in items {
         if let Item::Func { name, toks } = &item
@@ -49,6 +52,7 @@ pub(super) fn specialize_opaque_params(
                 name: name.clone(),
                 toks: toks.clone(),
                 params,
+                anchor: output.len(),
             });
         } else if let Item::Other(toks) = &item
             && func_params(toks).is_some_and(|(_, params)| params.iter().any(|p| p.opaque))
@@ -58,6 +62,8 @@ pub(super) fn specialize_opaque_params(
             output.push(item);
         }
     }
+    // Source anchor of every output item, nondecreasing: instances are inserted in order.
+    let mut origin: Vec<usize> = (0..output.len()).collect();
     let mut created = HashSet::new();
     let mut pending = Vec::new();
     for _ in 0..MAX_ROUNDS {
@@ -74,19 +80,34 @@ pub(super) fn specialize_opaque_params(
         if pending.is_empty() {
             return Ok(output);
         }
-        // Put each instantiated function before its callers; a later round handles its helpers.
-        let mut definitions = Vec::new();
+        // Each instance takes its template's place, or the place of its first caller when
+        // that comes earlier (a caller instance, or a caller after a forward declaration).
         for instance in pending.drain(..) {
             let template = &templates[instance.template];
-            definitions.push(instantiate(template, &instance, types)?);
+            let name = instance_name(&template.name, &instance.resources);
+            let own = origin.partition_point(|o| *o < template.anchor);
+            let at = output[..own]
+                .iter()
+                .position(|item| calls(item, &name))
+                .unwrap_or(own);
+            let anchor = origin.get(at).copied().unwrap_or(template.anchor);
+            output.insert(at, instantiate(template, &instance, types)?);
+            origin.insert(at, anchor.min(template.anchor));
         }
-        definitions.append(&mut output);
-        output = definitions;
     }
     Err(TransformError::new(
         "opaque helper nesting exceeds the translation limit",
         0,
     ))
+}
+
+/// Whether `item` calls the function `name`.
+fn calls(item: &Item, name: &str) -> bool {
+    let toks = match item {
+        Item::Func { toks, .. } | Item::Decl(_, toks) | Item::Other(toks) => toks,
+    };
+    toks.windows(2)
+        .any(|pair| pair[0].ident() == Some(name) && pair[1].is("("))
 }
 
 /// Rewrites calls using exact opaque argument types, retaining all matching value overloads.

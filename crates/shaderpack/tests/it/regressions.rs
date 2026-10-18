@@ -477,3 +477,36 @@ fn truncated_call_and_declaration_prefixes_never_abort_sibling_programs() {
         }
     }
 }
+
+#[test]
+fn specialized_helpers_follow_the_functions_and_globals_they_use() {
+    // BSL's ambient occlusion: a helper taking a depth sampler calls `GetLinearDepth`,
+    // defined earlier in the stage, and reads a private global.
+    success(
+        VERTEX,
+        "#version 330
+        uniform sampler2D depthtex0;
+        float gain = 2.0;
+        float linearDepth(float depth) { return depth * gain; }
+        float sampleDepth(sampler2D depthtex, vec2 uv) { return linearDepth(texture(depthtex, uv).r); }
+        float outer(sampler2D depthtex);
+        out vec4 color;
+        void main() { color = vec4(outer(depthtex0)); }
+        float outer(sampler2D depthtex) { return sampleDepth(depthtex, vec2(0.5)); }",
+    );
+}
+
+#[test]
+fn forward_declared_specialized_helpers_keep_their_definition_position() {
+    // Solas's raytracer: a helper declared early is defined after `scaled`, which it calls.
+    success(
+        VERTEX,
+        "#version 330
+        uniform sampler2D depthtex0;
+        float tapDepth(sampler2D depthtex);
+        float scaled(float depth) { return depth * 0.5; }
+        float tapDepth(sampler2D depthtex) { return scaled(texture(depthtex, vec2(0.5)).r); }
+        out vec4 color;
+        void main() { color = vec4(tapDepth(depthtex0)); }",
+    );
+}
