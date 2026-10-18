@@ -14,7 +14,7 @@ reads = [
 
 [features]
 test-support = []
-native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "protocol/native-networking"]
+native-networking = ["dep:bedrock-services", "dep:p384", "dep:rand", "dep:uuid", "dep:md-5", "dep:zeroize", "protocol/native-networking"]
 
 [dependencies]
 bedrock-packs.workspace = true
@@ -47,11 +47,12 @@ url = "2"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "7f8b480fb7f4b66c42358409da19ad520b20b47a", optional = true }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "53db3ea9aafd842182b9bde74acbe1d2dc4bbfe3", features = ["rta-tokio"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }
 md-5 = { version = "0.10", optional = true }
+zeroize = { version = "1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
