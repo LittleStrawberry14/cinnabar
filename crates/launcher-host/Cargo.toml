@@ -57,6 +57,9 @@ md-5 = { version = "0.10", optional = true }
 zeroize = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bedrock-services = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 rustix = { version = "1", default-features = false, features = ["fs", "process", "std", "stdio"] }

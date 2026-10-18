@@ -735,3 +735,6 @@ impl HostDirectory {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
