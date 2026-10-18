@@ -15,6 +15,12 @@ use std::{io, path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Reports real HTTP attempts only within one fixture-owned native join future.
+    pub(super) static HTTP_ATTEMPTS: tokio::sync::mpsc::Sender<uuid::Uuid>;
+}
+
 /// The desktop's guarded local cache/CDN edge, or gateway transfer on the existing game socket only.
 #[derive(Clone, Copy)]
 pub(super) enum Acquisition<'a> {
