@@ -82,6 +82,61 @@ func TestCanceledQueuedAttachReleasesCapacity(t *testing.T) {
 	}
 }
 
+// TestProcessClosedWaitsForPeerCancellation checks the earliest real retirement prerequisite.
+func TestProcessClosedWaitsForPeerCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	l, parent, control, bootstrap := retirementBridge(t, ctx)
+	peer, c := retirementPeer(t, l, parent, control, bootstrap, 1)
+	defer peer.Close()
+	type acknowledgment struct {
+		kind hostcontract.Kind
+		body []byte
+		err  error
+	}
+	read := make(chan acknowledgment, 1)
+	go func() { kind, body, err := control.read(); read <- acknowledgment{kind, body, err} }()
+
+	// The actual registry lock holds retirement, while context cancellation must stay independent.
+	l.mu.Lock()
+	writeErr := control.write(hostcontract.KindClose, nil)
+	var ack acknowledgment
+	var received, beforeCancellation, expired bool
+	if writeErr == nil {
+		select {
+		case ack = <-read:
+			received, beforeCancellation = true, true
+		case <-c.ctx.Done():
+		case <-ctx.Done():
+			expired = true
+		}
+	}
+	l.mu.Unlock()
+	if writeErr == nil && !received && !expired {
+		select {
+		case ack = <-read:
+			received = true
+		case <-ctx.Done():
+			expired = true
+		}
+	}
+
+	// Join actual workers on every branch before evaluating acknowledgment ordering.
+	_ = c.Close()
+	_ = peer.Close()
+	_ = control.Close()
+	_ = l.Close()
+	if !received {
+		ack = <-read
+	}
+	if writeErr != nil || expired || ack.err != nil || ack.kind != hostcontract.KindClosed || len(ack.body) != 0 {
+		t.Fatal("actual process close did not complete")
+	}
+	if beforeCancellation {
+		t.Fatal("process Closed acknowledged before its actual peer context was canceled")
+	}
+}
+
 // retirementBridge captures actual Config resources without starting Dragonfly's Accept loop.
 func retirementBridge(t *testing.T, ctx context.Context) (*Listener, net.Listener, *wire, hostcontract.Bootstrap) {
 	t.Helper()
