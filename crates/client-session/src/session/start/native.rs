@@ -35,6 +35,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
     let (mut handle, channels) = network_channels(config.session_generation);
     let failure = channels.control_event_tx.clone();
     let shutdown = handle.shutdown.clone();
+    let terminal = Arc::clone(&channels.terminal);
     handle.thread = Some(
         thread::Builder::new()
             .name("bedrock-network".to_owned())
@@ -134,7 +135,8 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                         executor,
                         observation,
                     );
-                    let result = run_with_companion(work, &mut companion, &shutdown).await;
+                    let result =
+                        run_with_companion(work, &mut companion, &shutdown, &terminal).await;
                     if let Err(error) = result {
                         let event = NetworkControlEvent::Failed {
                             message: error.to_string(),

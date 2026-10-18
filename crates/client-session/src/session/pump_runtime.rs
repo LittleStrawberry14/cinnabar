@@ -7,6 +7,7 @@ struct NetworkPumpRuntime<F, W, E> {
     trace_line: F,
     write_trace: W,
     observation: SessionTrace,
+    terminal: Arc<TerminalOwner>,
 }
 
 #[cfg(test)]
@@ -25,6 +26,7 @@ pub(super) async fn run_network_pump<S: NetworkSession>(
         control_event_tx,
         world_event_tx,
         shutdown_rx,
+        Arc::default(),
         (Arc::default(), Arc::default()),
         SessionTrace::default(),
         execution::NativeNetworkExecutor::default(),
@@ -60,6 +62,7 @@ pub(super) async fn run_network_pump_with_trace<S, F, W>(
             trace_line,
             write_trace,
             observation: SessionTrace::default(),
+            terminal: Arc::default(),
             executor: execution::NativeNetworkExecutor::default(),
         },
     )
@@ -78,6 +81,7 @@ pub(super) async fn run_network_pump_with_readiness_ingress<
     control_event_tx: mpsc::Sender<NetworkControlEvent<P>>,
     world_event_tx: mpsc::Sender<WorldIngress>,
     shutdown_rx: watch::Receiver<bool>,
+    terminal: Arc<TerminalOwner>,
     gates: (
         Arc<ReadinessIngressCounter>,
         Arc<experience::ExperienceGate>,
@@ -99,6 +103,7 @@ pub(super) async fn run_network_pump_with_readiness_ingress<
             trace_line: observation.movement_line,
             write_trace: observation.write_movement,
             observation,
+            terminal,
             executor,
         },
     )
@@ -128,11 +133,15 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
             write_trace,
             observation,
             executor,
+            terminal,
         } = runtime;
         let timers = executor.timers();
         let outbound = match session.outbound() {
             Ok(outbound) => outbound,
             Err(error) => {
+                if !terminal.network() {
+                    return;
+                }
                 let _ = send_control_event_or_cancel(
                     &control_event_tx,
                     &mut shutdown_rx,
@@ -158,6 +167,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
             trace_line,
             write_trace,
             fast_transfer_action_marker: observation.fast_transfer_action_marker,
+            terminal: Arc::clone(&terminal),
         }));
         // Holds the command receiver after a write failure until the terminal event is queued.
         let mut _failed_commands = None;
@@ -186,6 +196,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
             last_blob_cache_stats = Some(stats);
         }
 
+        #[allow(clippy::too_many_arguments)] // Preserve distinct FIFO and termination owners.
         async fn end_pump_with_transfer<S: NetworkSession, P>(
             session: &S,
             pending: Option<WorldIngress>,
@@ -194,7 +205,11 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
             control_event_tx: &mpsc::Sender<NetworkControlEvent<P>>,
             shutdown_rx: &mut watch::Receiver<bool>,
             timers: bridge::tasks::Timers,
+            terminal: &TerminalOwner,
         ) {
+            if !terminal.network() {
+                return;
+            }
             if let Some(pending) = pending
                 && !send_event_or_cancel(world_event_tx, shutdown_rx, pending).await
             {
@@ -276,6 +291,9 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
                     trace_armed,
                     commands,
                 })) => {
+                    if !terminal.network() {
+                        return;
+                    }
                     _failed_commands = Some(commands);
                     if trace_armed {
                         session.cancel_packet_id_trace();
@@ -296,6 +314,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
                             &control_event_tx,
                             &mut shutdown_rx,
                             timers,
+                            &terminal,
                         )
                         .await;
                         return;
@@ -347,6 +366,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
                             &control_event_tx,
                             &mut shutdown_rx,
                             timers,
+                            &terminal,
                         )
                         .await;
                         return;
@@ -378,12 +398,16 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
                             &control_event_tx,
                             &mut shutdown_rx,
                             timers,
+                            &terminal,
                         )
                         .await;
                         return;
                     }
                 }
                 NetworkPumpWork::Inbound(WorldSideWork::Event(Err(error))) => {
+                    if !terminal.network() {
+                        return;
+                    }
                     if let Some(transfer) = session.take_server_transfer() {
                         end_pump_with_transfer(
                             &session,
@@ -393,6 +417,7 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
                             &control_event_tx,
                             &mut shutdown_rx,
                             timers,
+                            &terminal,
                         )
                         .await;
                         return;
@@ -421,6 +446,9 @@ async fn run_network_pump_with_readiness_ingress_and_trace<S, F, W, P, E>(
             }
         }
 
+        if !*shutdown_rx.borrow() && !terminal.network() {
+            return;
+        }
         send_final_blob_cache_telemetry(&session, &control_event_tx, timers).await;
         let _ = send_control_event_or_cancel(
             &control_event_tx,

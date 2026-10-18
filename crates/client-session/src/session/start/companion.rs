@@ -1,5 +1,6 @@
 //! Application-owned services polled beside the existing login/bootstrap/play future.
 
+use crate::session::TerminalOwner;
 use std::{
     future::{Future, poll_fn},
     io,
@@ -42,11 +43,13 @@ impl SessionCompanion for () {}
 #[cfg(test)]
 mod terminal_tests;
 
-/// Gives the network's accepted terminal priority, and keeps services alive while any queue blocks it.
+/// Keeps services alive through queue backpressure; a retained network terminal owns ordered publication.
+/// An alive stalled consumer may delay publication and cleanup until capacity or external cancellation.
 pub(super) async fn run_with_companion(
     work: impl Future<Output = ()>,
     companion: &mut impl SessionCompanion,
     shutdown: &watch::Sender<bool>,
+    terminal: &TerminalOwner,
 ) -> io::Result<()> {
     tokio::pin!(work);
     loop {
@@ -66,6 +69,12 @@ pub(super) async fn run_with_companion(
             None => return Ok(()),
             Some(Ok(())) => {}
             Some(Err(error)) => {
+                // An already retained network boundary owns publication even while its FIFO is full.
+                // The atomic claim also arbitrates errors observed by the separate outbound task.
+                if *shutdown.borrow() || !terminal.companion() {
+                    work.await;
+                    return Ok(());
+                }
                 shutdown.send_replace(true);
                 work.await;
                 return Err(error);
@@ -130,7 +139,13 @@ mod tests {
             output.send(2).await.unwrap();
         };
         let (shutdown, _) = watch::channel(false);
-        let mut running = Box::pin(run_with_companion(work, &mut companion, &shutdown));
+        let terminal = TerminalOwner::default();
+        let mut running = Box::pin(run_with_companion(
+            work,
+            &mut companion,
+            &shutdown,
+            &terminal,
+        ));
         for _ in 0..3 {
             assert!(
                 poll_fn(|cx| Poll::Ready(running.as_mut().poll(cx)))
@@ -162,9 +177,14 @@ mod tests {
             .await
             .unwrap();
         let (shutdown, _) = watch::channel(false);
-        run_with_companion(std::future::ready(()), &mut companion, &shutdown)
-            .await
-            .unwrap();
+        run_with_companion(
+            std::future::ready(()),
+            &mut companion,
+            &shutdown,
+            &TerminalOwner::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(started.load(Ordering::SeqCst), 0);
         assert!(!*shutdown.borrow());
     }
@@ -183,7 +203,7 @@ mod tests {
             terminal.send("network stopped").await.unwrap();
         };
         assert!(
-            run_with_companion(work, &mut companion, &shutdown)
+            run_with_companion(work, &mut companion, &shutdown, &TerminalOwner::default())
                 .await
                 .is_err()
         );

@@ -162,6 +162,7 @@ async fn startup_terminal(kind: u8, body: &[u8]) {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
     fill_controls(&channels.control_event_tx);
     let shutdown = handle.shutdown.clone();
+    let terminal = Arc::clone(&channels.terminal);
     let (fail, failed) = oneshot::channel();
     let order = Arc::new(Mutex::new(Vec::new()));
     let mut companion = FailedCompanion {
@@ -174,7 +175,7 @@ async fn startup_terminal(kind: u8, body: &[u8]) {
         SessionTrace::default(),
     );
     let worker = async {
-        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        let result = run_with_companion(work, &mut companion, &shutdown, &terminal).await;
         order.lock().unwrap().push("network finished");
         companion.close().await;
         result
@@ -234,6 +235,7 @@ async fn retained_startup_error_survives_companion_failure_with_full_controls() 
 async fn companion_only_failure_cancels_pending_network_before_cleanup() {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
     let shutdown = handle.shutdown.clone();
+    let terminal = Arc::clone(&channels.terminal);
     let (fail, failed) = oneshot::channel();
     let order = Arc::new(Mutex::new(Vec::new()));
     let mut companion = FailedCompanion {
@@ -246,7 +248,7 @@ async fn companion_only_failure_cancels_pending_network_before_cleanup() {
         SessionTrace::default(),
     );
     let worker = async {
-        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        let result = run_with_companion(work, &mut companion, &shutdown, &terminal).await;
         order.lock().unwrap().push("network finished");
         companion.close().await;
         result
@@ -321,6 +323,7 @@ async fn play_terminal(kind: u8, body: &[u8]) {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
     fill_controls(&channels.control_event_tx);
     let shutdown = handle.shutdown.clone();
+    let terminal = Arc::clone(&channels.terminal);
     let order = Arc::new(Mutex::new(Vec::new()));
     let boundary = DecodedBoundary {
         error: Some(error),
@@ -334,16 +337,20 @@ async fn play_terminal(kind: u8, body: &[u8]) {
         failed,
         order: Arc::clone(&order),
     };
-    let work = run_network_pump(
+    let work = run_network_pump_with_readiness_ingress(
         boundary,
         NetworkSequencer::new(SessionGeneration::new(1), 0, 42),
         channels.command_rx,
         channels.control_event_tx,
         channels.world_event_tx,
         channels.shutdown_rx,
+        Arc::clone(&terminal),
+        (channels.readiness_ingress, channels.experience_gate),
+        SessionTrace::default(),
+        execution::NativeNetworkExecutor::default(),
     );
     let worker = async {
-        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        let result = run_with_companion(work, &mut companion, &shutdown, &terminal).await;
         order.lock().unwrap().push("network finished");
         companion.close().await;
         result
@@ -396,6 +403,7 @@ async fn explicit_user_cancel_still_retires_a_retained_startup_transfer() {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
     fill_controls(&channels.control_event_tx);
     let shutdown = handle.shutdown.clone();
+    let terminal = Arc::clone(&channels.terminal);
     let (_fail, failed) = oneshot::channel();
     let order = Arc::new(Mutex::new(Vec::new()));
     let mut companion = FailedCompanion {
@@ -408,7 +416,7 @@ async fn explicit_user_cancel_still_retires_a_retained_startup_transfer() {
         SessionTrace::default(),
     );
     let worker = async {
-        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        let result = run_with_companion(work, &mut companion, &shutdown, &terminal).await;
         companion.close().await;
         result
     };

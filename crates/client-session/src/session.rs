@@ -961,6 +961,8 @@ mod pump;
 use pump::*;
 mod pump_runtime;
 use pump_runtime::*;
+mod terminal;
+use terminal::TerminalOwner;
 mod disconnect_display;
 use disconnect_display::disconnect_display_reason;
 #[cfg(test)]
