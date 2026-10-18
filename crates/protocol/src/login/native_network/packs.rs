@@ -11,7 +11,7 @@ use bedrock_client::{
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
-use std::{path::Path, sync::Arc};
+use std::{io, path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
