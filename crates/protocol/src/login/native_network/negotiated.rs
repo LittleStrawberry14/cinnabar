@@ -204,15 +204,10 @@ pub(super) async fn negotiate_connected(
     let identity = match identity {
         Some(identity) => identity,
         None => SessionIdentity {
+            // The existing typed OfflineIdentity owner retains its original metadata rejection.
             display_name: claims["ThirdPartyName"]
                 .as_str()
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| {
-                    failure(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "offline Login has no display name",
-                    ))
-                })?
+                .unwrap_or_default()
                 .to_owned(),
             xuid: String::new(),
             uuid: uuid::Uuid::new_v4().to_string(),
