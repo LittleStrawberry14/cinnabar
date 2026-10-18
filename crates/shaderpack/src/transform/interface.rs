@@ -11,7 +11,9 @@ struct Varying {
     explicit: Option<u32>,
 }
 
-/// Stage-local varying declarations and program-wide resource bindings.
+/// Stage-local varying declarations and program-wide resource bindings. Stages are
+/// transformed vertex first, so every vertex output is registered by the time the fragment
+/// stage asks whether one feeds its input.
 #[derive(Default)]
 pub(crate) struct ProgramInterface {
     varyings: BTreeMap<(StageKind, String), Varying>,
@@ -40,6 +42,23 @@ impl ProgramInterface {
                 explicit,
             });
         varying.symbol.clone()
+    }
+
+    /// Whether a vertex output feeds fragment input `name`: one of the same name, or, for an
+    /// input at an `explicit` location, an explicitly located output covering it. GLSL
+    /// drivers link an unfed input and Iris declares it zeroed, but WebGPU rejects the
+    /// pipeline, so the fragment stage turns unfed inputs into zeroed private globals.
+    pub(super) fn fed_by_vertex(&self, name: &str, explicit: Option<u32>) -> bool {
+        self.varyings
+            .contains_key(&(StageKind::Vertex, name.to_string()))
+            || explicit.is_some_and(|location| {
+                self.varyings.iter().any(|((stage, _), varying)| {
+                    *stage == StageKind::Vertex
+                        && varying.explicit.is_some_and(|start| {
+                            (start..start.saturating_add(varying.size)).contains(&location)
+                        })
+                })
+            })
     }
 
     /// Allocates non-overlapping implicit locations after reserving every explicit range.
@@ -99,7 +118,7 @@ impl ProgramInterface {
         Ok(definitions)
     }
 
-    /// Binding of sampled texture `name`, after the two shared samplers.
+    /// Binding of sampled texture `name`, after the shared samplers.
     pub(super) fn texture_binding(&mut self, name: &str) -> Result<u32, String> {
         numbered_binding(&mut self.textures, name, FIRST_TEXTURE_BINDING)
     }

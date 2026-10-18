@@ -1,6 +1,6 @@
 //! Translation preserves source bindings and rejects incomplete program contracts.
 
-use crate::{program, reflection};
+use crate::{glsl_has, program, reflection};
 use shaderpack::{PackSource, PackTranslation, Phase, ShaderPack, TranslateConfig};
 
 const VERTEX: &str = "#version 330\nvoid main() { gl_Position = vec4(0.0); }";
@@ -148,20 +148,31 @@ fn conflicting_resolved_uniform_types_are_link_errors() {
 
 #[test]
 fn stage_interface_requires_compatible_vertex_outputs() {
-    for (vertex, fragment) in [
-        (
-            "#version 330\nout vec2 uv; void main() { uv = vec2(0.0); gl_Position = vec4(0.0); }",
-            "#version 330\nin vec3 uv; out vec4 color; void main() { color = vec4(uv, 1.0); }",
-        ),
-        (
+    let translation = translate(
+        "#version 330\nout vec2 uv; void main() { uv = vec2(0.0); gl_Position = vec4(0.0); }",
+        "#version 330\nin vec3 uv; out vec4 color; void main() { color = vec4(uv, 1.0); }",
+    );
+    let failed = program(&translation, "composite");
+    assert!(!failed.is_ok());
+    assert!(failed.diagnostics.iter().any(|d| d.phase == Phase::Link));
+}
+
+#[test]
+fn unfed_fragment_inputs_read_zero() {
+    // Iris declares a fragment input no vertex output feeds and initializes it to zero;
+    // WebGPU rejects a pipeline whose fragment input has no vertex output.
+    for declaration in ["in vec2 missing;", "layout(location=3) in vec2 missing;"] {
+        let translation = success(
             VERTEX,
-            "#version 330\nin vec2 missing; out vec4 color; void main() { color = vec4(missing, 0.0, 1.0); }",
-        ),
-    ] {
-        let translation = translate(vertex, fragment);
-        let failed = program(&translation, "composite");
-        assert!(!failed.is_ok());
-        assert!(failed.diagnostics.iter().any(|d| d.phase == Phase::Link));
+            &format!(
+                "#version 330\n{declaration} out vec4 color;
+                void main() {{ color = vec4(missing, 0.0, 1.0); }}"
+            ),
+        );
+        let translated = program(&translation, "composite");
+        let fragment = translated.stages[1].result.as_ref().unwrap();
+        assert!(interface_locations(&fragment.module, false).is_empty());
+        assert!(glsl_has(&fragment.glsl, "missing = vec2(0);"));
     }
 }
 

@@ -5,14 +5,17 @@
 
 //! Whole-pack translation of the small original packs in `tests/fixtures`.
 
+mod blocks;
 mod compute;
 mod dimensions;
 mod draw_buffers;
+mod ids;
 mod includes;
 mod legacy;
 mod options;
 mod program_contracts;
 mod regressions;
+mod samplers;
 mod storage_bindings;
 mod zip_source;
 
@@ -75,4 +78,10 @@ fn uniform_names(r: &ProgramReflection) -> Vec<&str> {
         .flat_map(|u| &u.members)
         .map(|m| m.name.as_str())
         .collect()
+}
+
+/// Whether translated `glsl` contains `snippet`, ignoring the generated layout's whitespace.
+fn glsl_has(glsl: &str, snippet: &str) -> bool {
+    let compact = |s: &str| s.split_whitespace().collect::<String>();
+    compact(glsl).contains(&compact(snippet))
 }

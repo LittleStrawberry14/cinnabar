@@ -1,6 +1,6 @@
 //! Program selection, active directives and compiled interface contracts.
 
-use crate::{program, reflection};
+use crate::{glsl_has, program, reflection};
 use shaderpack::{PackSource, Phase, ShaderPack, StageKind, TranslateConfig};
 
 const VERTEX: &str = "#version 450\nvoid main() { gl_Position = vec4(0.0); }";
@@ -314,7 +314,7 @@ fn fragment_input_cleanup_preserves_live_helpers_and_remaps_arguments() {
 }
 
 #[test]
-fn unused_flattened_inputs_drop_synthetic_copies_but_live_inputs_still_link() {
+fn unused_flattened_inputs_drop_synthetic_copies_and_unfed_live_inputs_read_zero() {
     for fragment in [
         "#version 450\nin vec2 unusedUv[2]; out vec4 color; void main() { color = vec4(1.0); }",
         "#version 450\nin mat2 unusedBasis; out vec4 color; void main() { color = vec4(1.0); }",
@@ -340,10 +340,18 @@ fn unused_flattened_inputs_drop_synthetic_copies_but_live_inputs_still_link() {
             "#version 450\nin vec2 requiredUv; vec2 readUv() { return requiredUv; } out vec4 color; void main() { color = vec4(readUv(), 0.0, 1.0); }",
         ),
     ]));
+    // A live input no vertex output feeds reads zero, as Iris declares it.
     let translated = pack.translate(&TranslateConfig::default());
-    let failed = program(&translated, "composite");
-    assert!(!failed.is_ok());
-    assert!(failed.diagnostics.iter().any(|d| d.phase == Phase::Link));
+    let pass = program(&translated, "composite");
+    reflection(pass);
+    let fragment = pass.stages[1].result.as_ref().unwrap();
+    assert!(
+        fragment.module.entry_points[0]
+            .function
+            .arguments
+            .is_empty()
+    );
+    assert!(glsl_has(&fragment.glsl, "requiredUv = vec2(0);"));
 }
 
 #[test]

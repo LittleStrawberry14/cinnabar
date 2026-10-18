@@ -291,6 +291,7 @@ fn resource(
                             format: *format,
                             read: access.contains(naga::StorageAccess::LOAD),
                             write: access.contains(naga::StorageAccess::STORE),
+                            atomic: access.contains(naga::StorageAccess::ATOMIC),
                             stages,
                         })
                     }

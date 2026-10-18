@@ -1,9 +1,7 @@
 //! Merges a program's loose uniforms and writes each stage's final GLSL.
 
 use super::StageDraft;
-use crate::reflection::{
-    SAMPLER_BINDING, SAMPLER_NAME, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, TEXTURE_GROUP,
-};
+use crate::reflection::{SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, TEXTURE_GROUP};
 use crate::token::{Emitter, Tok};
 
 /// GLSL text of a draft with the program's merged uniform block, and the include-expanded
@@ -22,9 +20,11 @@ pub(crate) fn assemble(
     }
     ubo.emit(draft, &mut e);
     e.tokens(&draft.resources);
-    if draft.uses.filtering {
+    for class in &draft.uses.filtering {
         e.raw(&format!(
-            "layout(set = {TEXTURE_GROUP}, binding = {SAMPLER_BINDING}) uniform sampler {SAMPLER_NAME};\n"
+            "layout(set = {TEXTURE_GROUP}, binding = {}) uniform sampler {};\n",
+            class.binding(),
+            class.glsl_name()
         ));
     }
     if draft.uses.comparison {

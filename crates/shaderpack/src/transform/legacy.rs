@@ -3,7 +3,7 @@
 use super::TransformError;
 use super::items::{matching, size_unsized_arrays, split_args, validate_delimiters};
 use crate::programs::StageKind;
-use crate::token::{Tok, TokKind, id, lex, p};
+use crate::token::{Tok, TokKind, id, int, lex, p};
 use std::collections::BTreeSet;
 
 /// Identifiers reserved or built in since GLSL 1.30 that 1.20 code may use as names.
@@ -84,6 +84,125 @@ fn builtin_variable(name: &str, stage: StageKind) -> Option<&'static str> {
     })
 }
 
+/// Core-profile names and the compatibility built-ins Iris's core-profile transformer
+/// renames them to. Iris compiles line programs with that transformer whatever their
+/// version, so Complementary's `#version 130` `gbuffers_line` uses these without declaring
+/// them. Vertex attributes only apply to vertex stages.
+const CORE_NAMES: &[(&str, &str, bool)] = &[
+    ("modelViewMatrix", "gl_ModelViewMatrix", false),
+    ("modelViewMatrixInverse", "gl_ModelViewMatrixInverse", false),
+    ("projectionMatrix", "gl_ProjectionMatrix", false),
+    (
+        "projectionMatrixInverse",
+        "gl_ProjectionMatrixInverse",
+        false,
+    ),
+    ("normalMatrix", "gl_NormalMatrix", false),
+    ("vaPosition", "gl_Vertex.xyz", true),
+    ("vaColor", "gl_Color", true),
+    ("vaNormal", "gl_Normal", true),
+    ("vaUV0", "gl_MultiTexCoord0.xy", true),
+    ("vaUV2", "ivec2(gl_MultiTexCoord1.xy)", true),
+];
+
+/// Replaces undeclared [`CORE_NAMES`] with their compatibility built-ins, so a stage that
+/// uses both (`gl_Normal` and `vaNormal`) reads one input. A declared name stays the
+/// pack's own variable.
+fn undeclared_core_names(src: &[Tok], stage: StageKind) -> Option<Vec<Tok>> {
+    // `<type> <name>`, or a later declarator of a list: `in mat4 unproject, projectionMatrix`.
+    let declares = |i: usize| {
+        let mut j = i;
+        while j >= 2 && src[j - 1].is(",") && src[j - 2].ident().is_some() {
+            j -= 2;
+        }
+        j > 0 && src[j - 1].ident().is_some_and(|ty| ty != "return")
+    };
+    let declared = |n: &str| (1..src.len()).any(|i| src[i].ident() == Some(n) && declares(i));
+    let replace: Vec<(&str, &str)> = CORE_NAMES
+        .iter()
+        .filter(|(n, _, attribute)| {
+            (!attribute || stage == StageKind::Vertex)
+                && src.iter().any(|t| t.ident() == Some(n))
+                && !declared(n)
+        })
+        .map(|(n, compat, _)| (*n, *compat))
+        .collect();
+    if replace.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(src.len());
+    for (i, t) in src.iter().enumerate() {
+        let member = i > 0 && src[i - 1].is(".");
+        match replace
+            .iter()
+            .find(|(n, _)| !member && t.ident() == Some(n))
+        {
+            Some((_, compat)) => {
+                out.push(p("(").at(t.line));
+                out.extend(lex(compat).into_iter().map(|c| c.at(t.line)));
+                out.push(p(")").at(t.line));
+            }
+            None => out.push(t.clone()),
+        }
+    }
+    Some(out)
+}
+
+/// GLSL shifts a signed literal into and past the sign bit (Rethinking Voxels marks texels
+/// with `uvec4(1<<31)`); naga's constant evaluator follows WGSL and rejects the overflow.
+/// A literal shift that overflows, between operators that bind more loosely than `<<`,
+/// becomes its wrapped value.
+fn fold_sign_shifts(src: &[Tok]) -> Option<Vec<Tok>> {
+    let loose_before = |t: &Tok| {
+        t.ident() == Some("return")
+            || [
+                "(", ",", "=", "{", "[", "?", ":", ";", "&", "|", "^", "&&", "||", "==", "!=", "<",
+                ">", "<=", ">=",
+            ]
+            .iter()
+            .any(|p| t.is(p))
+    };
+    let loose_after = |t: &Tok| {
+        [
+            ")", ",", ";", "]", "}", "?", ":", "&", "|", "^", "&&", "||", "==", "!=", "<", ">",
+            "<=", ">=",
+        ]
+        .iter()
+        .any(|p| t.is(p))
+    };
+    let signed = |t: &Tok| match &t.kind {
+        TokKind::Int(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    let fold = |i: usize| {
+        (i > 0 && i + 3 < src.len())
+            .then_some(())
+            .filter(|()| src[i + 1].is("<<") && loose_before(&src[i - 1]))
+            .filter(|()| loose_after(&src[i + 3]))
+            .and_then(|()| Some((signed(&src[i])?, signed(&src[i + 2])?)))
+            .filter(|&(value, shift)| (0..32).contains(&shift) && value >= 0)
+            .filter(|&(value, shift)| value << shift > i64::from(i32::MAX))
+            .map(|(value, shift)| (value as i32).wrapping_shl(shift as u32))
+    };
+    let first = (0..src.len()).find(|&i| fold(i).is_some())?;
+    let mut out = src[..first].to_vec();
+    let mut i = first;
+    while i < src.len() {
+        match fold(i) {
+            Some(wrapped) => {
+                // Large signed literals are spelled in hex, as the preprocessor does.
+                out.push(int(format!("0x{:X}", wrapped as u32)).at(src[i].line));
+                i += 3;
+            }
+            None => {
+                out.push(src[i].clone());
+                i += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
 /// Renames reserved identifiers, maps legacy built-ins and lookup functions, and gives
 /// implicit-LOD sampling outside fragment shaders an explicit LOD.
 pub(super) fn rewrite(
@@ -93,7 +212,13 @@ pub(super) fn rewrite(
 ) -> Result<Legacy, TransformError> {
     validate_delimiters(src)?;
     let legacy = version < 130;
-    let sized = size_unsized_arrays(src);
+    let mut sized = size_unsized_arrays(src);
+    if let Some(core) = undeclared_core_names(&sized, stage) {
+        sized = core;
+    }
+    if let Some(folded) = fold_sign_shifts(&sized) {
+        sized = folded;
+    }
     let src = &sized;
     let mut out = Legacy {
         toks: Vec::with_capacity(src.len()),
@@ -135,7 +260,9 @@ pub(super) fn rewrite(
             i += 1;
             continue;
         }
-        if legacy && name == "texture" && !called {
+        // Iris renames a non-call `texture` to `gtexture` in every version (SEUS Renewed's
+        // `#version 130` gbuffers declare `uniform sampler2D texture`).
+        if name == "texture" && !called {
             toks.push(id("gtexture").at(line));
             i += 1;
             continue;
@@ -167,16 +294,24 @@ pub(super) fn rewrite(
                 "shadow2D" | "shadow2DLod" | "shadow2DProj" | "shadow2DArray"
             )
         {
+            let close = matching(src, i + 1, "(", ")")
+                .ok_or_else(|| TransformError::new("unclosed shadow call", line))?;
+            // As for `texture`: a compare sample needs an explicit LOD outside fragment
+            // shaders (Rethinking Voxels' compute `deferred1` filters shadows).
+            let explicit_lod = name == "shadow2D"
+                && stage != StageKind::Fragment
+                && split_args(&src[i + 2..close]).len() == 2;
             let f = match name {
                 "shadow2DLod" => "textureLod",
                 "shadow2DProj" => "textureProj",
+                _ if explicit_lod => "textureLod",
                 _ => "texture",
             };
+            if explicit_lod {
+                pending_lod.push(close);
+            }
             // shadow2D returned vec4 in 1.20; the extra `)` follows the call's own.
-            pending_close.push(
-                matching(src, i + 1, "(", ")")
-                    .ok_or_else(|| TransformError::new("unclosed shadow call", line))?,
-            );
+            pending_close.push(close);
             toks.extend([id("vec4").at(line), p("(").at(line), id(f).at(line)]);
             i += 1;
             continue;
