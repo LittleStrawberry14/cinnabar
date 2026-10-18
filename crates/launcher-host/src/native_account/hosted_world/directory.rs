@@ -1,7 +1,7 @@
 //! Explicit native host publication, RTA progress, conditional nonce writes and exact cleanup.
 
 use super::super::{
-    Operation,
+    Operation, Owner,
     directory::{
         bounded, check_deadline, directory_error, event_changed, invalid, rta_error, service,
         socket_error,
@@ -700,7 +700,7 @@ impl HostDirectory {
         self.opening.validate()
     }
 
-    /// Checks the live in-memory account owner without frame-thread credential/file/HTTP work.
+    /// Checks the live account and original RTA proof without credential, file or HTTP work.
     fn current(&self) -> io::Result<()> {
         self.active()?;
         self.validate_session()?;
@@ -730,6 +730,17 @@ impl HostDirectory {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "host account generation changed",
+            ));
+        }
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| invalid("host RTA is unavailable"))?;
+        if !matches!(&cached.owner, Owner::Minecraft(account) if account.owns_rta(socket.connection()))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "host RTA proof owner changed",
             ));
         }
         Ok(())
