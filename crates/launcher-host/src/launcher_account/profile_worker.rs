@@ -63,8 +63,16 @@ pub(super) fn poll(
     artwork_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     requests: tokio::sync::watch::Receiver<Wake>,
+    runtime: &Handle,
 ) {
-    poll_with_timeout(socket_dir, artwork_dir, shared, requests, RESPONSE_TIMEOUT);
+    poll_with_timeout(
+        socket_dir,
+        artwork_dir,
+        shared,
+        requests,
+        RESPONSE_TIMEOUT,
+        runtime,
+    );
 }
 
 /// Uses the same request source and publication rules with a shorter deadline in fixtures.
@@ -74,12 +82,8 @@ fn poll_with_timeout(
     shared: &Mutex<Snapshot>,
     mut requests: tokio::sync::watch::Receiver<Wake>,
     timeout: Duration,
+    runtime: &Handle,
 ) {
-    let Some(runtime) = runtime() else {
-        publish(shared, |snapshot| snapshot.profile = Some(Err(())));
-        log_unavailable("runtime_unavailable");
-        return;
-    };
     let images = artwork::feed_images(artwork_dir);
     let mut last_log = None;
     loop {
@@ -218,6 +222,8 @@ mod tests {
         let (sender, requests) = channel();
         let snapshot = Arc::clone(&shared);
         let endpoint = dir.clone();
+        let runtime = worker_runtime();
+        let executor = runtime.handle().clone();
         let worker = thread::spawn(move || {
             poll_with_timeout(
                 &endpoint,
@@ -225,6 +231,7 @@ mod tests {
                 &snapshot,
                 requests,
                 Duration::from_millis(100),
+                &executor,
             )
         });
         test_time::wait_until(Duration::from_secs(2), || {

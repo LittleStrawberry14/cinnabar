@@ -16,6 +16,8 @@ use bridge::{
     Home, Message, MessageEvent, Profile, Realm, ServerPing,
 };
 use crossbeam_channel::{Receiver, Sender, bounded};
+use tokio::runtime::Handle;
+use tokio_util::task::TaskTracker;
 
 use super::account_control::{AccountControl, AccountEvent, RealmMembershipResponse};
 use launcher::menu::view::{
@@ -35,6 +37,7 @@ mod artwork;
 mod cinnabar_players;
 mod feeds;
 mod shared_players;
+mod workers;
 use feeds::{CoreFeeds, catalog_round};
 mod events;
 mod invites;
@@ -182,8 +185,8 @@ impl LauncherAccount {
     /// Start polling the control endpoint under `socket_dir`, caching artwork under `artwork`;
     /// the workers stop when this is dropped. Events, the slow catalog and the screen feeds
     /// each poll on their own worker, publishing every answer as it arrives.
-    pub fn new(socket_dir: PathBuf, artwork: PathBuf) -> Self {
-        Self::start(socket_dir, artwork, Snapshot::default())
+    pub fn new(socket_dir: PathBuf, artwork: PathBuf, runtime: Handle, tasks: TaskTracker) -> Self {
+        Self::start(socket_dir, artwork, Snapshot::default(), runtime, tasks)
     }
 
     /// Starts native title presence after the previous core was reaped, and native profile reads.
@@ -193,6 +196,8 @@ impl LauncherAccount {
         socket_dir: PathBuf,
         artwork: PathBuf,
         account: Option<Arc<crate::native_account::NativeAccount>>,
+        runtime: Handle,
+        tasks: TaskTracker,
     ) -> Self {
         Self::start(
             socket_dir,
@@ -203,63 +208,9 @@ impl LauncherAccount {
                 native_presence_account: account,
                 ..Default::default()
             },
+            runtime,
+            tasks,
         )
-    }
-
-    /// Starts the existing feed workers and one event/runtime owner.
-    fn start(socket_dir: PathBuf, artwork: PathBuf, initial: Snapshot) -> Self {
-        let (catalog_wake, catalog_changes) = bounded(1);
-        let (feed_wake, feed_changes) = bounded(1);
-        let (home_wake, home_changes) = bounded(1);
-        let (profile_refresh, profile_requests) = profile_worker::channel();
-        let snapshot = Arc::new(Mutex::new(Snapshot {
-            catalog_wake: Some(catalog_wake),
-            feed_wake: Some(feed_wake.clone()),
-            home_wake: Some(home_wake.clone()),
-            profile_wake: Some(profile_refresh.clone()),
-            ..initial
-        }));
-        let presence_lifetime = TitlePresenceLifetime::new();
-        let (sign_out, requests) = bounded(1);
-        let (alive, stop) = bounded(0);
-        let message_reports = message_reports::start(socket_dir.clone(), stop.clone());
-        let invites = invites::start(
-            socket_dir.clone(),
-            artwork.clone(),
-            Arc::clone(&snapshot),
-            stop.clone(),
-        );
-        let realm_membership = realm_membership::start(socket_dir.clone(), Arc::clone(&snapshot));
-        let cinnabar_rosters = cinnabar_players::start(socket_dir.clone(), Arc::clone(&snapshot));
-        let shared = Arc::clone(&snapshot);
-        let dir = socket_dir.clone();
-        let lifetime = presence_lifetime.clone();
-        thread::spawn(move || events::poll(&dir, &shared, &requests, &lifetime));
-        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
-        thread::spawn(move || poll_catalog(&dir, &shared, &until, &catalog_changes));
-        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
-        let (art, wake) = (artwork.clone(), feed_wake.clone());
-        thread::spawn(move || {
-            feeds::poll_featured(&dir, &art, wake, &shared, &until, &feed_changes)
-        });
-        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
-        let (art, wake) = (artwork.clone(), home_wake.clone());
-        thread::spawn(move || feeds::poll_home(&dir, &art, wake, &shared, &until, &home_changes));
-        let _ = shared_players::start(socket_dir.clone(), Arc::clone(&snapshot), stop.clone());
-        let (shared, dir) = (Arc::clone(&snapshot), socket_dir.clone());
-        thread::spawn(move || profile_worker::poll(&dir, &artwork, &shared, profile_requests));
-        Self {
-            snapshot,
-            sign_out,
-            profile_refresh,
-            message_reports,
-            invites,
-            realm_membership,
-            cinnabar_rosters,
-            _alive: alive,
-            socket_dir,
-            presence_lifetime,
-        }
     }
 
     /// Retains the existing worker's retirement proof independently of the Bevy resource.
@@ -366,11 +317,31 @@ impl LauncherAccount {
     }
 }
 
+/// Supplies the original direct async fixtures without creating production runtimes.
+#[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 fn runtime() -> Option<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()
+}
+
+/// Owns a live reactor for existing OS-worker fixtures that borrow its handle.
+#[cfg(test)]
+fn worker_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("fixture I/O runtime")
+}
+
+/// Completes the actual counted fixture workers before releasing their reactor.
+#[cfg(all(test, unix))]
+fn finish_workers(runtime: tokio::runtime::Runtime, tasks: TaskTracker) {
+    tasks.close();
+    runtime.block_on(tasks.wait());
+    runtime.shutdown_background();
 }
 
 fn publish(shared: &Mutex<Snapshot>, write: impl FnOnce(&mut Snapshot)) {
@@ -412,7 +383,14 @@ fn wait_catalog(stop: &Receiver<()>, changes: &Receiver<()>) -> bool {
 
 #[cfg(test)]
 fn poll_events(socket_dir: &std::path::Path, shared: &Mutex<Snapshot>, requests: &Receiver<()>) {
-    events::poll(socket_dir, shared, requests, &TitlePresenceLifetime::new());
+    let runtime = worker_runtime();
+    events::poll(
+        socket_dir,
+        shared,
+        requests,
+        &TitlePresenceLifetime::new(),
+        runtime.handle(),
+    );
 }
 
 /// The announced release when its identity differs from the last one seen.
@@ -433,10 +411,8 @@ fn poll_catalog(
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
+    runtime: &Handle,
 ) {
-    let Some(runtime) = runtime() else {
-        return;
-    };
     loop {
         // Adopt all changes already present before starting this account's requests.
         while changes.try_recv().is_ok() {}
@@ -500,7 +476,7 @@ fn settle<T, E: std::fmt::Display>(
 const SHOWN_SURFACES: [&str; 1] = [bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON];
 
 fn report_impressions(
-    runtime: &tokio::runtime::Runtime,
+    runtime: &Handle,
     socket_dir: &std::path::Path,
     home: &Home,
     reported: &mut HashSet<String>,

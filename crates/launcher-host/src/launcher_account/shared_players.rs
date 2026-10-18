@@ -62,54 +62,58 @@ pub(super) fn start(
     dir: PathBuf,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
+    runtime: Handle,
+    tasks: TaskTracker,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let Some(runtime) = runtime() else { return };
-        loop {
-            if !matches!(
-                stop.recv_timeout(Duration::from_millis(100)),
-                Err(crossbeam_channel::RecvTimeoutError::Timeout)
-            ) {
-                return;
-            }
-            let (generation, session, local) = {
-                let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-                (
-                    snapshot.auth_generation,
-                    snapshot.shared_players.session,
-                    snapshot.shared_players.local.clone().map(|mut local| {
-                        if snapshot.shared_players.updated.is_none_or(|updated| {
-                            updated.elapsed() > Duration::from_millis(STALE_EXCHANGE_MS)
-                        }) {
-                            local.emote_id.clear();
-                            local.slots.clear();
-                            local.xuids.clear();
-                            local.uuids.clear();
-                        }
-                        local
-                    }),
-                )
-            };
-            let Some(local) = local else { continue };
-            let result = runtime.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    bridge::sync_cinnabar_players(&dir, &local),
-                )
-                .await
-            });
-            if let Ok(Ok(remote)) = result {
-                publish(&shared, |snapshot| {
-                    if snapshot.auth_generation == generation
-                        && snapshot.shared_players.session == session
-                    {
-                        snapshot.shared_players.remote = remote;
-                        snapshot.shared_players.received = Some(Instant::now());
-                    }
+    thread::spawn(crate::worker::tracked(
+        move || {
+            loop {
+                if !matches!(
+                    stop.recv_timeout(Duration::from_millis(100)),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout)
+                ) {
+                    return;
+                }
+                let (generation, session, local) = {
+                    let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+                    (
+                        snapshot.auth_generation,
+                        snapshot.shared_players.session,
+                        snapshot.shared_players.local.clone().map(|mut local| {
+                            if snapshot.shared_players.updated.is_none_or(|updated| {
+                                updated.elapsed() > Duration::from_millis(STALE_EXCHANGE_MS)
+                            }) {
+                                local.emote_id.clear();
+                                local.slots.clear();
+                                local.xuids.clear();
+                                local.uuids.clear();
+                            }
+                            local
+                        }),
+                    )
+                };
+                let Some(local) = local else { continue };
+                let result = runtime.block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        bridge::sync_cinnabar_players(&dir, &local),
+                    )
+                    .await
                 });
+                if let Ok(Ok(remote)) = result {
+                    publish(&shared, |snapshot| {
+                        if snapshot.auth_generation == generation
+                            && snapshot.shared_players.session == session
+                        {
+                            snapshot.shared_players.remote = remote;
+                            snapshot.shared_players.received = Some(Instant::now());
+                        }
+                    });
+                }
             }
-        }
-    })
+        },
+        &tasks,
+    ))
 }
 
 #[cfg(all(test, unix))]
@@ -119,7 +123,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     #[test]
-    fn emote_worker_exchanges_state_on_its_own_tokio_runtime() {
+    fn emote_worker_exchanges_state_on_the_supplied_tokio_runtime() {
         let dir =
             std::env::temp_dir().join(format!("cinnabar-emote-worker-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -133,7 +137,14 @@ mod tests {
             snapshot.shared_players.updated = Some(Instant::now());
         }
         let (alive, stop) = bounded(0);
-        let worker = start(dir.clone(), Arc::clone(&shared), stop);
+        let runtime = worker_runtime();
+        let worker = start(
+            dir.clone(),
+            Arc::clone(&shared),
+            stop,
+            runtime.handle().clone(),
+            TaskTracker::new(),
+        );
         let mut connection = None;
         test_time::eventually("emote worker control request", || {
             connection = listener.accept().ok().map(|(stream, _)| stream);

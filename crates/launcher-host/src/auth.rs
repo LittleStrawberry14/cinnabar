@@ -191,8 +191,10 @@ impl AuthSupervisor {
         device: std::path::PathBuf,
         selected: Option<String>,
         adding: bool,
+        runtime: tokio::runtime::Handle,
+        tasks: tokio_util::task::TaskTracker,
     ) -> Result<Self> {
-        let native = native::NativeAuth::spawn(store, device, selected, adding)?;
+        let native = native::NativeAuth::spawn(store, device, selected, adding, runtime, tasks)?;
         Ok(Self::from_native(native))
     }
 

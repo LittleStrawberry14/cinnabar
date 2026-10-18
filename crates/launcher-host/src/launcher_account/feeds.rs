@@ -64,11 +64,15 @@ pub(super) fn poll_featured(
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
+    runtime: &tokio::runtime::Handle,
+    tasks: &tokio_util::task::TaskTracker,
 ) {
-    let Some(runtime) = super::runtime() else {
-        return;
-    };
-    let art = FeedArt::start(artwork::feed_images(artwork_dir), wake);
+    let art = FeedArt::start(
+        artwork::feed_images(artwork_dir),
+        wake,
+        runtime.clone(),
+        tasks.clone(),
+    );
     let feeds = CoreFeeds {
         socket_dir,
         art: Some(&art),
@@ -94,12 +98,16 @@ pub(super) fn poll_home(
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
+    runtime: &tokio::runtime::Handle,
+    tasks: &tokio_util::task::TaskTracker,
 ) {
-    let Some(runtime) = super::runtime() else {
-        return;
-    };
     let mut reported = HashSet::new();
-    let art = FeedArt::start(artwork::feed_images(artwork_dir), wake);
+    let art = FeedArt::start(
+        artwork::feed_images(artwork_dir),
+        wake,
+        runtime.clone(),
+        tasks.clone(),
+    );
     let feeds = CoreFeeds {
         socket_dir,
         art: Some(&art),
@@ -108,7 +116,7 @@ pub(super) fn poll_home(
         while changes.try_recv().is_ok() {}
         let (home, failed) = runtime.block_on(home_round(&feeds, shared));
         if let Some(home) = home {
-            super::report_impressions(&runtime, socket_dir, &home, &mut reported);
+            super::report_impressions(runtime, socket_dir, &home, &mut reported);
         }
         if !wait_changes(
             stop,

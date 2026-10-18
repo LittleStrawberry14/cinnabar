@@ -15,39 +15,40 @@ pub(super) fn start(
     artwork_dir: PathBuf,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
+    runtime: Handle,
+    tasks: TaskTracker,
 ) -> Sender<Request> {
     let (sender, requests) = crossbeam_channel::unbounded();
-    thread::spawn(move || {
-        let runtime = runtime();
-        let images = artwork::people_images(&artwork_dir);
-        loop {
-            let request = crossbeam_channel::select_biased! {
-                recv(stop) -> _ => return,
-                recv(requests) -> request => match request {
-                    Ok(request) => request,
-                    Err(_) => return,
-                },
-            };
-            match (request, runtime.as_ref()) {
-                (Request::People, runtime) => {
-                    let generation = auth_generation(&shared);
-                    let people = runtime
-                        .ok_or(())
-                        .and_then(|runtime| people(runtime, &socket_dir, &images));
-                    publish_account(&shared, generation, |snapshot| {
-                        snapshot.people = Some(people)
-                    });
+    thread::spawn(crate::worker::tracked(
+        move || {
+            let images = artwork::people_images(&artwork_dir);
+            loop {
+                let request = crossbeam_channel::select_biased! {
+                    recv(stop) -> _ => return,
+                    recv(requests) -> request => match request {
+                        Ok(request) => request,
+                        Err(_) => return,
+                    },
+                };
+                match request {
+                    Request::People => {
+                        let generation = auth_generation(&shared);
+                        let people = people(&runtime, &socket_dir, &images);
+                        publish_account(&shared, generation, |snapshot| {
+                            snapshot.people = Some(people)
+                        });
+                    }
+                    Request::Send(xuids) => send(&runtime, &socket_dir, &xuids),
                 }
-                (Request::Send(xuids), Some(runtime)) => send(runtime, &socket_dir, &xuids),
-                (Request::Send(_), None) => tracing::warn!("game invites not sent: no runtime"),
             }
-        }
-    });
+        },
+        &tasks,
+    ));
     sender
 }
 
 fn people(
-    runtime: &tokio::runtime::Runtime,
+    runtime: &Handle,
     socket_dir: &std::path::Path,
     images: &crate::remote_images::ImageDirectory,
 ) -> Result<Vec<bridge::Person>, ()> {
@@ -73,7 +74,7 @@ fn people(
 }
 
 /// Invites each friend in turn; one failure does not stop the others.
-fn send(runtime: &tokio::runtime::Runtime, socket_dir: &std::path::Path, xuids: &[String]) {
+fn send(runtime: &Handle, socket_dir: &std::path::Path, xuids: &[String]) {
     for xuid in xuids {
         let sent = runtime.block_on(async {
             tokio::time::timeout(RESPONSE_TIMEOUT, bridge::invite_to_world(socket_dir, xuid)).await

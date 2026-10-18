@@ -89,6 +89,7 @@ impl MenuRuntime {
             initial.feeds.account_adding = true;
         }
         Self {
+            native_io: None,
             // The launcher owns the session lifecycle only when the client
             // started on the menu. `--address` keeps the historical behaviour
             // of exiting the process when its one session fails.

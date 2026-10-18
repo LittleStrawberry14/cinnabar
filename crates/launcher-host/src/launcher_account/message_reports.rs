@@ -5,22 +5,27 @@ use super::{Duration, MessageEvent, PathBuf, Receiver, Sender, thread};
 const RETRY_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Starts a dedicated reporter; dropping the account link cancels queued retries.
-pub(super) fn start(socket_dir: PathBuf, stop: Receiver<()>) -> Sender<MessageEvent> {
+pub(super) fn start(
+    socket_dir: PathBuf,
+    stop: Receiver<()>,
+    runtime: tokio::runtime::Handle,
+    tasks: tokio_util::task::TaskTracker,
+) -> Sender<MessageEvent> {
     let (sender, requests) = crossbeam_channel::unbounded();
-    thread::spawn(move || {
-        let Some(runtime) = super::runtime() else {
-            return;
-        };
-        run(&requests, &stop, RETRY_INTERVAL, |event| {
-            match runtime.block_on(bridge::report_message_event(&socket_dir, event)) {
-                Ok(()) => true,
-                Err(error) => {
-                    tracing::warn!(%error, "inbox event failed; retaining for retry");
-                    false
+    thread::spawn(crate::worker::tracked(
+        move || {
+            run(&requests, &stop, RETRY_INTERVAL, |event| {
+                match runtime.block_on(bridge::report_message_event(&socket_dir, event)) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        tracing::warn!(%error, "inbox event failed; retaining for retry");
+                        false
+                    }
                 }
-            }
-        });
-    });
+            });
+        },
+        &tasks,
+    ));
     sender
 }
 

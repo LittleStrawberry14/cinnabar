@@ -12,24 +12,17 @@ pub(super) enum Request {
     Cancel,
 }
 
-/// Runs requests on a dedicated runtime; cancelling or dropping the sender closes the RPC stream.
+/// Runs requests on the supplied runtime; cancellation or sender drop closes the RPC stream.
 pub(super) fn start(
     socket_dir: PathBuf,
     shared: Arc<Mutex<Snapshot>>,
+    runtime: Handle,
+    tasks: TaskTracker,
 ) -> tokio::sync::mpsc::UnboundedSender<Request> {
     let (sender, mut requests) = tokio::sync::mpsc::unbounded_channel();
-    thread::spawn(move || {
-        let Some(runtime) = runtime() else {
-            while let Some(request) = requests.blocking_recv() {
-                if let Request::Run { ticket, accept, .. } = request {
-                    publish(&shared, |snapshot| {
-                        snapshot.realm_membership = Some((ticket, accept, Err(())))
-                    });
-                }
-            }
-            return;
-        };
-        runtime.block_on(async {
+    thread::spawn(crate::worker::tracked(
+        move || {
+            runtime.block_on(async {
             let mut pending = None;
             loop {
                 let request = match pending.take() {
@@ -68,7 +61,9 @@ pub(super) fn start(
                 });
             }
         });
-    });
+        },
+        &tasks,
+    ));
     sender
 }
 
@@ -167,7 +162,14 @@ mod tests {
             realms: Some(Vec::new()),
             ..Default::default()
         }));
-        let requests = start(dir.clone(), Arc::clone(&shared));
+        let runtime = worker_runtime();
+        let tasks = TaskTracker::new();
+        let requests = start(
+            dir.clone(),
+            Arc::clone(&shared),
+            runtime.handle().clone(),
+            tasks.clone(),
+        );
         requests
             .send(Request::Run {
                 ticket: 1,
@@ -204,6 +206,7 @@ mod tests {
         }
         drop(requests);
         fixture.join().unwrap();
+        finish_workers(runtime, tasks);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

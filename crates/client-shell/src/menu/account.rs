@@ -41,6 +41,28 @@ pub(super) enum JoinSignIn {
 }
 
 impl MenuRuntime {
+    /// Installs the application's retained edge before any menu/account worker is admitted.
+    /// Offline UI construction requires no runtime; it cannot start workers without this injection.
+    pub fn with_io(
+        mut self,
+        runtime: tokio::runtime::Handle,
+        tasks: tokio_util::task::TaskTracker,
+    ) -> Self {
+        self.native_io = Some((runtime, tasks));
+        self
+    }
+
+    /// Returns execution/accounting capabilities, never ownership of the actual Runtime lifetime.
+    pub fn io_execution(
+        &self,
+    ) -> std::io::Result<(tokio::runtime::Handle, tokio_util::task::TaskTracker)> {
+        self.native_io.clone().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "application I/O owner is unavailable",
+            )
+        })
+    }
     /// Selects the native sign-in worker before any account activity, preserving the existing presenter.
     #[cfg(feature = "native-networking")]
     pub fn with_native_sign_in(mut self, enabled: bool) -> Self {
@@ -327,12 +349,19 @@ impl MenuRuntime {
     fn spawn_sign_in(&mut self) {
         #[cfg(feature = "native-networking")]
         if self.native_sign_in {
-            let result = AuthSupervisor::spawn_native(
-                self.account_store(),
-                self.layout.device_profile_file(),
-                self.feeds.account_active_id.clone(),
-                self.feeds.account_adding,
-            );
+            let result = self
+                .io_execution()
+                .map_err(Into::into)
+                .and_then(|(runtime, tasks)| {
+                    AuthSupervisor::spawn_native(
+                        self.account_store(),
+                        self.layout.device_profile_file(),
+                        self.feeds.account_active_id.clone(),
+                        self.feeds.account_adding,
+                        runtime,
+                        tasks,
+                    )
+                });
             match result {
                 Ok(process) => self.auth_process = Some(process),
                 Err(_) => {

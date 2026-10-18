@@ -7,11 +7,9 @@ pub(super) fn poll(
     shared: &Mutex<Snapshot>,
     requests: &Receiver<()>,
     lifetime: &TitlePresenceLifetime,
+    runtime: &Handle,
 ) {
     let guard = lifetime.worker_guard();
-    let Some(runtime) = runtime() else {
-        return;
-    };
     runtime.block_on(async {
         let control = async {
             control(socket_dir, shared, requests, lifetime).await;

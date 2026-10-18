@@ -57,6 +57,7 @@ pub trait NetworkExecutor: Clone {
 #[derive(Clone, Default)]
 pub(super) struct NativeNetworkExecutor {
     pub(super) socket_dir: Option<PathBuf>,
+    pub(super) tasks: tokio_util::task::TaskTracker,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +68,7 @@ impl NetworkExecutor for NativeNetworkExecutor {
         &self,
         work: impl Future<Output = ()> + Send + 'static,
     ) -> Self::OutboundTask {
-        NativeOutboundTask(tokio::spawn(work))
+        NativeOutboundTask(tokio::spawn(self.tasks.track_future(work)))
     }
 
     fn timers(&self) -> Timers {

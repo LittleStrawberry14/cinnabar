@@ -212,6 +212,13 @@ impl LauncherCoreSlot {
             && !core.attached
             && bridge_endpoint_exists(&core.socket_dir)
         {
+            let (runtime, tasks) = match menu.io_execution() {
+                Ok(execution) => execution,
+                Err(error) => {
+                    menu.catalog_message = Some(error.to_string());
+                    return;
+                }
+            };
             core.attached = true;
             #[cfg(feature = "native-networking")]
             let account = if core.title_presence_owner == TitlePresenceOwner::Native {
@@ -223,17 +230,23 @@ impl LauncherCoreSlot {
                     core.socket_dir.clone(),
                     menu.layout.launcher_artwork_dir(),
                     native,
+                    runtime,
+                    tasks,
                 )
             } else {
                 launcher_host::launcher_account::LauncherAccount::new(
                     core.socket_dir.clone(),
                     menu.layout.launcher_artwork_dir(),
+                    runtime,
+                    tasks,
                 )
             };
             #[cfg(not(feature = "native-networking"))]
             let account = launcher_host::launcher_account::LauncherAccount::new(
                 core.socket_dir.clone(),
                 menu.layout.launcher_artwork_dir(),
+                runtime,
+                tasks,
             );
             self.presence_lifetime = Some(account.title_presence_lifetime());
             commands.insert_resource(LauncherAccount(account));

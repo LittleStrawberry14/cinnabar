@@ -49,6 +49,8 @@ pub struct NetworkConfig {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_network(
     config: NetworkConfig,
+    runtime: tokio::runtime::Handle,
+    tasks: tokio_util::task::TaskTracker,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
     let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
     #[cfg(feature = "native-networking")]
@@ -148,13 +150,13 @@ pub fn spawn_network(
     };
     #[cfg(feature = "native-networking")]
     let result = match friend {
-        Some(companion) => {
-            client_session::spawn_network_with_companion(domain, prepare, trace, companion)
-        }
-        None => client_session::spawn_network(domain, prepare, trace),
+        Some(companion) => client_session::spawn_network_with_companion(
+            domain, runtime, tasks, prepare, trace, companion,
+        ),
+        None => client_session::spawn_network(domain, runtime, tasks, prepare, trace),
     };
     #[cfg(not(feature = "native-networking"))]
-    let result = client_session::spawn_network(domain, prepare, trace);
+    let result = client_session::spawn_network(domain, runtime, tasks, prepare, trace);
     result.map(|inner| match socket_dir {
         Some(directory) => NetworkHandle::connected(inner, directory),
         None => NetworkHandle::native(inner),

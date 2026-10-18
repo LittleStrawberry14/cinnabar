@@ -15,6 +15,7 @@ const NATIVE_FRIEND_JOINS_QUALIFIED: bool = false;
 pub(super) struct Controller {
     selected: Option<Selection>,
     request: Option<Request>,
+    retiring: Option<CatalogWorker>,
     epoch: u64,
     next_refresh: Option<Instant>,
     friend_worlds: Vec<NativeFriendWorld>,
@@ -45,7 +46,34 @@ impl Controller {
     }
     /// Cancels the prior request before allowing another operation on the same SDK owner.
     pub(super) fn pause(&mut self) {
-        self.request = None;
+        self.reap_retiring();
+        if let Some(request) = self.request.take() {
+            self.retire_worker(request.worker);
+        }
+    }
+
+    /// Releases only a worker whose actual thread and protected destructors have finished.
+    fn reap_retiring(&mut self) {
+        if self
+            .retiring
+            .as_ref()
+            .is_some_and(CatalogWorker::is_finished)
+        {
+            self.retiring = None;
+        }
+    }
+
+    /// Keeps the one canceled worker reachable; admission cannot refill until it actually retires.
+    fn retire_worker(&mut self, mut worker: CatalogWorker) {
+        self.reap_retiring();
+        assert!(
+            self.retiring.is_none(),
+            "a retiring catalog retains the sole request slot"
+        );
+        worker.cancel();
+        if !worker.is_finished() {
+            self.retiring = Some(worker);
+        }
     }
 
     /// Retires pending results and requests a fresh catalog on the next eligible frame.
@@ -182,6 +210,7 @@ impl MenuRuntime {
 
     /// Advances listing after account observations; Go catalog/control results never own this native feed.
     pub(super) fn poll_native_catalog(&mut self, now: Instant) {
+        self.native_catalog.reap_retiring();
         if !self.native_sign_in {
             return;
         }
@@ -223,7 +252,9 @@ impl MenuRuntime {
                 .request
                 .take()
                 .expect("completed request");
-            if request.epoch == self.native_catalog.epoch {
+            let epoch = request.epoch;
+            self.native_catalog.retire_worker(request.worker);
+            if epoch == self.native_catalog.epoch {
                 match result
                     .ok()
                     .and_then(|listing| listing.into_current_cards(&account))
@@ -235,12 +266,16 @@ impl MenuRuntime {
             self.native_catalog.next_refresh = Some(now + CATALOG_REFRESH_INTERVAL);
         }
         if self.native_catalog.request.is_none()
+            && self.native_catalog.retiring.is_none()
             && self
                 .native_catalog
                 .next_refresh
                 .is_none_or(|next| now >= next)
         {
-            match CatalogWorker::start(account) {
+            match self
+                .io_execution()
+                .and_then(|(runtime, tasks)| CatalogWorker::start(account, runtime, tasks))
+            {
                 Ok(worker) => {
                     self.native_catalog.request = Some(Request {
                         epoch: self.native_catalog.epoch,

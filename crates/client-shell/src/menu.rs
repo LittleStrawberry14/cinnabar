@@ -92,6 +92,8 @@ use launcher::menu::{MenuAction, MenuDialog, MenuField, MenuScreen, MenuServerTa
 
 #[derive(Debug, Resource)]
 pub struct MenuRuntime {
+    /// Execution only; the application keeps the real Runtime outside the World until workers retire.
+    native_io: Option<(tokio::runtime::Handle, tokio_util::task::TaskTracker)>,
     visible: bool,
     screen: MenuScreen,
     focused: usize,

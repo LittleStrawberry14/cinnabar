@@ -115,7 +115,7 @@ use {
         publication::PublicationController,
         shutdown::{
             SHUTDOWN_WATCHDOG_TIMEOUT, ShutdownWatchdog, TeardownWatchdog, app_exit_code,
-            arm_shutdown_watchdog,
+            arm_shutdown_watchdog, begin_bounded_shutdown,
         },
     },
     client_shell::menu::MenuRuntime,
@@ -280,8 +280,11 @@ pub(crate) fn configure_client_runtime_frame_systems(app: &mut App) {
 }
 
 pub fn run(args: args::ClientArgs) -> Result<()> {
-    let app = App::new();
     args.validate_acceptance_support(cfg!(feature = "acceptance"))?;
+    // Reverse local-drop order keeps the actual reactor alive beyond App on startup error/unwind.
+    let io =
+        crate::runtime::network::io::IoOwner::new().context("create application I/O runtime")?;
+    let app = App::new();
     #[cfg(feature = "enhanced-diagnostics")]
     let diagnostic_budget = crate::enhanced_diagnostics::configure(&args)?;
     #[cfg(feature = "developer-control")]
@@ -541,6 +544,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         local_player_skin.clone(),
         minecraft_import,
     )
+    .with_io(io.handle(), io.tasks())
     .with_language_assets(
         loaded_assets.selected_path.clone(),
         args.language.as_deref(),
@@ -549,27 +553,31 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     let menu = menu.with_native_sign_in(args.native_transport.is_some());
     crate::runtime::network::await_overlay_texture_device();
     let network = if let Some(endpoint) = endpoint {
-        match spawn_network(NetworkConfig {
-            registry_base: crate::runtime::network::session_registries::RegistryBase::new(
-                &runtime_assets,
-                &collision_registries,
-            ),
-            session_generation: simulation_clock::identity::SessionGeneration::new(1),
-            endpoint,
-            #[cfg(feature = "native-networking")]
-            native_account: None,
-            #[cfg(feature = "native-networking")]
-            native_friend: None,
-            display_name: args.display_name.clone(),
-            client_random_id: client_random_id.expect("connection requested"),
-            client_blob_cache: client_blob_cache.cache(),
-            player_skin: local_player_skin.clone(),
-            login_settings: crate::session::login_settings(&menu, None),
-            actor_artwork: Some(actor_artwork.clone()),
-            ui_catalog: Some(ui_catalog.0.clone()),
-            log_dir: menu.layout().log_dir(),
-            record_session: menu.settings_snapshot().0.record_network_session(),
-        })
+        match spawn_network(
+            NetworkConfig {
+                registry_base: crate::runtime::network::session_registries::RegistryBase::new(
+                    &runtime_assets,
+                    &collision_registries,
+                ),
+                session_generation: simulation_clock::identity::SessionGeneration::new(1),
+                endpoint,
+                #[cfg(feature = "native-networking")]
+                native_account: None,
+                #[cfg(feature = "native-networking")]
+                native_friend: None,
+                display_name: args.display_name.clone(),
+                client_random_id: client_random_id.expect("connection requested"),
+                client_blob_cache: client_blob_cache.cache(),
+                player_skin: local_player_skin.clone(),
+                login_settings: crate::session::login_settings(&menu, None),
+                actor_artwork: Some(actor_artwork.clone()),
+                ui_catalog: Some(ui_catalog.0.clone()),
+                log_dir: menu.layout().log_dir(),
+                record_session: menu.settings_snapshot().0.record_network_session(),
+            },
+            io.handle(),
+            io.tasks(),
+        )
         .context("spawn Bedrock network worker")
         {
             Ok(network) => network,
@@ -895,6 +903,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     startup::install_first_frame_log(&mut app);
     let terminal_cause = TerminalCause::install(&mut app);
     let exit = crate::runtime::frame_profile::run(&mut app);
+    begin_bounded_shutdown(&shutdown_watchdog, &exit);
     PlatformClipboard::shutdown();
     client_shell::discord_presence::shutdown(&mut app);
     if let Some(mut network) = app
@@ -904,6 +913,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         network.shutdown();
     }
     drop(app);
+    io.finish();
     bridge::latency_trace::finish();
     let _ = writeln!(
         diagnostics::console::stderr(),

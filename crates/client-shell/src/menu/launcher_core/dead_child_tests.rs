@@ -28,7 +28,11 @@ fn child_guard(exited: bool) -> CoreProcessGuard {
     guard
 }
 
-fn fixture(exited: bool) -> (LauncherCoreSlot, MenuRuntime, World, PathBuf) {
+fn fixture(
+    exited: bool,
+    runtime: &tokio::runtime::Handle,
+    tasks: &tokio_util::task::TaskTracker,
+) -> (LauncherCoreSlot, MenuRuntime, World, PathBuf) {
     let layout = launcher::test_support::scratch("launcher-child-recovery");
     let socket_dir = layout.account_socket_dir(std::process::id(), 0);
     let directory = SessionDirectoryGuard::bind(socket_dir.clone()).unwrap();
@@ -55,15 +59,27 @@ fn fixture(exited: bool) -> (LauncherCoreSlot, MenuRuntime, World, PathBuf) {
         layout,
         crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
     );
+    menu = menu.with_io(runtime.clone(), tasks.clone());
     menu.control_auth = Some(AuthState::SignedOut);
     let mut world = World::new();
     world.insert_resource(LauncherAccount(
         launcher_host::launcher_account::LauncherAccount::new(
             socket_dir.clone(),
             socket_dir.join("artwork"),
+            runtime.clone(),
+            tasks.clone(),
         ),
     ));
     (slot, menu, world, socket_dir)
+}
+
+/// Owns the shared reactor used by actual account workers in this fixture.
+fn worker_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap()
 }
 
 /// Past the first restart delay after a quick exit.
@@ -94,7 +110,9 @@ fn drive_at(
 
 #[test]
 fn dead_child_detaches_clients_during_play_and_retries_unchanged_auth_when_idle() {
-    let (mut slot, mut menu, mut world, socket_dir) = fixture(true);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, socket_dir) = fixture(true, runtime.handle(), &tasks);
     // A failed-mode latch must not suppress recovery of a child that subsequently existed.
     slot.failed = Some(false);
     let exited_at = Instant::now();
@@ -133,7 +151,9 @@ fn dead_child_detaches_clients_during_play_and_retries_unchanged_auth_when_idle(
 
 #[test]
 fn healthy_child_and_account_client_survive_idle_and_active_frames() {
-    let (mut slot, mut menu, mut world, socket_dir) = fixture(false);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, socket_dir) = fixture(false, runtime.handle(), &tasks);
     let pid = slot.core.as_ref().unwrap()._guard.id();
     for idle in [false, true, false, true] {
         drive(&mut slot, &mut menu, &mut world, idle);
@@ -165,7 +185,9 @@ fn install_exiting_core(menu: &MenuRuntime) {
 
 #[test]
 fn dead_child_is_replaced_without_a_sign_in_change_and_waits_for_new_readiness() {
-    let (mut slot, mut menu, mut world, socket_dir) = fixture(true);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, socket_dir) = fixture(true, runtime.handle(), &tasks);
     let old_pid = slot.core.as_ref().unwrap()._guard.id();
     // A harmless process fixture proves production spawn/adoption.
     install_exiting_core(&menu);
@@ -198,7 +220,9 @@ fn dead_child_is_replaced_without_a_sign_in_change_and_waits_for_new_readiness()
 
 #[test]
 fn a_core_that_keeps_exiting_quickly_is_given_up_on_until_a_refresh() {
-    let (mut slot, mut menu, mut world, _) = fixture(true);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, _) = fixture(true, runtime.handle(), &tasks);
     install_exiting_core(&menu);
     // Past the longest delay, but each run stays far below the stable run that resets it.
     let step = Duration::from_secs(9);
@@ -231,7 +255,9 @@ fn a_core_that_keeps_exiting_quickly_is_given_up_on_until_a_refresh() {
 
 #[test]
 fn a_new_account_retires_the_authenticated_core_even_when_sign_in_mode_is_unchanged() {
-    let (mut slot, mut menu, mut world, _) = fixture(false);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, _) = fixture(false, runtime.handle(), &tasks);
     let core = slot.core.as_mut().unwrap();
     core.authenticated = true;
     core.auth_cache = Some(menu.layout.auth_cache());
@@ -262,7 +288,9 @@ fn a_new_account_retires_the_authenticated_core_even_when_sign_in_mode_is_unchan
 
 #[test]
 fn account_switch_waits_for_the_previous_profiles_credential_save() {
-    let (mut slot, mut menu, mut world, _) = fixture(false);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, _) = fixture(false, runtime.handle(), &tasks);
     let old_pid = slot.core.as_ref().unwrap()._guard.id();
     let (saved, pending) = crossbeam_channel::bounded(1);
     menu.accounts.remember = Some(pending);
@@ -286,7 +314,9 @@ fn account_switch_waits_for_the_previous_profiles_credential_save() {
 fn realm_membership_core_exit_retires_the_pending_dialog() {
     use launcher::menu::realm_membership::{Stage, State};
     for stage in [Stage::Verifying, Stage::Joining] {
-        let (mut slot, mut menu, mut world, _) = fixture(true);
+        let runtime = worker_runtime();
+        let tasks = tokio_util::task::TaskTracker::new();
+        let (mut slot, mut menu, mut world, _) = fixture(true, runtime.handle(), &tasks);
         menu.control_auth = Some(AuthState::Authenticated);
         menu.realm_membership.state = Some(State {
             stage,
@@ -303,7 +333,9 @@ fn realm_membership_core_exit_retires_the_pending_dialog() {
 
 #[test]
 fn presence_policy_change_retires_the_actual_core_before_replacement() {
-    let (mut slot, mut menu, mut world, _) = fixture(false);
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let (mut slot, mut menu, mut world, _) = fixture(false, runtime.handle(), &tasks);
     install_exiting_core(&menu);
     let original = slot.core.as_ref().unwrap()._guard.id();
     slot.set_title_presence_owner(TitlePresenceOwner::Native);

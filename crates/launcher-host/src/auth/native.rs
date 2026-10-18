@@ -81,6 +81,8 @@ impl NativeAuth {
         device: PathBuf,
         selected: Option<String>,
         adding: bool,
+        runtime: tokio::runtime::Handle,
+        tasks: tokio_util::task::TaskTracker,
     ) -> io::Result<Self> {
         let (sender, receiver) = bounded(super::EVENT_CAPACITY);
         let (cancel, cancelled) = oneshot::channel();
@@ -90,13 +92,10 @@ impl NativeAuth {
         let worker_generation = generation.clone();
         std::thread::Builder::new()
             .name("native-sign-in".into())
-            .spawn(move || {
-                let _completion = completion;
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build();
-                let result = match runtime {
-                    Ok(runtime) => runtime.block_on(run(
+            .spawn(crate::worker::tracked(
+                move || {
+                    let _completion = completion;
+                    let result = runtime.block_on(run(
                         store,
                         device,
                         selected,
@@ -104,17 +103,17 @@ impl NativeAuth {
                         worker_generation,
                         &sender,
                         cancelled,
-                    )),
-                    Err(_) => Err(Failure::Failed("Sign-in could not start. Try again.")),
-                };
-                if let Err(error) = result {
-                    let state = match error {
-                        Failure::Cancelled => AuthState::SignedOut,
-                        Failure::Failed(message) => AuthState::Failed(message.into()),
-                    };
-                    let _ = sender.try_send(Message::State(state));
-                }
-            })?;
+                    ));
+                    if let Err(error) = result {
+                        let state = match error {
+                            Failure::Cancelled => AuthState::SignedOut,
+                            Failure::Failed(message) => AuthState::Failed(message.into()),
+                        };
+                        let _ = sender.try_send(Message::State(state));
+                    }
+                },
+                &tasks,
+            ))?;
         Ok(Self {
             receiver,
             cancel: Some(cancel),

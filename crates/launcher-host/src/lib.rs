@@ -23,6 +23,7 @@ pub mod session_cleanup;
 pub mod settings_storage;
 pub mod sign_in_browser;
 pub mod video_settings;
+mod worker;
 
 pub mod memory;
 pub mod minecraft_import;

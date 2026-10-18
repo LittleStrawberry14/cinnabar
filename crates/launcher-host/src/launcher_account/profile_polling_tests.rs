@@ -53,7 +53,14 @@ fn profile_with_stalled_home(fail: bool) -> Option<MenuProfile> {
             }
         }
     });
-    let mut account = LauncherAccount::new(dir.clone(), dir.join("artwork"));
+    let runtime = worker_runtime();
+    let tasks = TaskTracker::new();
+    let mut account = LauncherAccount::new(
+        dir.clone(),
+        dir.join("artwork"),
+        runtime.handle().clone(),
+        tasks.clone(),
+    );
     account.refresh_profile();
     let mut profile = None;
     test_time::wait_until(Duration::from_secs(3), || {
@@ -63,6 +70,7 @@ fn profile_with_stalled_home(fail: bool) -> Option<MenuProfile> {
     drop(account);
     done.store(true, Ordering::Relaxed);
     fixture.join().unwrap();
+    finish_workers(runtime, tasks);
     std::fs::remove_dir_all(dir).unwrap();
     profile
 }
@@ -116,13 +124,22 @@ fn profile_loading_restarts_for_new_account_and_rejects_old_reply() {
 #[test]
 fn profile_loading_ends_when_endpoint_is_missing() {
     let dir = std::env::temp_dir().join(format!("profile-missing-{}", std::process::id()));
-    let mut account = LauncherAccount::new(dir.clone(), dir.join("artwork"));
+    let runtime = worker_runtime();
+    let tasks = TaskTracker::new();
+    let mut account = LauncherAccount::new(
+        dir.clone(),
+        dir.join("artwork"),
+        runtime.handle().clone(),
+        tasks.clone(),
+    );
     let mut profile = None;
     test_time::wait_until(Duration::from_secs(2), || {
         profile = account.profile();
         profile.is_some()
     });
     assert!(profile.is_some_and(|profile| profile.loaded && profile.unavailable));
+    drop(account);
+    finish_workers(runtime, tasks);
 }
 
 /// Retiring an accepted old request must release the worker for the replacement identity.
@@ -188,7 +205,14 @@ fn retired_account_cancels_pending_profile_before_loading_replacement() {
             }
         }
     });
-    let mut account = LauncherAccount::new(directory.path().into(), directory.path().join("art"));
+    let runtime = worker_runtime();
+    let tasks = TaskTracker::new();
+    let mut account = LauncherAccount::new(
+        directory.path().into(),
+        directory.path().join("art"),
+        runtime.handle().clone(),
+        tasks.clone(),
+    );
     // Always close the fixture on failure; an old sixty-second RPC must not escape this test.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         test_time::eventually_within(
@@ -224,6 +248,7 @@ fn retired_account_cancels_pending_profile_before_loading_replacement() {
     drop(account);
     done.store(true, Ordering::Release);
     fixture.join().unwrap();
+    finish_workers(runtime, tasks);
     assert!(
         outcome.is_ok(),
         "retired profile RPC blocked the new account's presentation"

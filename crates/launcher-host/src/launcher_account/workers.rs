@@ -1,0 +1,131 @@
+//! The existing account worker topology borrows one application reactor.
+
+use super::*;
+
+impl LauncherAccount {
+    /// Starts the existing feed workers and one event/runtime owner.
+    pub(super) fn start(
+        socket_dir: PathBuf,
+        artwork: PathBuf,
+        initial: Snapshot,
+        runtime: Handle,
+        tasks: TaskTracker,
+    ) -> Self {
+        let (catalog_wake, catalog_changes) = bounded(1);
+        let (feed_wake, feed_changes) = bounded(1);
+        let (home_wake, home_changes) = bounded(1);
+        let (profile_refresh, profile_requests) = profile_worker::channel();
+        let snapshot = Arc::new(Mutex::new(Snapshot {
+            catalog_wake: Some(catalog_wake),
+            feed_wake: Some(feed_wake.clone()),
+            home_wake: Some(home_wake.clone()),
+            profile_wake: Some(profile_refresh.clone()),
+            ..initial
+        }));
+        let presence_lifetime = TitlePresenceLifetime::new();
+        let (sign_out, requests) = bounded(1);
+        let (alive, stop) = bounded(0);
+        let message_reports = message_reports::start(
+            socket_dir.clone(),
+            stop.clone(),
+            runtime.clone(),
+            tasks.clone(),
+        );
+        let invites = invites::start(
+            socket_dir.clone(),
+            artwork.clone(),
+            Arc::clone(&snapshot),
+            stop.clone(),
+            runtime.clone(),
+            tasks.clone(),
+        );
+        let realm_membership = realm_membership::start(
+            socket_dir.clone(),
+            Arc::clone(&snapshot),
+            runtime.clone(),
+            tasks.clone(),
+        );
+        let cinnabar_rosters = cinnabar_players::start(
+            socket_dir.clone(),
+            Arc::clone(&snapshot),
+            runtime.clone(),
+            tasks.clone(),
+        );
+        let shared = Arc::clone(&snapshot);
+        let dir = socket_dir.clone();
+        let lifetime = presence_lifetime.clone();
+        let executor = runtime.clone();
+        thread::spawn(crate::worker::tracked(
+            move || events::poll(&dir, &shared, &requests, &lifetime, &executor),
+            &tasks,
+        ));
+        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
+        let executor = runtime.clone();
+        thread::spawn(crate::worker::tracked(
+            move || poll_catalog(&dir, &shared, &until, &catalog_changes, &executor),
+            &tasks,
+        ));
+        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
+        let (art, wake) = (artwork.clone(), feed_wake.clone());
+        let executor = runtime.clone();
+        let descendants = tasks.clone();
+        thread::spawn(crate::worker::tracked(
+            move || {
+                feeds::poll_featured(
+                    &dir,
+                    &art,
+                    wake,
+                    &shared,
+                    &until,
+                    &feed_changes,
+                    &executor,
+                    &descendants,
+                )
+            },
+            &tasks,
+        ));
+        let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
+        let (art, wake) = (artwork.clone(), home_wake.clone());
+        let executor = runtime.clone();
+        let descendants = tasks.clone();
+        thread::spawn(crate::worker::tracked(
+            move || {
+                feeds::poll_home(
+                    &dir,
+                    &art,
+                    wake,
+                    &shared,
+                    &until,
+                    &home_changes,
+                    &executor,
+                    &descendants,
+                )
+            },
+            &tasks,
+        ));
+        let _ = shared_players::start(
+            socket_dir.clone(),
+            Arc::clone(&snapshot),
+            stop.clone(),
+            runtime.clone(),
+            tasks.clone(),
+        );
+        let (shared, dir) = (Arc::clone(&snapshot), socket_dir.clone());
+        thread::spawn(crate::worker::tracked(
+            move || profile_worker::poll(&dir, &artwork, &shared, profile_requests, &runtime),
+            &tasks,
+        ));
+        Self {
+            snapshot,
+            sign_out,
+            profile_refresh,
+            message_reports,
+            invites,
+            realm_membership,
+            cinnabar_rosters,
+            _alive: alive,
+            socket_dir,
+            presence_lifetime,
+        }
+    }
+}

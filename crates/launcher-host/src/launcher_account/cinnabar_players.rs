@@ -16,7 +16,11 @@ use bridge::{
 };
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 
-use super::{Snapshot, publish, runtime};
+#[cfg(all(test, unix))]
+use super::worker_runtime;
+use super::{Snapshot, publish};
+use tokio::runtime::Handle;
+use tokio_util::task::TaskTracker;
 
 /// A short gap coalesces roster churn; the core enforces the negotiated identifier budget.
 const LOOKUP_SPACING: Duration = Duration::from_secs(3);
@@ -217,17 +221,27 @@ impl Lookups {
 }
 
 /// Starts the lookup worker; it stops when the returned sender is dropped.
-pub(super) fn start(socket_dir: PathBuf, shared: Arc<Mutex<Snapshot>>) -> Sender<Roster> {
+pub(super) fn start(
+    socket_dir: PathBuf,
+    shared: Arc<Mutex<Snapshot>>,
+    runtime: Handle,
+    tasks: TaskTracker,
+) -> Sender<Roster> {
     let (rosters, requests) = unbounded();
-    thread::spawn(move || run(&socket_dir, &shared, &requests));
+    thread::spawn(crate::worker::tracked(
+        move || run(&socket_dir, &shared, &requests, &runtime),
+        &tasks,
+    ));
     rosters
 }
 
 /// Schedules lookups and expirations while the network thread handles a single pending request.
-fn run(socket_dir: &std::path::Path, shared: &Mutex<Snapshot>, requests: &Receiver<Roster>) {
-    let Some(runtime) = runtime() else {
-        return;
-    };
+fn run(
+    socket_dir: &std::path::Path,
+    shared: &Mutex<Snapshot>,
+    requests: &Receiver<Roster>,
+    runtime: &Handle,
+) {
     thread::scope(|scope| {
         let (send, work) = bounded::<Vec<String>>(1);
         let (results, answers) = bounded(1);

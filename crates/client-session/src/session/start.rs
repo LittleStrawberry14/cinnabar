@@ -334,8 +334,9 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
+        let executor = runtime.handle().clone();
         let thread = thread::spawn(move || {
-            run_session_runtime(runtime, async move {
+            run_session_runtime(&executor, async move {
                 let join = tokio::task::spawn_blocking(move || blocked.recv().is_ok());
                 let prepared = wait_for_login_or_cancel(join, &mut shutdown_rx).await;
                 assert!(prepared.is_none());
@@ -347,6 +348,51 @@ mod tests {
         let _ = release.send(());
         thread.join().unwrap();
         ended.expect("the network thread outlived its cancelled preparation");
+        runtime.shutdown_background();
+    }
+
+    #[test]
+    fn ending_one_session_keeps_the_shared_reactor_alive() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (session, unrelated, peer) = runtime.block_on(async {
+            (
+                tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+                tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+                tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            )
+        });
+        let address = session.local_addr().unwrap();
+        let executor = runtime.handle().clone();
+        let worker = thread::spawn(move || {
+            run_session_runtime(&executor, async {
+                let mut bytes = [0];
+                tokio::time::timeout(std::time::Duration::from_secs(5), session.recv(&mut bytes))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            });
+        });
+        runtime.block_on(peer.send_to(&[1], address)).unwrap();
+        worker.join().unwrap();
+        runtime.block_on(async {
+            peer.send_to(&[2], unrelated.local_addr().unwrap())
+                .await
+                .unwrap();
+            let mut bytes = [0];
+            let length = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                unrelated.recv(&mut bytes),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(&bytes[..length], &[2]);
+        });
+        runtime.shutdown_background();
     }
 
     // Shutdown must not wait on the watch channel while a compile is running.

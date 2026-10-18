@@ -633,24 +633,31 @@ fn start_network(
     ui_catalog: Option<&crate::runtime::network::PackUiCatalog>,
     registry_base: crate::runtime::network::session_registries::RegistryBase,
 ) -> Result<(), String> {
-    let replacement = crate::runtime::network::session::spawn_network(NetworkConfig {
-        registry_base,
-        session_generation: simulation_clock::identity::SessionGeneration::new(session_generation),
-        endpoint,
-        #[cfg(feature = "native-networking")]
-        native_account,
-        #[cfg(feature = "native-networking")]
-        native_friend,
-        display_name: menu.display_name().to_owned(),
-        client_random_id,
-        client_blob_cache: cache.cache(),
-        player_skin: menu.player_skin().clone(),
-        login_settings,
-        actor_artwork: actor_artwork.cloned(),
-        ui_catalog: ui_catalog.map(|base| base.0.clone()),
-        log_dir: menu.layout().log_dir(),
-        record_session: menu.settings_snapshot().0.record_network_session(),
-    })
+    let (runtime, tasks) = menu.io_execution().map_err(|error| error.to_string())?;
+    let replacement = crate::runtime::network::session::spawn_network(
+        NetworkConfig {
+            registry_base,
+            session_generation: simulation_clock::identity::SessionGeneration::new(
+                session_generation,
+            ),
+            endpoint,
+            #[cfg(feature = "native-networking")]
+            native_account,
+            #[cfg(feature = "native-networking")]
+            native_friend,
+            display_name: menu.display_name().to_owned(),
+            client_random_id,
+            client_blob_cache: cache.cache(),
+            player_skin: menu.player_skin().clone(),
+            login_settings,
+            actor_artwork: actor_artwork.cloned(),
+            ui_catalog: ui_catalog.map(|base| base.0.clone()),
+            log_dir: menu.layout().log_dir(),
+            record_session: menu.settings_snapshot().0.record_network_session(),
+        },
+        runtime,
+        tasks,
+    )
     .map_err(|error| error.to_string())?;
     commands.insert_resource(
         client_interaction::movement::MovementTicker::with_epoch_publisher(
