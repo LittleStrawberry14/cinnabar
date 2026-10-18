@@ -18,9 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (Some(flag), Some(destination), None) if flag == "--copy-to" => {
             let destination = PathBuf::from(destination);
             // Check admission before copying, then hash the delivered files themselves.
-            DeliveryManifest::from_directory(&directory)?;
+            let manifest = DeliveryManifest::from_directory(&directory)?;
             std::fs::create_dir(&destination)?;
-            for carrier in assets::carriers::startup::delivery::startup_carriers() {
+            for carrier in manifest.carriers() {
                 std::fs::copy(
                     directory.join(carrier.output),
                     destination.join(carrier.output),
