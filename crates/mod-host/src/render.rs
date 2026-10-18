@@ -248,22 +248,50 @@ impl wit::Host for State {
         if let Err(denied) = self.render_allowed()? {
             return Ok(Err(denied));
         }
-        if lines.len() > mod_api::MAX_RENDER_RIBBONS {
-            return Ok(Err("line count exceeds shared ribbon budget".into()));
+        self.append_lines(lines, false)
+    }
+
+    fn draw_overlay_lines(&mut self, lines: Vec<wit::Line>) -> Result<Result<(), String>> {
+        if let Err(denied) = self.render_allowed()? {
+            return Ok(Err(denied));
+        }
+        if !self.overlay_allowed() {
+            return Ok(Err("through-wall rendering capability denied".into()));
+        }
+        self.append_lines(lines, true)
+    }
+
+    fn draw_wire_boxes(
+        &mut self,
+        boxes: Vec<wit::WireBox>,
+        through_world: bool,
+    ) -> Result<Result<(), String>> {
+        if let Err(denied) = self.render_allowed()? {
+            return Ok(Err(denied));
+        }
+        if through_world && !self.overlay_allowed() {
+            return Ok(Err("through-wall rendering capability denied".into()));
+        }
+        if boxes.len() > mod_api::MAX_RENDER_RIBBONS {
+            return Ok(Err("box count exceeds shared ribbon budget".into()));
+        }
+        if boxes
+            .iter()
+            .any(|b| !(b.min.x < b.max.x && b.min.y < b.max.y && b.min.z < b.max.z))
+        {
+            return Ok(Err("wire boxes require positive bounds".into()));
         }
         let primitives = Primitives {
-            ribbons: lines
+            ribbons: boxes
                 .into_iter()
-                .map(|line| mod_render::Ribbon {
-                    taper: false,
-                    pattern: match line.pattern {
-                        wit::LinePattern::Solid => mod_render::LinePattern::Solid,
-                        wit::LinePattern::Dashed => mod_render::LinePattern::Dashed,
-                        wit::LinePattern::Dotted => mod_render::LinePattern::Dotted,
-                    },
-                    points: line.points.into_iter().map(|p| [p.x, p.y, p.z]).collect(),
-                    width: line.width,
-                    color: [line.color.r, line.color.g, line.color.b, line.color.a],
+                .map(|b| {
+                    mod_render::wire_box(
+                        [b.min.x, b.min.y, b.min.z],
+                        [b.max.x, b.max.y, b.max.z],
+                        b.width,
+                        [b.color.r, b.color.g, b.color.b, b.color.a],
+                        through_world,
+                    )
                 })
                 .collect(),
             ..Default::default()
@@ -279,6 +307,46 @@ impl wit::Host for State {
             .render
             .staged_primitives
             .append_checked(convert(primitives)))
+    }
+}
+
+impl State {
+    /// A separate through-world grant never inherits permission from ordinary geometry.
+    fn overlay_allowed(&self) -> bool {
+        self.grants.render_through_walls
+            && self
+                .drawing_policy
+                .is_none_or(|policy| policy.permissions.render_through_walls)
+    }
+
+    /// Validates either line layer against the same callback-wide ribbon budget.
+    fn append_lines(
+        &mut self,
+        lines: Vec<wit::Line>,
+        through_world: bool,
+    ) -> Result<Result<(), String>> {
+        if lines.len() > mod_api::MAX_RENDER_RIBBONS {
+            return Ok(Err("line count exceeds shared ribbon budget".into()));
+        }
+        let primitives = Primitives {
+            ribbons: lines
+                .into_iter()
+                .map(|line| mod_render::Ribbon {
+                    through_world,
+                    taper: false,
+                    pattern: match line.pattern {
+                        wit::LinePattern::Solid => mod_render::LinePattern::Solid,
+                        wit::LinePattern::Dashed => mod_render::LinePattern::Dashed,
+                        wit::LinePattern::Dotted => mod_render::LinePattern::Dotted,
+                    },
+                    points: line.points.into_iter().map(|p| [p.x, p.y, p.z]).collect(),
+                    width: line.width,
+                    color: [line.color.r, line.color.g, line.color.b, line.color.a],
+                })
+                .collect(),
+            ..Default::default()
+        };
+        Ok(self.render.staged_primitives.append_checked(primitives))
     }
 }
 
@@ -307,6 +375,7 @@ fn convert(primitives: wit::Primitives) -> Primitives {
             .ribbons
             .into_iter()
             .map(|ribbon| mod_render::Ribbon {
+                through_world: false,
                 taper: true,
                 pattern: mod_render::LinePattern::Solid,
                 points: ribbon.points.into_iter().map(point).collect(),

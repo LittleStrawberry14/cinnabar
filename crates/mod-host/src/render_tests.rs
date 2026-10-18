@@ -130,3 +130,121 @@ fn legacy_post_imports_cannot_bypass_remote_policy() {
     state.render.commit();
     assert!(state.render.output().passes.is_empty());
 }
+
+/// Overlay drawing never inherits authority from ordinary geometry or post effects.
+#[test]
+fn overlay_lines_require_consent_and_session_authority_and_clear_each_callback() {
+    let mut state = state();
+    let line = wit::Line {
+        points: vec![
+            wit::Vector3 {
+                x: 0.,
+                y: 0.,
+                z: 0.,
+            },
+            wit::Vector3 {
+                x: 1.,
+                y: 1.,
+                z: 1.,
+            },
+        ],
+        width: 2.,
+        color: wit::Rgba {
+            r: 1.,
+            g: 0.5,
+            b: 0.2,
+            a: 1.,
+        },
+        pattern: wit::LinePattern::Solid,
+    };
+    assert!(
+        state
+            .draw_overlay_lines(vec![line.clone()])
+            .unwrap()
+            .is_err()
+    );
+    state.grants.render_through_walls = true;
+    state.drawing_policy = Some(mod_api::drawing::DrawingSession::default());
+    assert!(
+        state
+            .draw_overlay_lines(vec![line.clone()])
+            .unwrap()
+            .is_err()
+    );
+    state
+        .drawing_policy
+        .as_mut()
+        .unwrap()
+        .permissions
+        .render_through_walls = true;
+    state
+        .draw_overlay_lines(vec![line.clone()])
+        .unwrap()
+        .unwrap();
+    assert!(state.render.staged_primitives.ribbons[0].through_world);
+    state
+        .draw_lines(vec![line.clone(); mod_api::MAX_RENDER_RIBBONS - 1])
+        .unwrap()
+        .unwrap();
+    assert!(state.draw_overlay_lines(vec![line]).unwrap().is_err());
+    state.render.commit();
+    assert_eq!(
+        state.render.output().primitives.ribbons.len(),
+        mod_api::MAX_RENDER_RIBBONS
+    );
+    state.render.begin_frame();
+    state.render.commit();
+    assert!(state.render.output().primitives.is_empty());
+}
+
+/// Compact boxes obey layer authority and validation before mutating staged output.
+#[test]
+fn wire_boxes_validate_bounds_and_preserve_ordinary_drawing_authority() {
+    let mut state = state();
+    let mut b = wit::WireBox {
+        min: wit::Vector3 {
+            x: 0.,
+            y: 0.,
+            z: 0.,
+        },
+        max: wit::Vector3 {
+            x: 1.,
+            y: 1.,
+            z: 1.,
+        },
+        width: 2.,
+        color: wit::Rgba {
+            r: 1.,
+            g: 1.,
+            b: 1.,
+            a: 1.,
+        },
+    };
+    assert!(
+        state
+            .draw_wire_boxes(vec![b.clone()], true)
+            .unwrap()
+            .is_err()
+    );
+    state
+        .draw_wire_boxes(vec![b.clone()], false)
+        .unwrap()
+        .unwrap();
+    assert!(!state.render.staged_primitives.ribbons[0].through_world);
+    state.grants.render_through_walls = true;
+    state
+        .draw_wire_boxes(vec![b.clone()], true)
+        .unwrap()
+        .unwrap();
+    assert!(state.render.staged_primitives.ribbons[1].through_world);
+    b.max.x = -1.;
+    assert!(
+        state
+            .draw_wire_boxes(vec![b.clone()], true)
+            .unwrap()
+            .is_err()
+    );
+    b.max.x = f32::INFINITY;
+    assert!(state.draw_wire_boxes(vec![b], true).unwrap().is_err());
+    assert_eq!(state.render.staged_primitives.ribbons.len(), 2);
+}

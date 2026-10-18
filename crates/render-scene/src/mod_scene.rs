@@ -8,6 +8,7 @@ pub struct ModRenderScene {
     generation: u64,
     pub passes: Vec<mod_render::Pass>,
     pub vertices: Arc<[ModVertex]>,
+    pub overlay_vertices: Arc<[ModVertex]>,
     primitives: Arc<mod_render::Primitives>,
     pub marker_vertices: Arc<[ModVertex]>,
     position_box: Option<[[f32; 3]; 2]>,
@@ -35,6 +36,7 @@ impl ModRenderScene {
         if !Arc::ptr_eq(&self.primitives, &output.primitives) {
             self.primitives = Arc::clone(&output.primitives);
             self.vertices = mod_render::geometry::build(&output.primitives).into();
+            self.overlay_vertices = mod_render::geometry::build_overlay(&output.primitives).into();
         }
     }
 
@@ -86,7 +88,10 @@ impl ModRenderScene {
     }
 
     pub fn vertex_count(&self) -> usize {
-        self.vertices.len() + self.marker_vertices.len() + self.block_vertices.len()
+        self.vertices.len()
+            + self.marker_vertices.len()
+            + self.block_vertices.len()
+            + self.overlay_vertices.len()
     }
 }
 

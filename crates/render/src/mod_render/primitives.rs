@@ -76,6 +76,7 @@ pub(crate) struct PrimitiveGpu {
     uploaded: Arc<[ModVertex]>,
     uploaded_marker: Arc<[ModVertex]>,
     uploaded_blocks: Arc<[ModVertex]>,
+    uploaded_overlay: Arc<[ModVertex]>,
     block_count: u32,
     pub(crate) vertex_count: u32,
     frame: Buffer,
@@ -99,6 +100,7 @@ pub(crate) fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
         uploaded: Arc::from([]),
         uploaded_marker: Arc::from([]),
         uploaded_blocks: Arc::from([]),
+        uploaded_overlay: Arc::from([]),
         block_count: 0,
         vertex_count: 0,
         frame: device.create_buffer(&BufferDescriptor {
@@ -134,6 +136,7 @@ fn prepare(
         gpu.bind_group = None;
     }
     let previous_primitive_count = gpu.uploaded.len() + gpu.uploaded_marker.len();
+    let previous_overlay_offset = previous_primitive_count + gpu.uploaded_blocks.len();
     let [guest_changed, marker_changed] = upload_changes(
         &gpu.uploaded,
         &gpu.uploaded_marker,
@@ -175,8 +178,26 @@ fn prepare(
     if blocks_changed {
         gpu.uploaded_blocks = Arc::clone(&scene.block_vertices);
     }
+    let overlay_offset = primitive_count + scene.block_vertices.len();
+    let overlay_changed = block_upload_changed(
+        &gpu.uploaded_overlay,
+        &scene.overlay_vertices,
+        previous_overlay_offset,
+        overlay_offset,
+        grew,
+    );
+    if overlay_changed && !scene.overlay_vertices.is_empty() {
+        queue.profiled_write_buffer(
+            &gpu.vertices,
+            overlay_offset as u64 * VERTEX_BYTES,
+            bytemuck::cast_slice(&scene.overlay_vertices),
+        );
+    }
+    if overlay_changed {
+        gpu.uploaded_overlay = Arc::clone(&scene.overlay_vertices);
+    }
     gpu.vertex_count = primitive_count as u32;
-    gpu.block_count = scene.block_vertices.len() as u32;
+    gpu.block_count = (scene.block_vertices.len() + scene.overlay_vertices.len()) as u32;
     if needed > 0 {
         let frame = [time.elapsed_secs_wrapped(), time.delta_secs(), 0.0, 0.0];
         queue.profiled_write_buffer(&gpu.frame, 0, bytemuck::cast_slice(&frame));
@@ -342,7 +363,7 @@ impl Specializer<RenderPipeline> for PrimitiveSpecializer {
     ) -> Result<Canonical<Self::Key>, BevyError> {
         descriptor.multisample.count = key.msaa.samples();
         descriptor.label = Some(if key.through_world {
-            "block highlights pipeline".into()
+            "mod overlay pipeline".into()
         } else {
             "mod primitive pipeline".into()
         });
@@ -429,7 +450,7 @@ pub(crate) fn queue(
     // Queue precedes upload, so this frame's scene decides; the draw reads the upload.
     let Some(scene) = scene else { return };
     let regular = scene.vertices.len() + scene.marker_vertices.len() > 0;
-    let highlights = !scene.block_vertices.is_empty();
+    let highlights = !scene.block_vertices.is_empty() || !scene.overlay_vertices.is_empty();
     let draw_functions = draw_functions.read();
     for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {

@@ -59,10 +59,31 @@ pub fn billboard_style_id(pattern: BillboardPattern) -> f32 {
     STYLE_BILLBOARD + pattern as u8 as f32
 }
 
-/// Ground decals, ribbons, beams, then billboards, as a triangle list.
+/// Depth-tested ground decals, ribbons, beams, then billboards, as a triangle list.
 pub fn build(primitives: &Primitives) -> Vec<ModVertex> {
-    let mut out = Vec::with_capacity(vertex_count(primitives));
-    for decal in &primitives.decals {
+    build_layer(primitives, false)
+}
+
+/// Builds only authorized through-world lines, preserving ordinary geometry depth tests.
+pub fn build_overlay(primitives: &Primitives) -> Vec<ModVertex> {
+    build_layer(primitives, true)
+}
+
+/// Partitions the shared primitive budget into its independently rendered depth layers.
+fn build_layer(primitives: &Primitives, through_world: bool) -> Vec<ModVertex> {
+    let overlay_count = primitives
+        .ribbons
+        .iter()
+        .filter(|r| r.through_world)
+        .map(|r| r.points.len().saturating_sub(1) * 6)
+        .sum::<usize>();
+    let count = if through_world {
+        overlay_count
+    } else {
+        vertex_count(primitives) - overlay_count
+    };
+    let mut out = Vec::with_capacity(count);
+    for decal in primitives.decals.iter().filter(|_| !through_world) {
         let [x, y, z] = decal.center;
         for [u, v] in QUAD {
             out.push(ModVertex {
@@ -84,7 +105,11 @@ pub fn build(primitives: &Primitives) -> Vec<ModVertex> {
             });
         }
     }
-    for ribbon in &primitives.ribbons {
+    for ribbon in primitives
+        .ribbons
+        .iter()
+        .filter(|r| r.through_world == through_world)
+    {
         let last = ribbon.points.len() - 1;
         let tangent = |i: usize| {
             let a = ribbon.points[i.saturating_sub(1)];
@@ -146,7 +171,7 @@ pub fn build(primitives: &Primitives) -> Vec<ModVertex> {
             }
         }
     }
-    for beam in &primitives.beams {
+    for beam in primitives.beams.iter().filter(|_| !through_world) {
         let axis = normalize(sub(beam.end, beam.start));
         let length = length(sub(beam.end, beam.start));
         for [side, end] in QUAD {
@@ -166,7 +191,7 @@ pub fn build(primitives: &Primitives) -> Vec<ModVertex> {
             ));
         }
     }
-    for billboard in &primitives.billboards {
+    for billboard in primitives.billboards.iter().filter(|_| !through_world) {
         let [x, y, z] = billboard.position;
         let kind = if billboard.upright {
             KIND_UPRIGHT

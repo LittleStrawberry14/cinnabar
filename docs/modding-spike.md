@@ -1110,3 +1110,25 @@ subject to the simulator's ground contact and jump cooldown rules.
 `cancel-jump` commits an explicit cancellation even outside gameplay, allowing a
 component to revoke a sub-tick pulse as soon as its module is disabled. Cancellation
 wins over jump pulses in the same callback and never clears physical jump input.
+
+### Overlay lines and observed health
+
+`render.draw-overlay-lines` accepts the same world-space, pixel-width polylines as
+`draw-lines`, but renders them without world occlusion. It requires ordinary drawing
+authority plus explicit `render_through_walls` permission within the current session
+policy. It shares the ribbon count and point budgets with ordinary lines and ribbons.
+Output is transactional and lasts one callback; omission, traps, unloads and session
+revocation clear it. Overlay lines do not read or write the depth buffer. Ordinary
+lines retain depth testing, and both layers use the actual view and near-plane clipping.
+
+`render.draw-wire-boxes` submits compact axis-aligned bounds, pixel width and color.
+It shares line/ribbon budgets and callback lifetime; `through-world: true` uses the
+same elevated authority as overlay lines, while false preserves ordinary depth tests.
+
+`player-state.read-actors` now includes optional `max-health` from the replicated
+health attribute. Missing health attributes remain absent; no default maximum is
+inferred. Components importing the updated actor record require a matching host SDK.
+
+`player-state.read-actors-limited` returns a caller-bounded prefix of the same authorized
+observations (1 through `MAX_OBSERVED_ACTORS`). It preserves existing filters and
+session fences, allowing guests to bound canonical-ABI copying work explicitly.
