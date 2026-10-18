@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn authenticated_join_refuses_a_transport_without_signed_identity_support() {
+    let settings = super::super::LoginSettings::default();
+    let claims = RawValue::from_string(r#"{"DeviceOS":1,"DeviceId":"fixture"}"#.into()).unwrap();
+    let authentication = NativeAuthentication::new(
+        SigningKey::from_slice(&[1; 48]).unwrap(),
+        "synthetic-credential".into(),
+        &claims,
+    )
+    .unwrap();
+    let result = LoginSequence::connect_native_authenticated(
+        &NativeConnectionTarget {
+            address: "unresolved.invalid:0".into(),
+            transport: NativeTransport::NetherNetLan,
+        },
+        SessionLogin {
+            display_name: "Fixture",
+            client_random_id: crate::ClientRandomId::new(1).unwrap(),
+            cache: None,
+            skin: None,
+            settings: &settings,
+            tap: None,
+            target: None,
+        },
+        authentication,
+        |_, _| (),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(ProtocolError::Session(crate::SessionError(
+            SessionFailure::NativeTransport(error)
+        ))) if error.kind() == io::ErrorKind::Unsupported
+    ));
+}
+
 struct PendingPackets(std::collections::VecDeque<bytes::Bytes>);
 
 impl PacketConnection for PendingPackets {

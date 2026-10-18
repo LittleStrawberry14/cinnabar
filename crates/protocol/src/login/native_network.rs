@@ -1,5 +1,7 @@
 //! Native direct joins using the shared Rust spawn and play sequence.
 
+mod authentication;
+pub use authentication::NativeAuthentication;
 mod connection;
 mod packs;
 mod transport;
@@ -10,9 +12,13 @@ use crate::codec::SessionFailure;
 use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
 use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
-use bedrock_net::login::{OfflineIdentity, encode_offline_request, finish_key_exchange};
+use bedrock_net::login::{
+    OfflineIdentity, encode_authenticated_request, encode_offline_request, finish_key_exchange,
+};
 use bedrock_net::{CompressionAlgorithm, CompressionSettings};
 use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, wire};
+use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
+use rand::rngs::SysRng;
 use resource_pack::ResourcePackHandoff;
 use serde_json::{json, value::RawValue};
 use std::{
@@ -96,21 +102,59 @@ impl LoginSequence {
         login: SessionLogin<'_>,
         prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
     ) -> Result<(PlaySession, P), ProtocolError> {
-        tokio::time::timeout(JOIN_TIMEOUT, connect(target, login, prepare))
-            .await
-            .map_err(|_| {
-                failure(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "native join timed out",
-                ))
-            })?
+        native_join(target, login, None, prepare).await
     }
+
+    /// Joins RakNet with an already acquired account credential and its owned proof key.
+    ///
+    /// Account HTTP and persistence stay with the application. The connection
+    /// retains this key through signed client data and the server key exchange.
+    /// Signed identity-aware NetherNet signaling is not yet supported here.
+    ///
+    /// # Errors
+    /// Rejects unsupported transport or invalid framing, and returns connection,
+    /// Login, pack, spawn or overall join-deadline failures.
+    pub async fn connect_native_authenticated<P: Send + 'static>(
+        target: &NativeConnectionTarget,
+        login: SessionLogin<'_>,
+        authentication: NativeAuthentication,
+        prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+    ) -> Result<(PlaySession, P), ProtocolError> {
+        if target.transport != NativeTransport::RakNet {
+            return Err(failure(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "native account joins require RakNet until signed NetherNet signaling is available",
+            )));
+        }
+        native_join(target, login, Some(authentication), prepare).await
+    }
+}
+
+/// Applies the same cancellation and join deadline to either explicit identity.
+async fn native_join<P: Send + 'static>(
+    target: &NativeConnectionTarget,
+    login: SessionLogin<'_>,
+    authentication: Option<NativeAuthentication>,
+    prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+) -> Result<(PlaySession, P), ProtocolError> {
+    tokio::time::timeout(
+        JOIN_TIMEOUT,
+        connect(target, login, authentication, prepare),
+    )
+    .await
+    .map_err(|_| {
+        failure(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "native join timed out",
+        ))
+    })?
 }
 
 /// Negotiates one native connection before handing the same owner to play.
 async fn connect<P: Send + 'static>(
     target: &NativeConnectionTarget,
     login: SessionLogin<'_>,
+    authentication: Option<NativeAuthentication>,
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
     if login.target.is_some() {
@@ -119,7 +163,16 @@ async fn connect<P: Send + 'static>(
             "native join does not accept a core target override",
         )));
     }
-    let transport = transport::Transport::connect(target)
+    let (key, authentication) = match authentication {
+        Some(NativeAuthentication { key, token, claims }) => (key, Some((token, claims))),
+        None => (
+            SigningKey::try_generate_from_rng(&mut SysRng)
+                .map_err(io::Error::other)
+                .map_err(failure)?,
+            None,
+        ),
+    };
+    let transport = transport::Transport::connect(target, key)
         .await
         .map_err(failure)?;
     let mut connection = Connection::new(transport);
@@ -146,17 +199,22 @@ async fn connect<P: Send + 'static>(
         algorithm,
         threshold: settings.compression_threshold.0,
     });
-    let mut claims = super::client_data::login_client_data(
-        login.display_name,
-        login.client_random_id,
-        login.skin.as_ref(),
-        login.settings,
-    );
-    // Signed-out desktop identity is independent of Xbox title/device authentication.
-    claims["DeviceOS"] = json!(native_device_os());
-    claims["DeviceModel"] = json!("");
-    claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
-    claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
+    let (mut claims, token) = if let Some((token, claims)) = authentication {
+        (serde_json::Value::Object(claims), Some(token))
+    } else {
+        let mut claims = super::client_data::login_client_data(
+            login.display_name,
+            login.client_random_id,
+            login.skin.as_ref(),
+            login.settings,
+        );
+        // Signed-out desktop identity is independent of Xbox title/device authentication.
+        claims["DeviceOS"] = json!(native_device_os());
+        claims["DeviceModel"] = json!("");
+        claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
+        claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
+        (claims, None)
+    };
     claims["ServerAddress"] = json!(target.address);
     claims["Nonce"] = json!(connection.transport.nonce());
     let claims = RawValue::from_string(
@@ -166,20 +224,29 @@ async fn connect<P: Send + 'static>(
     )
     .map_err(io::Error::other)
     .map_err(failure)?;
-    let identity = uuid::Uuid::new_v4().to_string();
-    let request = encode_offline_request(
-        connection.transport.key(),
-        &OfflineIdentity {
-            display_name: login.display_name,
-            identity: &identity,
-            xuid: "",
-            playfab_id: "",
-            playfab_title_id: "",
-        },
-        &claims,
-        SystemTime::now(),
-        connection.max_decoded_bytes(),
-    )
+    let request = if let Some(token) = token {
+        encode_authenticated_request(
+            connection.transport.key(),
+            &token,
+            &claims,
+            connection.max_decoded_bytes(),
+        )
+    } else {
+        let identity = uuid::Uuid::new_v4().to_string();
+        encode_offline_request(
+            connection.transport.key(),
+            &OfflineIdentity {
+                display_name: login.display_name,
+                identity: &identity,
+                xuid: "",
+                playfab_id: "",
+                playfab_title_id: "",
+            },
+            &claims,
+            SystemTime::now(),
+            connection.max_decoded_bytes(),
+        )
+    }
     .map_err(io::Error::other)
     .map_err(failure)?;
     connection
