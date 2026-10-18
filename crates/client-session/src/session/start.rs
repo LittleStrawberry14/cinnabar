@@ -2,9 +2,15 @@ use super::*;
 use simulation_clock::identity::PositionAuthorityGeneration;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod companion;
+#[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
+pub use companion::SessionCompanion;
+#[cfg(not(target_arch = "wasm32"))]
 pub use native::spawn_network;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::spawn_network_with_companion;
 #[cfg(test)]
 use native::{run_session_runtime, unless_cancelled};
 

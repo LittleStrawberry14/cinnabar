@@ -1,14 +1,14 @@
 //! One account operation for independent Realms and friend-world catalog sections.
 
 use super::*;
-use launcher::menu::view::{MenuFriendCard, MenuRealmCard};
+use launcher::menu::view::MenuRealmCard;
 
 /// Each section retains its own service failure; successful sections can still replace visible rows.
 pub struct CatalogCards {
     /// Accessible Realms, without resolving endpoints or accepting membership.
     pub realms: io::Result<Vec<MenuRealmCard>>,
     /// Listed friend worlds, without joining their multiplayer sessions.
-    pub friends: io::Result<Vec<MenuFriendCard>>,
+    pub friends: io::Result<Vec<super::NativeFriendWorld>>,
 }
 
 /// A complete read bound to the final persisted account generation and OAuth revision.
@@ -78,7 +78,28 @@ impl NativeAccount {
                 .activities(minecraft::SERVICE_CONFIG_ID, &[])
                 .await
                 .map_err(service_error)?;
-            Ok(friends::cards(activities, &xuid))
+            let generation = operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .generation
+                .clone();
+            Ok(friends::listed(activities, &xuid)
+                .into_iter()
+                .map(|world| {
+                    super::NativeFriendWorld::new(
+                        world.card,
+                        world.selection.map(|selection| {
+                            super::NativeFriendSelection::capture(
+                                Arc::clone(&operation.account),
+                                generation.clone(),
+                                xuid.clone(),
+                                selection,
+                            )
+                        }),
+                    )
+                })
+                .collect())
         })
         .await
         .map_err(|_| timed_out())

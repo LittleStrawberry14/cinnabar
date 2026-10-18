@@ -42,6 +42,14 @@ impl NativeAccount {
 
     /// Acquires and verifies one concrete account owner before either validation or service minting.
     pub(super) async fn acquire_verified(self: Arc<Self>) -> io::Result<Operation> {
+        self.acquire_verified_for(None).await
+    }
+
+    /// Rejects a retired service selection immediately after leasing, before restoring or acquiring credentials.
+    pub(super) async fn acquire_verified_for(
+        self: Arc<Self>,
+        expected_generation: Option<&str>,
+    ) -> io::Result<Operation> {
         let mut operation = loop {
             match self.begin() {
                 Ok(operation) => break operation,
@@ -65,6 +73,12 @@ impl NativeAccount {
             }
         });
         let lease = operation.lease.as_ref().expect("acquired lease");
+        if expected_generation.is_some_and(|expected| expected != lease.generation()) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native service account generation changed",
+            ));
+        }
         if self
             .selected_id
             .as_deref()

@@ -1,7 +1,7 @@
 //! Narrow projection of Xbox activity observations into the existing friend-world cards.
 //!
-//! Listing neither establishes session membership nor authorizes a connection. Unknown
-//! or malformed observations are skipped without retaining private admission metadata.
+//! Listing neither establishes session membership nor authorizes a connection. Opaque
+//! selected handles remain attached to their rows; malformed observations are skipped.
 
 use bedrock_services::xbox::social::Activity;
 use launcher::menu::view::{CatalogFriend, MenuFriendCard};
@@ -13,19 +13,71 @@ pub(super) const NETHERNET_TRANSPORT: i64 = 2;
 const WEBSOCKET_SIGNALING: i64 = 3;
 pub(super) const JSON_RPC_SIGNALING: i64 = 7;
 
+/// One visible world and its optional complete, generation-bound native selection.
+/// Display fields never supply transport authority.
+pub struct NativeFriendWorld {
+    /// Existing menu projection for this same row.
+    card: MenuFriendCard,
+    /// An opaque original service selection; unavailable observations cannot start a join.
+    selection: Option<super::NativeFriendSelection>,
+}
+
+impl NativeFriendWorld {
+    /// Binds a projection to the selection produced from that same service observation.
+    pub(super) fn new(
+        card: MenuFriendCard,
+        selection: Option<super::NativeFriendSelection>,
+    ) -> Self {
+        Self { card, selection }
+    }
+    /// Borrows display-only fields without exposing or manufacturing session admission metadata.
+    pub fn card(&self) -> &MenuFriendCard {
+        &self.card
+    }
+    /// Copies the opaque selected owner for one caller-driven join.
+    pub fn selection(&self) -> Option<super::NativeFriendSelection> {
+        self.selection.clone()
+    }
+}
+
+impl From<MenuFriendCard> for NativeFriendWorld {
+    /// Display-only records cannot acquire a native service selection.
+    fn from(card: MenuFriendCard) -> Self {
+        Self {
+            card,
+            selection: None,
+        }
+    }
+}
+
+pub(super) struct ListedFriend {
+    pub(super) card: MenuFriendCard,
+    pub(super) selection: Option<super::FriendSelection>,
+}
+
 /// Preserves service order and the current menu's one-row-per-host/world de-duplication.
+#[cfg(test)]
 pub(super) fn cards(activities: Vec<Activity>, self_xuid: &str) -> Vec<MenuFriendCard> {
+    listed(activities, self_xuid)
+        .into_iter()
+        .map(|world| world.card)
+        .collect()
+}
+
+/// Keeps opaque selection metadata attached to its projected row through filtering and de-duplication.
+pub(super) fn listed(activities: Vec<Activity>, self_xuid: &str) -> Vec<ListedFriend> {
     let mut seen = HashSet::new();
     let mut skipped = 0_usize;
     let values = activities
         .into_iter()
         .filter_map(|activity| {
+            let selection = super::FriendSelection::activity(&activity).ok();
             let Some(card) = card(activity, self_xuid) else {
                 skipped += 1;
                 return None;
             };
             seen.insert((card.xuid.clone(), card.world_name.clone()))
-                .then_some(card)
+                .then_some(ListedFriend { card, selection })
         })
         .collect();
     if skipped != 0 {

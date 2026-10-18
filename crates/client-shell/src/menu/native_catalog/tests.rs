@@ -48,14 +48,14 @@ fn native_catalog_owns_both_feeds_and_shares_the_selected_account_with_joins() {
     let first = menu.native_account_for(path.clone());
     menu.apply_native_catalog(CatalogCards {
         realms: Ok(vec![realm("native")]),
-        friends: Ok(vec![friend("native")]),
+        friends: Ok(vec![friend("native").into()]),
     });
     menu.sync_account_control(&mut Legacy);
     assert_eq!(menu.realms[0].name, "native");
     assert_eq!(menu.friends[0].world_name, "native");
     menu.apply_native_catalog(CatalogCards {
         realms: Err(std::io::ErrorKind::TimedOut.into()),
-        friends: Ok(vec![friend("new native")]),
+        friends: Ok(vec![friend("new native").into()]),
     });
     assert_eq!(menu.realms[0].name, "native");
     assert_eq!(menu.friends[0].world_name, "new native");

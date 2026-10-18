@@ -1,4 +1,5 @@
 //! Native network thread, runtime and capture teardown.
+use super::companion::{SessionCompanion, run_with_companion};
 use super::*;
 use crate::session::execution::NativeNetworkExecutor;
 use protocol::LoginSequence;
@@ -15,8 +16,25 @@ pub fn spawn_network<P: Send + 'static>(
     + 'static,
     observation: SessionTrace,
 ) -> Result<NetworkHandle<P>, std::io::Error> {
+    spawn_network_with_companion(config, prepare_presentation, observation, ())
+}
+
+/// Retains one application service through the whole existing network worker and explicit teardown.
+pub fn spawn_network_with_companion<P: Send + 'static>(
+    config: NetworkConfig,
+    prepare_presentation: impl FnOnce(
+        bedrock_packs::ResourcePackHandoff,
+        &protocol::GameData,
+        &(dyn Fn() -> bool + Sync),
+    ) -> Option<Result<PreparedSession<P>, String>>
+    + Send
+    + 'static,
+    observation: SessionTrace,
+    mut companion: impl SessionCompanion,
+) -> Result<NetworkHandle<P>, std::io::Error> {
     let (mut handle, channels) = network_channels(config.session_generation);
     let failure = channels.control_event_tx.clone();
+    let shutdown = handle.shutdown.clone();
     handle.thread = Some(
         thread::Builder::new()
             .name("bedrock-network".to_owned())
@@ -45,9 +63,32 @@ pub fn spawn_network<P: Send + 'static>(
                         .core_directory()
                         .map(std::path::Path::to_path_buf),
                 };
-                run_session_runtime(
-                    runtime,
-                    channels.run(
+                run_session_runtime(runtime, async {
+                    #[cfg(feature = "native-networking")]
+                    let mut config = config;
+                    #[cfg(feature = "native-networking")]
+                    {
+                        let mut cancelled = channels.shutdown_rx.clone();
+                        let preparation =
+                            wait_for_login_or_cancel(companion.prepare(), &mut cancelled).await;
+                        match preparation {
+                            None => {
+                                companion.close().await;
+                                return;
+                            }
+                            Some(Ok(None)) => {}
+                            Some(result) => {
+                                config.native_preparation = Some(Box::pin(async move {
+                                    result?.ok_or_else(|| {
+                                        std::io::Error::other(
+                                            "native service preparation is unavailable",
+                                        )
+                                    })
+                                }));
+                            }
+                        }
+                    }
+                    let work = channels.run(
                         move |cancelled| async move {
                             let prepare = move |handoff, game_data: protocol::GameData| {
                                 let packs = unless_cancelled(&cancelled, || {
@@ -92,8 +133,22 @@ pub fn spawn_network<P: Send + 'static>(
                         },
                         executor,
                         observation,
-                    ),
-                );
+                    );
+                    let result = run_with_companion(work, &mut companion, &shutdown).await;
+                    if let Err(error) = result {
+                        let event = NetworkControlEvent::Failed {
+                            message: error.to_string(),
+                            decode_error_count: 0,
+                            server_disconnect: None,
+                            origin: NetworkFailureOrigin::Receive,
+                        };
+                        // Retain the existing ordered control prefix while bounding final publication.
+                        let _ =
+                            tokio::time::timeout(FINAL_CONTROL_FLUSH_TIMEOUT, failure.send(event))
+                                .await;
+                    }
+                    companion.close().await;
+                });
                 if let Some(capture) = packet_capture
                     && !capture.finish(packet_log::CAPTURE_FINISH_TIMEOUT)
                 {

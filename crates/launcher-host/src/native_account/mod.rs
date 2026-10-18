@@ -14,7 +14,10 @@ mod realms;
 mod restore;
 pub use catalog::{CatalogCards, CatalogListing};
 pub use catalog_worker::CatalogWorker;
-pub use friend_join::{FriendAdmission, FriendJoin, FriendSelection, JoinProgress};
+pub use friend_join::{
+    FriendAdmission, FriendJoin, FriendSelection, JoinProgress, NativeFriendSelection,
+};
+pub use friends::NativeFriendWorld;
 pub use realms::is_realm_target;
 
 use bedrock_services::{
