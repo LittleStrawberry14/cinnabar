@@ -5675,7 +5675,7 @@ Scope: block registry + block-state → model/texture mapping (generated export 
   widening the eight-byte quad. The existing single opaque shader now applies
   bit-8 alpha cutout with depth writes and no blending. No Mojang payload is
   tracked. The deterministic live-evidence task remains open.
-- [ ] **2.5 Biome palettes and tinting.**  Decode/store biome data and apply
+- [ ] **2.5 Biome palettes and tinting.** Decode/store biome data and apply
   grass/foliage/water tint without widening the eight-byte quad record.
   - [x] Palette-native v1001 biome storage/column decoding, including padded
     Bedrock words, `0xff` previous-storage reuse, strict malformed-input
@@ -6652,7 +6652,7 @@ Scope: block registry + block-state → model/texture mapping (generated export 
     and light blocks as camera-facing sprites (`materials/barrier.material`) and structure voids
     as cube faces into their own terrain layers, drawn only while a creative local player's
     selected item is that block; those layers are not built.
-- [ ] **2.7 Client lighting and atmosphere.**  Block/sky flood fill, baked vertex
+- [ ] **2.7 Client lighting and atmosphere.** Block/sky flood fill, baked vertex
   light and day/night, then sky, fog, and clouds; finish the Phase 2 parity and
   teleport-remesh acceptance gates.
   - [x] Normalize SetTime and rain/thunder level events into bounded,
@@ -6947,7 +6947,7 @@ store it only under the user's temporary directory, inspect that file, and never
   render submission, and present latency independently; validate the final
   release path at radius 16 with no visible stalls and full-view remesh in at
   most two seconds.
-  
+
   - [x] Eliminate unchanged-light publication churn through `39c44e8`: exact
     no-op and direct-sky-provenance-only completions preserve sampled light
     identity/generation and perform zero mesh invalidations, while genuine
@@ -7136,7 +7136,7 @@ store it only under the user's temporary directory, inspect that file, and never
     of the fade distance are unverified, and no native gallery was taken.
   - [ ] Implement, independently review, and live-verify the finite cloud mesh.
 
-## Phase 3 — Movement and the local player 
+## Phase 3 — Movement and the local player
 
 **Goal:** playable movement that servers accept. Deliverable: walk/sprint/jump/sneak/swim/
 climb on a vanilla parkour course and on Lunar-fronted servers with server-auth movement,
@@ -7440,7 +7440,7 @@ tick states; correction/rewind handling (`CorrectPlayerMovePrediction`).
   all be acquired or applied is refused with vanilla's resource-pack message rather than
   downgraded to optional.
 
-- [ ] **3.4 Semantic controls and camera perspectives.** 
+- [ ] **3.4 Semantic controls and camera perspectives.**
   Touch parity remains an explicit open closure item. Its owner-deprioritized witness does
   not gate the Phase 3 scenario verdict, and a passing candidate run does not close touch.
   **Provisional (incomplete, closes no acceptance gate):** sprint latch/double-tap/toggle
@@ -7629,7 +7629,7 @@ and dropped-item rendering, paper-doll first-person arm/held item.
   post-merge protocol/client-world/app verification are green through `e7c85ea`; the LBSG live
   ground-contact witness remains open under 4.4.
 
-- [ ] **4.3 Data-driven Bedrock entity rigs and animation.**  Ingest the pinned
+- [ ] **4.3 Data-driven Bedrock entity rigs and animation.** Ingest the pinned
   vanilla resource pack's `entity`, `models/entity`, `animations`,
   `animation_controllers`, `render_controllers`, and `textures/entity` trees as
   bounded compiled assets. Evaluate only the reviewed Molang subset needed by
@@ -7659,7 +7659,7 @@ and dropped-item rendering, paper-doll first-person arm/held item.
   Animation clip payloads, the reviewed Molang/controller evaluator, runtime rig
   consumption and skeletal GPU skinning/posing, and native animated-actor evidence
   remain open.
-- [ ] **4.4 Live actor ground-contact and interpolation witness.**  Join
+- [ ] **4.4 Live actor ground-contact and interpolation witness.** Join
   `play.lbsg.net:19132` with the normal authenticated core, observe at least one
   remote player's spawn, ordinary movement, rotation, and teleport, and prove
   that AddPlayer/MovePlayer origins, three-tick convergence, frame
@@ -7668,7 +7668,7 @@ and dropped-item rendering, paper-doll first-person arm/held item.
   distinct from Bedrock's standing-player movement network offset (`1.62001`).
   Capture bounded native visual and packet/pose evidence.
 
-- [ ] **4.5 Held items, actions, dropped items, and viewmodel.** 
+- [ ] **4.5 Held items, actions, dropped items, and viewmodel.**
   - [ ] Pickup sound and the three-tick copied-item flight survive immediate server
     removal. The squared trajectory and collector offset follow the current vanilla
     rules; a version-matched rendered comparison remains incomplete.
@@ -7818,23 +7818,23 @@ fractional font scales (`font_scale_factor` 0.8, `small` at odd GUI scales) and
 outline OreUI fonts keep logical-pixel layout. Incomplete: no live Windows
 rendered-frame pass at a fractional display scale yet.
 
-- [ ] **5.1 Bedrock UI foundation.**  Create `crates/ui`, ingest the pinned pack's bitmap
+- [ ] **5.1 Bedrock UI foundation.** Create `crates/ui`, ingest the pinned pack's bitmap
   fonts/glyph metrics, implement bounded formatting-code-aware text layout, UI scaling/safe
   areas, focus/navigation, mouse/touch/controller input, and a shared retained draw pipeline.
   Prove no per-glyph mesh/material churn and exact cross-platform DPI behavior.
-- [ ] **5.2 Receive-only server text and HUD state.**  Normalize bounded `Text`, title,
+- [ ] **5.2 Receive-only server text and HUD state.** Normalize bounded `Text`, title,
   actionbar, toast, player-status, health/hunger/armor/air, and related lifecycle packets into
   vendor-neutral stores. Render chat history, title/actionbar, and the survival HUD without
   permitting UI focus to leak movement input.
-- [ ] **5.3 Interactive chat.**  Add chat focus/history/autocomplete, Bedrock formatting,
+- [ ] **5.3 Interactive chat.** Add chat focus/history/autocomplete, Bedrock formatting,
   bounded UTF-8 editing and clipboard behavior, then send through the Go core with session/FIFO
   identity and spam-safe rate limits. Verify third-party server receive/send and disconnect
   behavior.
-- [ ] **5.4 Scoreboard and boss bars.**  Normalize objective/display/score and boss-event
+- [ ] **5.4 Scoreboard and boss bars.** Normalize objective/display/score and boss-event
   create/update/remove packets into independent bounded lifecycle stores. Render sidebar/list/
   below-name objectives, score ordering, boss health/style/count stacking, and title/actionbar
   coexistence with deterministic replacement/removal tests.
-- [ ] **5.5 Interaction, hotbar, and inventory.**  Implement server-authoritative break cracks,
+- [ ] **5.5 Interaction, hotbar, and inventory.** Implement server-authoritative break cracks,
   placement/use, selected slot, item stack/network-ID reconciliation, creative/survival
   inventory, and chest/furnace/crafting containers with rollback on rejected stack requests.
 
@@ -8095,7 +8095,7 @@ transaction, server response, actor/inventory revisions, swing/hurt pose, and
 presented frame. No Lunar module is enabled, queried, or required for these
 gates.
 
-- [ ] **5.6 Server forms.**  Implement modal/menu/custom JSON forms, validation, cancellation,
+- [ ] **5.6 Server forms.** Implement modal/menu/custom JSON forms, validation, cancellation,
   keyboard/controller/touch navigation, and response routing. This is the prerequisite for
   Lunar ClickUI compatibility.
   Status: server resource-pack UI now reaches the JSON-UI form engine (per-layer indexed documents
@@ -8115,12 +8115,12 @@ gates.
   A sanitized 346-button featured-menu capture guards complete selection indexes; that
   menu already renders after the earlier button-limit fix. Broader visual parity remains
   incomplete until matching native captures verify these controls at the supported scales.
-- [ ] **5.7 UI parity and performance acceptance.**  Compare matching vanilla reference views at
+- [ ] **5.7 UI parity and performance acceptance.** Compare matching vanilla reference views at
   supported scales/aspect ratios, test keyboard/mouse/controller/touch focus transitions, and
   prove bounded retained memory plus stable frame time with chat, scoreboard, boss bars,
   inventory, and forms active together.
 
-- [ ] **5.8 In-game menu, controls, video settings, and persistence.** 
+- [ ] **5.8 In-game menu, controls, video settings, and persistence.**
 
   Desktop GUI scale modifier and fullscreen/F11 wiring are implemented,
   including preference persistence. The modifier range and scale rule use the
