@@ -4,7 +4,7 @@ use tokio::sync::{mpsc, oneshot};
 
 struct Fixture {
     updates: mpsc::Sender<bridge::XboxPresenceState>,
-    update_release: Mutex<Vec<oneshot::Receiver<()>>>,
+    update_release: Mutex<Vec<oneshot::Receiver<io::Result<()>>>>,
     removals: mpsc::Sender<()>,
     remove_release: Mutex<Option<oneshot::Receiver<io::Result<()>>>>,
     committed: Mutex<Vec<bridge::XboxPresenceState>>,
@@ -21,10 +21,13 @@ impl Service for Fixture {
     ) -> io::Result<Option<Duration>> {
         self.updates.send(state.clone()).await.unwrap();
         let release = self.update_release.lock().unwrap().pop();
-        if let Some(release) = release {
-            release.await.unwrap();
-        }
+        let outcome = if let Some(release) = release {
+            release.await.unwrap()
+        } else {
+            Ok(())
+        };
         self.committed.lock().unwrap().push(state.clone());
+        outcome?;
         Ok(Some(Duration::from_secs(3600)))
     }
     async fn remove(&self, _: &()) -> io::Result<()> {
@@ -38,7 +41,7 @@ struct Harness {
     service: Fixture,
     updates: mpsc::Receiver<bridge::XboxPresenceState>,
     removed: mpsc::Receiver<()>,
-    release: oneshot::Sender<()>,
+    release: oneshot::Sender<io::Result<()>>,
     cleanup: oneshot::Sender<io::Result<()>>,
 }
 
@@ -89,7 +92,7 @@ fn retirement_finishes_accepted_update_and_cleanup_before_authority_handoff() {
                 removed.try_recv().is_err(),
                 "cleanup overtook the retained original write"
             );
-            release.send(()).unwrap();
+            release.send(Ok(())).unwrap();
             removed.recv().await.unwrap();
             assert_eq!(service.committed.lock().unwrap().as_slice(), &[original]);
             assert_eq!(
@@ -134,7 +137,7 @@ fn changed_activity_is_coalesced_without_recreating_the_accepted_update() {
             };
             shared.lock().unwrap().xbox_presence = latest.clone();
             lifetime.wake();
-            release.send(()).unwrap();
+            release.send(Ok(())).unwrap();
             assert_eq!(updates.recv().await.unwrap(), latest);
             lifetime.retire();
             removed.recv().await.unwrap();
@@ -167,7 +170,7 @@ fn uncertain_cleanup_never_grants_a_replacement_lifetime() {
         let scenario = async {
             updates.recv().await.unwrap();
             lifetime.retire();
-            release.send(()).unwrap();
+            release.send(Ok(())).unwrap();
             removed.recv().await.unwrap();
             cleanup
                 .send(Err(io::Error::other("uncertain removal")))
@@ -196,5 +199,85 @@ fn expired_service_phase_cannot_poll_a_ready_write() {
         let result = bounded_until(tokio::time::Instant::now(), ready).await;
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
         assert!(!admitted.load(std::sync::atomic::Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn uncertain_update_and_successful_removal_hold_original_authority() {
+    runtime().unwrap().block_on(async {
+        let Harness {
+            service,
+            mut updates,
+            mut removed,
+            release,
+            cleanup,
+        } = fixture();
+        let shared = Mutex::new(Snapshot::default());
+        let lifetime = TitlePresenceLifetime::new();
+        let scenario = async {
+            let original = updates.recv().await.unwrap();
+            lifetime.retire();
+            // The actual admitted service future may have committed before transport failed.
+            release
+                .send(Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "synthetic transport lost the update response",
+                )))
+                .unwrap();
+            removed.recv().await.unwrap();
+            assert_eq!(service.committed.lock().unwrap().as_slice(), &[original]);
+            cleanup.send(Ok(())).unwrap();
+        };
+        tokio::join!(publish(&service, &shared, &lifetime), scenario);
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Unconfirmed),
+            "successful DELETE erased a possibly applied original POST"
+        );
+    });
+}
+
+#[test]
+fn uncertain_update_survives_later_successful_update_and_removal() {
+    runtime().unwrap().block_on(async {
+        let Harness {
+            service,
+            mut updates,
+            mut removed,
+            release,
+            cleanup,
+        } = fixture();
+        let shared = Mutex::new(Snapshot::default());
+        let lifetime = TitlePresenceLifetime::new();
+        let scenario = async {
+            let original = updates.recv().await.unwrap();
+            let latest = bridge::XboxPresenceState {
+                in_world: true,
+                experience: true,
+                ..Default::default()
+            };
+            shared.lock().unwrap().xbox_presence = latest.clone();
+            lifetime.wake();
+            release
+                .send(Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "synthetic transport lost the update response",
+                )))
+                .unwrap();
+            assert_eq!(updates.recv().await.unwrap(), latest);
+            lifetime.retire();
+            removed.recv().await.unwrap();
+            assert_eq!(
+                service.committed.lock().unwrap().as_slice(),
+                &[original, latest]
+            );
+            cleanup.send(Ok(())).unwrap();
+        };
+        tokio::join!(publish(&service, &shared, &lifetime), scenario);
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Unconfirmed),
+            "later successful requests cannot order a prior uncertain POST remotely"
+        );
     });
 }
