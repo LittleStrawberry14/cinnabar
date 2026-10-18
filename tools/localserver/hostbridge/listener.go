@@ -20,18 +20,22 @@ import (
 
 var _ server.Listener = (*Listener)(nil)
 
+// bridgeLifetime identifies the original cancellation owner until all of its peers retire.
+type bridgeLifetime struct {
+	cancel context.CancelFunc
+}
+
 // Listener retains one original process bridge and shares its actual connection cap with local listeners.
 type Listener struct {
 	mu        sync.Mutex
 	resources resources
 	ready     bool
 	closed    bool
-	active    bool
 	incoming  chan *Conn
 	slots     chan struct{}
 	visitors  map[uint64]*Conn
 	closing   chan struct{}
-	bridgeEnd context.CancelFunc
+	bridge    *bridgeLifetime
 	workers   sync.WaitGroup
 }
 
@@ -94,8 +98,8 @@ func (l *Listener) Close() error {
 		l.closed = true
 		close(l.closing)
 	}
-	if l.bridgeEnd != nil {
-		l.bridgeEnd()
+	if l.bridge != nil {
+		l.bridge.cancel()
 	}
 	peers := make([]*Conn, 0, len(l.visitors))
 	for _, c := range l.visitors {
@@ -155,22 +159,18 @@ func (l *Listener) Start(parent context.Context, bootstrap hostcontract.Bootstra
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.ready || l.closed || l.active {
+	if !l.ready || l.closed || l.bridge != nil {
 		return errProtocol
 	}
 	ctx, cancel := context.WithCancel(parent)
-	l.active, l.bridgeEnd = true, cancel
+	lifetime := &bridgeLifetime{cancel: cancel}
+	l.bridge = lifetime
 	l.workers.Add(1)
 	go func() {
 		defer l.workers.Done()
 		defer cancel()
 		defer clear(capability)
-		defer func() {
-			l.mu.Lock()
-			l.active, l.bridgeEnd = false, nil
-			l.mu.Unlock()
-		}()
-		l.serve(ctx, bootstrap, capability)
+		l.serve(ctx, bootstrap, lifetime)
 	}()
 	return nil
 }
