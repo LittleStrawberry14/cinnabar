@@ -41,15 +41,20 @@ account generation, establishes an acknowledged RTA binding before joining,
 and accepts only the joined host's peer identity and per-player nonce. Credential
 preparation and dirty-session revalidation share one leased SDK owner. Conditional
 cleanup preserves the original member binding and validator. Discovery cards do
-not grant admission. Retaining this membership through full connection, loading,
-play and every cancellation path is still being integrated; native friend UI
-joining stays unavailable until that lifetime is qualified.
+not grant admission. One companion on the existing network runtime retains
+membership through preparation, connection, loading and play. It preserves the
+actual pending service request and the original refresh deadline. Cleanup capacity
+is reserved before joining; unresolved membership returns to that bounded owner.
+Network terminals retain their cause while waiting for control-queue capacity,
+and explicit user cancellation remains authoritative. Owning lifecycle regressions
+and native compiler checks pass. Native friend UI joining stays unavailable until
+end-to-end account, signaling and cleanup acceptance is qualified.
 
 Incomplete: native hosted-world approval and publication, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled
 UI captures, real-account/device/server/network acceptance and Go-baseline
-performance measurements. Source-based vanilla parity and full maintainer gates
+performance measurements. Source-based vanilla parity and full integration gates
 remain open. These results do not authorize changing the default or removing Go.
 
 ## Native extension UI and HUD support (in progress)

@@ -7,9 +7,12 @@ and shared JSONC/archive handoffs. Cinnabar retains bounded CDN/cache I/O,
 installation and presentation. Owning protocol tests and strict protocol/host
 clippy pass, including service progress during incoming backpressure. Reusable
 networking and SDK candidates pass Linux/macOS/Windows/MSRV CI; pure protocol and
-client WebAssembly checks pass. Concrete friend/Messaging admission is source
-reviewed, but membership lifetime through connection/play and native friend UI
-qualification remain incomplete. Go stays the default. Real-account, broad
+client WebAssembly checks pass. Concrete friend/Messaging admission retains its
+membership through connection, loading and play on the existing runtime, with
+reserved cleanup capacity and retained network-terminal ownership. The owning
+session suite passes 119 tests; native app and owning-crate compiler checks pass.
+End-to-end account/signaling/cleanup acceptance and native friend UI qualification
+remain incomplete. Go stays the default. Real-account, broad
 server/device/network, performance and source-based parity gates remain open.
 
 ## Native protected checkpoint revisions (in progress)
