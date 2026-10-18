@@ -1,6 +1,8 @@
 use super::*;
 use std::future::Future;
 
+mod public_close;
+
 struct ReplayConnection {
     incoming: mpsc::Receiver<Bytes>,
     fifth_read: Option<oneshot::Sender<()>>,
