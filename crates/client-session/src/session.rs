@@ -30,10 +30,12 @@ const FINAL_CONTROL_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 const NETWORK_PUMP_TERMINAL_MARKER: &str = "CINNABAR_NETWORK_PUMP_TERMINAL";
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone)]
 pub struct NetworkConfig {
     pub session_generation: SessionGeneration,
     pub endpoint: protocol::SessionEndpoint,
+    /// One application-owned acquisition future, polled on this session's runtime and cancelled with it.
+    #[cfg(feature = "native-networking")]
+    pub native_authentication: Option<NativeAuthenticationPreparation>,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -46,6 +48,15 @@ pub struct NetworkConfig {
     /// Records this session's full packet capture when set.
     pub packet_capture: Option<packet_log::PacketCaptureRequest>,
 }
+
+/// A one-shot application preparation that moves its connection proof into Login.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub type NativeAuthenticationPreparation = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<protocol::NativeAuthentication, std::io::Error>>
+            + Send,
+    >,
+>;
 
 /// Prepared facts returned by the pack owner at the join bootstrap boundary.
 #[derive(Debug)]

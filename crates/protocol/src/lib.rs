@@ -183,7 +183,7 @@ pub use login::{
     JoinPreparation, LoginSequence, LoginSettings, PROTOCOL_VERSION, PacketIdTraceSnapshot,
     PlayOutbound, PlaySession, ResourcePackArchive, ResourcePackContentKey, ResourcePackHandoff,
     SessionIo, SessionLogin, StartupItems, StartupSettings, WRITE_FAILURE_DRAIN, WebSessionReader,
-    login_memory_tier, network_stack_latency_reply,
+    login_client_data, login_memory_tier, network_stack_latency_reply,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,

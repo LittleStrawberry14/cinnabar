@@ -22,11 +22,22 @@ pub(super) struct Manager {
     pub work: Option<crossbeam_channel::Receiver<(bool, bool)>>,
     pub(super) remember: Option<crossbeam_channel::Receiver<bool>>,
     remember_retry: Option<std::time::Instant>,
+    reload_pending: bool,
 }
 
 use launcher_host::accounts::{Operation, operation_job, remember};
 
 impl MenuRuntime {
+    /// Identity selected by the account picker, captured before an asynchronous native join.
+    pub fn selected_account_id(&self) -> Option<&str> {
+        self.feeds.account_active_id.as_deref()
+    }
+
+    /// Whether account storage is about to change, so a native acquisition must be cancelled first.
+    pub fn account_operation_pending(&self) -> bool {
+        self.accounts.operation.is_some() || self.accounts.work.is_some()
+    }
+
     pub(super) fn account_change_pending(&self) -> bool {
         self.feeds.account_adding
             || self.accounts.operation.is_some()
@@ -155,17 +166,24 @@ impl MenuRuntime {
             return;
         }
         let store = self.account_store();
-        match store.list() {
-            Ok(accounts) => {
+        match store.try_snapshot() {
+            Ok((accounts, active)) => {
+                self.accounts.reload_pending = false;
                 self.feeds.accounts = accounts;
                 self.feeds.account_active_id = self
                     .layout
                     .auth_cache()
                     .is_file()
-                    .then(|| store.active_id().ok().flatten())
+                    .then_some(active)
                     .flatten();
             }
-            Err(_) => self.feeds.account_error = Some("Could not load saved accounts.".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                self.accounts.reload_pending = true
+            }
+            Err(_) => {
+                self.accounts.reload_pending = false;
+                self.feeds.account_error = Some("Could not load saved accounts.".into());
+            }
         }
     }
 
@@ -191,11 +209,14 @@ impl MenuRuntime {
             self.feeds.profile_refresh_requested = true;
             return;
         }
+        if self.account_store().try_discard_pending().is_err() {
+            self.feeds.account_error = Some("The saved account is busy. Try again.".into());
+            return;
+        }
         self.feeds.account_error = None;
         self.feeds.account_adding = true;
         self.accounts.pending_ready = false;
         // Each Add account starts a fresh device flow, even after an abandoned attempt.
-        let _ = self.account_store().discard_pending();
         self.start_sign_in();
     }
 
@@ -239,6 +260,9 @@ impl MenuRuntime {
     pub fn poll_accounts(&mut self) {
         if self.external.is_some() {
             return;
+        }
+        if self.accounts.reload_pending && !self.account_operation_pending() {
+            self.reload_accounts();
         }
         if let Some(receiver) = &self.accounts.work {
             match receiver.try_recv() {

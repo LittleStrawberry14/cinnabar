@@ -14,13 +14,15 @@ pub(crate) use preparation::Preparation;
 pub type NetworkControlEvent = client_session::NetworkControlEvent<PackApplication>;
 
 /// Startup snapshot supplied by application composition.
-#[derive(Debug, Clone)]
 #[cfg(not(target_arch = "wasm32"))]
 pub struct NetworkConfig {
     /// Immutable world and collision inputs captured for this join.
     pub(crate) registry_base: super::session_registries::RegistryBase,
     pub session_generation: simulation_clock::identity::SessionGeneration,
     pub endpoint: protocol::SessionEndpoint,
+    /// Cached account owner for an explicitly authenticated native join.
+    #[cfg(feature = "native-networking")]
+    pub native_account: Option<std::sync::Arc<launcher_host::native_account::NativeAccount>>,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -44,6 +46,33 @@ pub fn spawn_network(
     config: NetworkConfig,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
     let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
+    let player_skin = config.player_skin.to_client_skin();
+    #[cfg(feature = "native-networking")]
+    let native_authentication = if let Some(account) = config.native_account {
+        if !matches!(&config.endpoint, protocol::SessionEndpoint::Native(target) if target.transport == protocol::NativeTransport::RakNet)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "authenticated native joins currently require direct RakNet",
+            ));
+        }
+        let skin = player_skin.clone();
+        let settings = config.login_settings.clone();
+        let display_name = config.display_name.clone();
+        let client_random_id = config.client_random_id;
+        Some(Box::pin(async move {
+            let claims = protocol::login_client_data(
+                &display_name,
+                client_random_id,
+                Some(&skin),
+                &settings,
+            );
+            account.prepare(claims, client_random_id).await
+        })
+            as client_session::NativeAuthenticationPreparation)
+    } else {
+        None
+    };
     let preparation = Preparation {
         registry_base: config.registry_base,
         session_generation: config.session_generation,
@@ -55,10 +84,12 @@ pub fn spawn_network(
         client_session::NetworkConfig {
             session_generation: config.session_generation,
             endpoint: config.endpoint,
+            #[cfg(feature = "native-networking")]
+            native_authentication,
             display_name: config.display_name,
             client_random_id: config.client_random_id,
             client_blob_cache: config.client_blob_cache,
-            player_skin: config.player_skin.to_client_skin(),
+            player_skin,
             login_settings: config.login_settings,
             packet_capture: packet_capture_request(
                 std::env::var_os(client_session::markers::PACKET_CAPTURE).as_deref(),

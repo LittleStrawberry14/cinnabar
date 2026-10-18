@@ -14,6 +14,34 @@ from the sample archive pinned in `assets/vanilla-source.json`. The sample files
 carry the notice “(c) Mojang AB. All rights reserved.” and are subject to the
 [Minecraft End User License Agreement](https://www.minecraft.net/en-us/eula).
 
+## Gophertunnel login identifier
+
+The self-signed login ID derivation and its regression vectors in
+`crates/launcher-host/src/native_account/metadata.rs` are adapted from
+[Gophertunnel](https://github.com/HashimTheArab/gophertunnel/tree/81e65c54fb21587a6492014857710e32740c2a4f/minecraft/protocol/login).
+
+MIT License
+
+Copyright (c) 2019 Sandertv
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Setup window panorama
 
 - Files: `assets/panorama/` (`panorama_0.jpg` .. `panorama_5.jpg`)

@@ -117,7 +117,7 @@ pub fn login_memory_tier(physical_bytes: u64) -> u32 {
 
 /// Builds claims with the caller's stored ID and player settings; `None` uploads the
 /// solid-white 64x64 placeholder skin.
-pub(crate) fn login_client_data(
+pub fn login_client_data(
     display_name: &str,
     client_random_id: ClientRandomId,
     skin: Option<&ClientSkin>,

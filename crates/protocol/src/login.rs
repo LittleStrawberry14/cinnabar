@@ -44,7 +44,7 @@ pub use web_handoff::WebSessionReader;
 pub const WRITE_FAILURE_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 pub use client_data::{
     ClientCape, ClientRandomId, ClientSkin, ClientSkinGeometry, GAME_VERSION, LoginSettings,
-    PROTOCOL_VERSION, login_memory_tier,
+    PROTOCOL_VERSION, login_client_data, login_memory_tier,
 };
 pub use game_data::{GameData, StartupItems, StartupSettings};
 pub use latency_probe::network_stack_latency_reply;

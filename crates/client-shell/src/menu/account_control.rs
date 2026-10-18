@@ -175,10 +175,9 @@ impl MenuRuntime {
         self.sync_realm_membership(control);
     }
 
-    /// Sign out without a launcher core: the saved tokens are removed here.
+    /// Queues sign-out without a launcher core; its storage worker owns every credential lease.
     pub fn sign_out_locally(&mut self) {
         if std::mem::take(&mut self.sign_out_requested) {
-            let _ = std::fs::remove_file(self.layout.auth_cache());
             self.finish_sign_out();
         }
     }

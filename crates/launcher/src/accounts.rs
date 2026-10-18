@@ -7,6 +7,8 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod native;
+
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// The shared download and local-copy bound for catalog and Xbox profile artwork.
 pub const MAX_ARTWORK_BYTES: usize =
@@ -83,14 +85,7 @@ impl AccountStore {
 
     pub fn list(&self) -> io::Result<Vec<AccountProfile>> {
         let _lease = self.lease()?;
-        let mut profiles: Vec<_> = self.index()?.profiles.into_values().collect();
-        profiles.sort_by(|a, b| {
-            a.gamertag
-                .to_lowercase()
-                .cmp(&b.gamertag.to_lowercase())
-                .then(a.id.cmp(&b.id))
-        });
-        Ok(profiles)
+        Ok(sorted_profiles(self.index()?.profiles.into_values()))
     }
 
     pub fn active_id(&self) -> io::Result<Option<String>> {
@@ -173,6 +168,7 @@ impl AccountStore {
     pub fn sign_out(&self) -> io::Result<()> {
         let _lease = self.lease()?;
         let _active = cache_leases(&self.active_cache)?;
+        native::remove_current_checkpoint(self)?;
         remove_optional(&self.active_cache)?;
         remove_optional(&derived_path(&self.active_cache))?;
         let mut index = self.index()?;
@@ -320,6 +316,18 @@ fn picture_extension(bytes: &[u8]) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// Orders saved identities consistently in blocking and nonblocking account snapshots.
+fn sorted_profiles(profiles: impl Iterator<Item = AccountProfile>) -> Vec<AccountProfile> {
+    let mut profiles: Vec<_> = profiles.collect();
+    profiles.sort_by(|a, b| {
+        a.gamertag
+            .to_lowercase()
+            .cmp(&b.gamertag.to_lowercase())
+            .then(a.id.cmp(&b.id))
+    });
+    profiles
 }
 
 fn checked_id(id: &str) -> io::Result<()> {
