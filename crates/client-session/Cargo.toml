@@ -15,6 +15,7 @@ bridge = { path = "../bridge" }
 crossbeam-channel = "0.5"
 bytes.workspace = true
 protocol = { path = "../protocol" }
+resource-pack = { path = "../resource-pack" }
 server-experience = { path = "../server-experience", default-features = false }
 serde_json = "1"
 thiserror.workspace = true
