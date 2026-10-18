@@ -50,8 +50,9 @@ account-lifetime publisher on the existing account event runtime. It reuses the
 selected leased SDK owner, coalesces activity, retains each actual service future
 and schedules the returned heartbeat interval. Core policy changes wait for the
 old process's actual retirement; account switches and replacement publishers also
-wait for original-generation native cleanup. Unconfirmed exit/removal retains one
-cleanup obligation and blocks replacement. Owning execution, end-to-end protected
+wait for original-generation native cleanup. An uncertain update, removal or
+worker exit retains one cleanup obligation and blocks replacement; later successful
+HTTP responses do not prove ordering of a previously ambiguous write. Owning execution, end-to-end protected
 HTTP/process transitions and real-account presence qualification remain open;
 bounded HTTP completion does not prove server-side write ordering after cancellation.
 

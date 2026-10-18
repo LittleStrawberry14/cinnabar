@@ -76,6 +76,9 @@ async fn publish(
         return;
     };
     let mut wrote = false;
+    // The service supplies no ordering/reconciliation proof for a lost POST response.
+    // Keep that possible remote write through every later update and removal.
+    let mut uncertain_write = false;
     while !lifetime.retirement_requested() {
         let state = latest(shared);
         // Keep this actual future pinned by the enclosing async lifetime, even when state changes.
@@ -91,6 +94,7 @@ async fn publish(
                 .filter(|d| !d.is_zero())
                 .unwrap_or(FALLBACK_HEARTBEAT),
             Ok(Err(error)) => {
+                uncertain_write = true;
                 tracing::warn!("native title presence update failed");
                 if error.kind() == io::ErrorKind::PermissionDenied {
                     lifetime.retire();
@@ -98,6 +102,7 @@ async fn publish(
                 RETRY_INTERVAL
             }
             Err(_) => {
+                uncertain_write = true;
                 tracing::warn!("native title presence update timed out");
                 RETRY_INTERVAL
             }
@@ -109,7 +114,7 @@ async fn publish(
         let until = now.checked_add(delay).unwrap_or(now + FALLBACK_HEARTBEAT);
         wait_latest(shared, lifetime, &state, until).await;
     }
-    let confirmed = !wrote
+    let removed = !wrote
         || matches!(
             bounded_until(
                 tokio::time::Instant::now() + CLEANUP_BUDGET,
@@ -118,6 +123,7 @@ async fn publish(
             .await,
             Ok(Ok(()))
         );
+    let confirmed = removed && !uncertain_write;
     if !confirmed {
         tracing::warn!("native title presence cleanup unconfirmed; replacement remains blocked");
     }
