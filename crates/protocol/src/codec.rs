@@ -111,6 +111,8 @@ pub(crate) enum SessionFailure {
     TooManyPackets { max: usize },
     #[error("invalid client startup: {0}")]
     ClientSpawn(#[source] bedrock_client::spawn::SpawnError),
+    #[error("client handshake failed: {0}")]
+    ClientHandshake(#[source] bedrock_client::handshake::HandshakeError),
     /// A Disconnect ended the join; the texts are the server's own, unbounded.
     #[error("server disconnected during {stage}: {reason}")]
     ServerDisconnect {
@@ -138,7 +140,10 @@ impl SessionFailure {
         if matches!(self, Self::NativeTransport(_)) {
             return false;
         }
-        !matches!(self, Self::Transport(_) | Self::ConnectionClosed)
+        !matches!(
+            self,
+            Self::Transport(_) | Self::ConnectionClosed | Self::ClientHandshake(_)
+        )
     }
 
     /// Whether a delivered packet failed decoding or startup validation.

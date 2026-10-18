@@ -11,8 +11,10 @@ use bedrock_protocol_1_26_51::packets::{self, Disconnect, ItemRegistry, PacketId
 
 use crate::codec::SessionFailure;
 use crate::disconnect::{delivered_texts, disconnect_reason, join_disconnect, packet_texts};
+use crate::packet_tap::PacketOutcome;
 use crate::raw_packet::RawPacket;
 use crate::session_transport::{Inbound, SessionTransport, Terminal};
+use crate::ui::{PlayerStatus, player_status};
 use crate::{LoadingScreenPhase, Packet, ProtocolError, ServerTransferEvent, SessionError};
 
 /// Bounds the bytes deferred to play while the spawn prerequisites arrive.
@@ -70,6 +72,7 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
     };
     let mut negotiation = SpawnNegotiation::new(request).map_err(spawn_failure)?;
     let mut deferred = DeferredPackets::default();
+    let mut skipped_statuses = 0_u64;
     loop {
         let raw = recv_startup(transport).await?;
         let update = match raw.id {
@@ -79,10 +82,35 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                 };
                 return Err(packet_disconnect(&disconnect).into());
             }
-            PacketId::StartGame
-            | PacketId::ItemRegistry
-            | PacketId::PlayStatus
-            | PacketId::ChunkRadiusUpdated => {
+            PacketId::PlayStatus => {
+                let packets::Packet::PlayStatus(status) = *raw.decode()?.data else {
+                    unreachable!("packet ID and decoded variant must agree")
+                };
+                match player_status(status.status) {
+                    Ok(PlayerStatus::LoginSuccess) => SpawnUpdate::default(),
+                    Ok(PlayerStatus::PlayerSpawn) => negotiation
+                        .receive(packets::Packet::PlayStatus(status))
+                        .map_err(spawn_failure)?,
+                    Ok(_) => {
+                        transport.accept_current();
+                        return Err(SessionFailure::ClientHandshake(
+                            bedrock_client::handshake::HandshakeError::LoginRefused(status.status),
+                        )
+                        .into());
+                    }
+                    Err(reason) => {
+                        skipped_statuses = skipped_statuses.saturating_add(1);
+                        transport.reject_current(PacketOutcome::Skipped);
+                        tracing::warn!(
+                            ?reason,
+                            skipped_statuses,
+                            "ignoring unknown startup status"
+                        );
+                        SpawnUpdate::default()
+                    }
+                }
+            }
+            PacketId::StartGame | PacketId::ItemRegistry | PacketId::ChunkRadiusUpdated => {
                 let update = negotiation
                     .receive(*raw.clone().decode()?.data)
                     .map_err(spawn_failure)?;
