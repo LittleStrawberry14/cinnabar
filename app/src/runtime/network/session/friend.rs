@@ -170,7 +170,7 @@ impl SessionCompanion for FriendCompanion {
             if let Some(friend) = &mut self.lease.friend {
                 friend.stop_transport();
             }
-            tracing::warn!("friend-world membership cleanup remains pending");
+            bevy::log::warn!("friend-world membership cleanup remains pending");
         }
     }
 }
