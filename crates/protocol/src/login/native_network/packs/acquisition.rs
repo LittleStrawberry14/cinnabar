@@ -1,6 +1,5 @@
 //! Runtime-only HTTP and persistent archive I/O for native direct joins.
 
-use bedrock_client::packs::PackNegotiation;
 use bedrock_protocol_1_26_51::types::PackInfoData;
 use resource_pack::cache::{ArchiveCache, ArchiveCacheKey, DEFAULT_CACHE_QUOTA};
 use std::{
@@ -201,7 +200,7 @@ impl Stores {
     pub(super) fn queue_completed(
         &mut self,
         cache: &Option<Arc<ArchiveCache>>,
-        negotiation: &PackNegotiation,
+        completed_archive: impl Fn(uuid::Uuid) -> Option<Arc<Vec<u8>>>,
         cancelled: &Arc<AtomicBool>,
     ) {
         let Some(cache) = cache else {
@@ -210,7 +209,7 @@ impl Stores {
         let ready = self
             .pending
             .keys()
-            .filter_map(|id| negotiation.completed_archive(*id).map(|bytes| (*id, bytes)))
+            .filter_map(|id| completed_archive(*id).map(|bytes| (*id, bytes)))
             .collect::<Vec<_>>();
         for (id, bytes) in ready {
             let (key, size) = self.pending.remove(&id).expect("registered cache identity");

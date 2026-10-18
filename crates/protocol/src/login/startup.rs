@@ -61,7 +61,7 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
     transport: &mut SessionTransport<R>,
     view_distance_chunks: u8,
     on_startup: impl FnOnce(StartGame, ItemRegistry),
-) -> Result<(SpawnNegotiation, SpawnReady), ProtocolError> {
+) -> Result<SpawnReady, ProtocolError> {
     let mut on_startup = Some(on_startup);
     let request = crate::request_chunk_radius_packet(
         view_distance_chunks,
@@ -149,17 +149,15 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
         }
         if let Some(ready) = update.ready {
             transport.prepend(deferred.into_packets());
-            return Ok((negotiation, ready));
+            return Ok(ready);
         }
     }
 }
 
 /// Adds application loading policy to the ready core's one-shot initialization response.
 /// The private play constructor receives this owner only after startup readiness.
-pub(super) fn loading_finished(mut negotiation: SpawnNegotiation) -> Vec<Packet> {
-    let initialized = negotiation
-        .finish_loading()
-        .expect("play retains a ready spawn owner until presentation completes");
+pub(super) fn loading_finished(ready: SpawnReady) -> Vec<Packet> {
+    let initialized = ready.finish_loading();
     vec![
         crate::loading_screen_packet(LoadingScreenPhase::End, None),
         Packet::new(initialized),
@@ -173,13 +171,14 @@ fn spawn_failure(error: SpawnError) -> ProtocolError {
 
 /// Supplies a real ready core for play-only fixtures without running an I/O join.
 #[cfg(test)]
-pub(super) fn ready_fixture(runtime_id: u64) -> SpawnNegotiation {
+pub(super) fn ready_fixture(runtime_id: u64) -> SpawnReady {
     let radius = i32::from(DEFAULT_CHUNK_RADIUS);
     let mut negotiation = SpawnNegotiation::new(packets::RequestChunkRadius {
         chunk_radius: bedrock_protocol_1_26_51::wire::ZigZag32(radius),
         max_chunk_radius: bedrock_protocol_1_26_51::wire::U8(DEFAULT_CHUNK_RADIUS),
     })
     .unwrap();
+    let mut ready = None;
     for packet in [
         packets::Packet::StartGame(Box::new(StartGame {
             runtime_id: bedrock_protocol_1_26_51::types::ActorRuntimeID(runtime_id),
@@ -193,9 +192,9 @@ pub(super) fn ready_fixture(runtime_id: u64) -> SpawnNegotiation {
             status: bedrock_protocol_1_26_51::enums::PlayStatusType::Playerspawn,
         }),
     ] {
-        negotiation.receive(packet).unwrap();
+        ready = negotiation.receive(packet).unwrap().ready.or(ready);
     }
-    negotiation
+    ready.expect("actual startup prerequisites supplied readiness")
 }
 
 /// Returns the next startup packet. A usable transfer, from the core or in a batch, ends the join;

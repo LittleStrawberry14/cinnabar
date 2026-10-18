@@ -13,10 +13,7 @@ use super::{LoginSequence, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
 use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
-use bedrock_client::{
-    handshake::{HandshakeError, HandshakeEvent},
-    packs::PackNegotiation,
-};
+use bedrock_client::handshake::{ClientKeyExchange, HandshakeError};
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use std::io;
@@ -154,39 +151,17 @@ async fn connect<P: Send + 'static>(
     spawn::continue_join(negotiated, login, prepare).await
 }
 
-/// Applies ordered pure-core effects on the retained connection without restarting its FIFO.
-async fn apply_handshake(
+/// Installs the verified streams and flushes their acknowledgment before returning the same owner.
+async fn apply_key_exchange<C>(
     connection: &mut Connection,
-    event: HandshakeEvent,
-) -> Result<Option<PackNegotiation>, ProtocolError> {
-    match event {
-        HandshakeEvent::Send(packets) => packs::send_packets(connection, packets).await?,
-        HandshakeEvent::KeyExchange { ciphers, response } => {
-            if let Some(ciphers) = ciphers {
-                connection.enable_encryption(*ciphers).map_err(failure)?;
-            }
-            connection.send(response).await?;
-        }
-        HandshakeEvent::Packs {
-            cache_status,
-            negotiation,
-        } => {
-            if let Some(status) = cache_status {
-                connection.send(status).await?;
-            }
-            return Ok(Some(negotiation));
-        }
-        HandshakeEvent::Unhandled(packet) => {
-            connection.defer_unhandled(*packet)?;
-        }
-        _ => {
-            return Err(failure(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected client handshake effect",
-            )));
-        }
+    exchange: ClientKeyExchange<C>,
+) -> Result<C, ProtocolError> {
+    let (continuation, ciphers, response) = exchange.into_parts();
+    if let Some(ciphers) = ciphers {
+        connection.enable_encryption(*ciphers).map_err(failure)?;
     }
-    Ok(None)
+    connection.send(response).await?;
+    Ok(continuation)
 }
 
 /// Keeps the reusable handshake failure as a typed cause of the native connection error.

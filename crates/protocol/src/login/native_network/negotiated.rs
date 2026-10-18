@@ -1,11 +1,13 @@
 //! Exclusive native connection state after Login and resource-pack negotiation.
 
 use super::{
-    Connection, NativeAuthentication, apply_handshake, authentication, failure, handshake_failure,
-    packs, transport,
+    Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
+    handshake_failure, packs, transport,
 };
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
-use bedrock_client::handshake::{ClientHandshake, HandshakeEvent, HandshakeOptions};
+use bedrock_client::handshake::{
+    ClientHandshake, ClientLogin, ClientPackOffer, HandshakeOptions, LoginEvent, SettingsEvent,
+};
 use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
@@ -64,7 +66,7 @@ pub(super) async fn negotiate(
             }
         })?;
     let mut connection = Connection::new(transport);
-    let mut handshake = ClientHandshake::new(
+    let configured = ClientHandshake::new(
         key,
         HandshakeOptions {
             batch_encryption: connection.transport.batch_encryption(),
@@ -74,27 +76,26 @@ pub(super) async fn negotiate(
         },
     )
     .map_err(handshake_failure)?;
-    connection
-        .send(handshake.start().map_err(handshake_failure)?)
-        .await?;
-    loop {
+    let (mut settings, request) = configured.start().map_err(handshake_failure)?;
+    connection.send(request).await?;
+    let login_ready = loop {
         let packet = connection.next_packet().await.map_err(failure)?;
-        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
-        match event {
-            HandshakeEvent::Compression(settings) => {
-                connection.enable_compression(settings);
-                break;
+        match settings.receive(*packet.data).map_err(handshake_failure)? {
+            SettingsEvent::Ready { login, compression } => {
+                connection
+                    .enable_compression(compression)
+                    .map_err(failure)?;
+                break login;
             }
-            event => {
-                if apply_handshake(&mut connection, event).await?.is_some() {
-                    return Err(failure(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "resource offer preceded Login",
-                    )));
-                }
+            SettingsEvent::Pending {
+                settings: pending,
+                packet,
+            } => {
+                connection.defer_unhandled(*packet)?;
+                settings = pending;
             }
         }
-    }
+    };
     let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
         (serde_json::Value::Object(claims), Some((token, expires)))
     } else {
@@ -121,13 +122,13 @@ pub(super) async fn negotiate(
     .map_err(io::Error::other)
     .map_err(failure)?;
     let deadline = token.as_ref().map(|(_, expires)| *expires);
-    let packet = if let Some((token, expires)) = token {
+    let (handshake, packet) = if let Some((token, expires)) = token {
         authentication::ensure_current(expires, std::time::Instant::now())
             .map_err(ProtocolError::Authentication)?;
-        handshake.login_authenticated(&token, &claims)
+        login_ready.login_authenticated(&token, &claims)
     } else {
         let identity = uuid::Uuid::new_v4().to_string();
-        handshake.login_offline(
+        login_ready.login_offline(
             &OfflineIdentity {
                 display_name: login.display_name,
                 identity: &identity,
@@ -139,26 +140,51 @@ pub(super) async fn negotiate(
             SystemTime::now(),
         )
     }
-    .map_err(handshake_failure)?;
+    .map_err(|error| handshake_failure(error.into_parts().1))?;
     match deadline {
         Some(deadline) => connection.send_before(packet, deadline).await?,
         None => connection.send(packet).await?,
     }
-    let negotiation = loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
-        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
-        if let Some(negotiation) = apply_handshake(&mut connection, event).await? {
-            break negotiation;
-        }
-    };
+    let offer = receive_offer(&mut connection, handshake).await?;
     let packs = packs::acquire(
         &mut connection,
-        &mut handshake,
-        negotiation,
+        offer,
         login.settings.resource_pack_cache_dir.as_deref(),
     )
     .await?;
     Ok(NegotiatedConnection { connection, packs })
+}
+
+/// Processes post-Login controls until the actual offer moves the same key into pack transfer.
+async fn receive_offer(
+    connection: &mut Connection,
+    mut handshake: ClientLogin,
+) -> Result<ClientPackOffer, ProtocolError> {
+    loop {
+        let packet = connection.next_packet().await.map_err(failure)?;
+        match handshake.receive(*packet.data).map_err(handshake_failure)? {
+            LoginEvent::Send { login, packets } => {
+                packs::send_packets(connection, packets).await?;
+                handshake = login;
+            }
+            LoginEvent::KeyExchange(exchange) => {
+                handshake = apply_key_exchange(connection, exchange).await?;
+            }
+            LoginEvent::Packs {
+                cache_status,
+                packs,
+            } => {
+                if let Some(status) = cache_status {
+                    connection.send(status).await?;
+                }
+                return Ok(packs);
+            }
+            LoginEvent::Unhandled { login, packet } => {
+                connection.defer_unhandled(*packet)?;
+                handshake = login;
+            }
+        }
+    }
 }
 
 /// Reports the actual host family for a signed-out connection, independently of OAuth titles.

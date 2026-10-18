@@ -8,7 +8,11 @@ use nethernet_tokio::{AcceptedSession, NetherServer, ServerData};
 use std::time::Duration;
 
 /// Sends generated packets through the same bounded batch codec used by native connections.
-async fn send(peer: &AcceptedSession, codec: &BatchCodec, packets: &[crate::Packet]) {
+async fn send<S: bedrock_net::BatchPhase>(
+    peer: &AcceptedSession,
+    codec: &BatchCodec<S>,
+    packets: &[crate::Packet],
+) {
     let body = crate::session_transport::batch_body(packets).unwrap();
     let entries = wire::Frames::new(body, BatchLimits::default().max_packets)
         .map(|entry| {
@@ -24,7 +28,10 @@ async fn send(peer: &AcceptedSession, codec: &BatchCodec, packets: &[crate::Pack
 }
 
 /// Reads one real reliable message and decodes its original generated packet entries.
-async fn receive(peer: &mut AcceptedSession, codec: &BatchCodec) -> Vec<crate::Packet> {
+async fn receive<S: bedrock_net::BatchPhase>(
+    peer: &mut AcceptedSession,
+    codec: &BatchCodec<S>,
+) -> Vec<crate::Packet> {
     let message = peer.reliable.recv().await.unwrap().unwrap();
     let DecodeOutcome::Packets { packets, .. } = codec.decode(message).unwrap() else {
         panic!("the native client must send a valid batch");
@@ -84,7 +91,7 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
         });
         let server = async {
             let mut peer = listener.accept().await.unwrap();
-            let mut codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
+            let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
             assert!(matches!(
                 &*receive(&mut peer, &codec).await[0].data,
                 packets::Packet::RequestNetworkSettings(_)
@@ -98,7 +105,7 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
                 })],
             )
             .await;
-            codec.enable_compression(CompressionSettings {
+            let codec = codec.negotiate(CompressionSettings {
                 algorithm: CompressionAlgorithm::Deflate,
                 threshold: u16::MAX,
             });

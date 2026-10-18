@@ -21,7 +21,7 @@ pub(super) async fn continue_join<P: Send + 'static>(
     transport.adopt_startup(deferred);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;
-    let (initialization, spawned) = super::super::startup::await_spawn(
+    let initialization = super::super::startup::await_spawn(
         &mut transport,
         login.settings.view_distance_chunks,
         |start, items| {
@@ -38,12 +38,7 @@ pub(super) async fn continue_join<P: Send + 'static>(
         () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => job.await,
     };
     Ok((
-        PlaySession::new(
-            transport,
-            login.cache,
-            initialization,
-            spawned.terrain_received,
-        ),
+        PlaySession::new(transport, login.cache, initialization),
         prepared,
     ))
 }

@@ -12,12 +12,12 @@ use super::PlaySession;
 use super::cache_status::SharedCacheStatus;
 use crate::packet_tap::PacketTap;
 use crate::{Packet, ProtocolError};
-use bedrock_client::spawn::SpawnNegotiation;
+use bedrock_client::spawn::SpawnReady;
 
 /// The write half of a play session: frames whole batches without borrowing the session.
 pub struct PlayOutbound {
     frames: PacketSender,
-    pending_initialization: Option<SpawnNegotiation>,
+    pending_initialization: Option<SpawnReady>,
     tap: Option<Arc<dyn PacketTap>>,
     cache_status: SharedCacheStatus,
     pending: VecDeque<PendingBatch>,

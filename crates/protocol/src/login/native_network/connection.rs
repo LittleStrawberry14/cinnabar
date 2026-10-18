@@ -9,6 +9,9 @@ use bedrock_protocol_1_26_51::{packets, wire};
 use bytes::{Bytes, BytesMut};
 use std::{collections::VecDeque, io};
 
+mod codec;
+use codec::Codec;
+
 /// Exclusive packet I/O consumed by the native session pump.
 pub(crate) trait PacketConnection: Send + 'static {
     /// Sends one complete batch without cancelling cipher or transport progress.
@@ -29,7 +32,7 @@ pub(crate) trait PacketConnection: Send + 'static {
 
 pub(crate) struct Connection {
     pub(super) transport: Transport,
-    codec: BatchCodec,
+    codec: Option<Codec>,
     limits: BatchLimits,
     pending: VecDeque<Bytes>,
     current: Option<Bytes>,
@@ -61,7 +64,7 @@ impl Connection {
     pub(super) fn new(transport: Transport) -> Self {
         let limits = BatchLimits::default();
         Self {
-            codec: BatchCodec::new(transport.header(), limits),
+            codec: Some(Codec::Plain(BatchCodec::new(transport.header(), limits))),
             transport,
             limits,
             pending: VecDeque::new(),
@@ -78,8 +81,28 @@ impl Connection {
     }
 
     /// Applies negotiated compression without replacing unread packets.
-    pub(super) fn enable_compression(&mut self, settings: CompressionSettings) {
-        self.codec.enable_compression(settings);
+    pub(super) fn enable_compression(&mut self, settings: CompressionSettings) -> io::Result<()> {
+        let current = self.codec.take().expect("codec transition is synchronous");
+        match current {
+            Codec::Plain(codec) => {
+                self.codec = Some(Codec::Negotiated(codec.negotiate(settings)));
+                Ok(())
+            }
+            configured @ Codec::Negotiated(_) => {
+                self.codec = Some(configured);
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "repeated network settings",
+                ))
+            }
+        }
+    }
+
+    /// Borrows the actual codec; its only move occurs in a synchronous settings transition.
+    fn codec(&self) -> &Codec {
+        self.codec
+            .as_ref()
+            .expect("codec transition is synchronous")
     }
 
     /// Installs both directional streams once, before the client handshake acknowledgment.
@@ -161,7 +184,7 @@ impl Connection {
                 Ok(frame.frame().slice(reader.position()..))
             })
             .collect::<io::Result<Vec<_>>>()?;
-        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
+        for mut message in self.codec().encode(&entries).map_err(io::Error::other)? {
             if let Some((encryptor, _)) = &mut self.ciphers {
                 let marker = self.transport.header().marker();
                 let body = if marker.is_some() {
@@ -208,7 +231,7 @@ impl Connection {
                 };
                 message = envelope(marker, decryptor.decrypt(body).map_err(io::Error::other)?);
             }
-            match self.codec.decode(message).map_err(io::Error::other)? {
+            match self.codec().decode(message).map_err(io::Error::other)? {
                 DecodeOutcome::Packets {
                     packets,
                     skipped_empty_packets,

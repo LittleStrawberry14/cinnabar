@@ -22,6 +22,13 @@ CI rejects multiple locked Git identities for one repository, including differen
 references resolving to the same commit. Native protocol and account test targets
 compile with the shared service, transport and optional image dependencies.
 
+The lifecycle consumer migration uses owned settings, Login and pack handoffs and
+retains the opaque startup-ready owner until presentation completes. Late Login
+controls stay with pack transfer; default Go and browser handoffs still observe
+the actual startup prerequisites. The codec accepts one consuming compression
+transition. This source migration awaits the matching library revisions, owning
+execution and final integration review; the published pins remain unchanged.
+
 Native device-code sign-in and saved-account validation use the existing menu and
 account mutation worker. Interactive attempts release file leases while awaiting
 approval and publish only after Xbox identity verification. Protected checkpoints

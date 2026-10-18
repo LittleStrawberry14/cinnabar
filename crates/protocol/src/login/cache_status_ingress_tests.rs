@@ -35,7 +35,6 @@ async fn cache_status_aggregation_does_not_hold_ready_ingress_for_writes() {
         transport,
         Some(cache),
         crate::login::startup::ready_fixture(1),
-        false,
     );
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);

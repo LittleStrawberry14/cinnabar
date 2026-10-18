@@ -7,7 +7,7 @@ use crate::session_transport::{
     native::tests::service::{connection, request_service},
     tests::{RecordingTap, TapEvent},
 };
-use bedrock_client::packs::{PackEvent, PackTransferLimits};
+use bedrock_client::packs::{PackEvent, PackOffer, PackTransferLimits};
 use bedrock_protocol_1_26_51::{packets, types::PackInstanceId, wire};
 use futures::{StreamExt, stream};
 use resource_pack::test_support::archive_bytes;
@@ -160,7 +160,7 @@ async fn cache_wait() {
     let id = uuid::Uuid::from_u128(5);
     let bytes = archive_bytes(id, &[]);
     let offered = offer(id, bytes.len());
-    let mut negotiation = PackNegotiation::new(
+    let mut negotiation = PackOffer::new(
         packets::ResourcePacksInfo {
             resource_packs: vec![offered.clone()],
             ..Default::default()
@@ -172,7 +172,12 @@ async fn cache_wait() {
     let mut stores = Stores::new();
     let held = Arc::clone(&stores.slot).acquire_owned().await.unwrap();
     stores.register(&offered);
-    stores.queue_completed(&Some(Arc::clone(&cache)), &negotiation, &cancelled.0);
+    let (mut negotiation, _) = negotiation.start().unwrap();
+    stores.queue_completed(
+        &Some(Arc::clone(&cache)),
+        |id| negotiation.completed_archive(id),
+        &cancelled.0,
+    );
     assert_eq!(
         stores.jobs.len(),
         1,
@@ -194,8 +199,7 @@ async fn cache_wait() {
     tokio::time::resume();
     drop(held);
     waiting.await;
-    negotiation.start().unwrap();
-    let PackEvent::Finished { handoff, .. } = negotiation
+    let PackEvent::Finished(complete) = negotiation
         .receive(
             packets::ResourcePackStack {
                 texture_pack_list: vec![PackInstanceId {
@@ -211,6 +215,7 @@ async fn cache_wait() {
     else {
         panic!("finished cache work must release original archive ownership");
     };
+    let (_, handoff) = complete.into_parts();
     assert_eq!(handoff.into_archives()[0].archive, bytes);
     let loaded = preload(&offered, Some(cache), None, Arc::clone(&cancelled.0)).await;
     assert!(loaded.cache_hit);

@@ -1,5 +1,5 @@
 use super::*;
-use bedrock_client::packs::PackTransferLimits;
+use bedrock_client::packs::{PackEvent, PackOffer, PackTransferLimits};
 use bedrock_protocol_1_26_51::{types::PackInfoData, wire};
 use resource_pack::test_support::archive_bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -79,7 +79,7 @@ async fn cdn_accepts_original_archive_and_cache_hit_avoids_http_while_bad_body_f
             .expect("completed CDN acquisition"),
         &bytes
     );
-    let mut negotiation = PackNegotiation::new(
+    let mut negotiation = PackOffer::new(
         packets::ResourcePacksInfo {
             resource_packs: vec![offered.clone()],
             ..Default::default()
@@ -92,10 +92,14 @@ async fn cdn_accepts_original_archive_and_cache_hit_avoids_http_while_bad_body_f
         .unwrap();
     let mut stores = acquisition::Stores::new();
     stores.register(&offered);
-    stores.queue_completed(&Some(Arc::clone(&cache)), &negotiation, &cancelled.0);
+    let (mut negotiation, _) = negotiation.start().unwrap();
+    stores.queue_completed(
+        &Some(Arc::clone(&cache)),
+        |id| negotiation.completed_archive(id),
+        &cancelled.0,
+    );
     stores.finish().await;
-    negotiation.start().unwrap();
-    let PackEvent::Finished { handoff, .. } = negotiation
+    let PackEvent::Finished(complete) = negotiation
         .receive(
             packets::ResourcePackStack {
                 texture_pack_list: vec![bedrock_protocol_1_26_51::types::PackInstanceId {
@@ -111,6 +115,7 @@ async fn cdn_accepts_original_archive_and_cache_hit_avoids_http_while_bad_body_f
     else {
         panic!("cache stores must release final archive ownership");
     };
+    let (_, handoff) = complete.into_parts();
     assert_eq!(handoff.into_archives()[0].archive, bytes);
     // The fixture listener is closed; only the persistent cache can satisfy this retry.
     let hit = acquisition::preload(

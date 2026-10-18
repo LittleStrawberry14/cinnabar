@@ -247,12 +247,12 @@ mod session {
         )
         .await;
         let mut first = None;
-        let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, registry| {
+        let spawned = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, registry| {
             first = Some(registry)
         })
         .await
         .expect("repeats stay nonfatal");
-        assert_eq!(spawned.runtime_id, RUNTIME_ID);
+        assert_eq!(spawned.runtime_id(), RUNTIME_ID);
         let first = first.expect("the startup facts were delivered");
         assert_eq!(first.item_data.len(), 1);
         assert_eq!(first.item_data[0].item_id.0, 355);
@@ -313,10 +313,10 @@ mod session {
         for batch in [first, second] {
             write_frame(peer, &batch_frame(&batch).unwrap()).await;
         }
-        let (_, ready) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+        let ready = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
             .await
             .expect("spawn");
-        assert!(ready.terrain_received);
+        assert!(ready.terrain_received());
         let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
             panic!("raw terrain remains first")
         };
@@ -354,10 +354,10 @@ mod session {
                 player_spawn(),
             ]);
             let Pair { transport, .. } = &mut handed_off(name, &[batch]).await;
-            let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+            let spawned = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
                 .await
                 .expect("spawn");
-            assert_eq!(spawned.terrain_received, expected);
+            assert_eq!(spawned.terrain_received(), expected);
         }
     }
 
@@ -461,10 +461,10 @@ mod session {
             ]],
         )
         .await;
-        let (_, spawned) = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+        let spawned = await_spawn(transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
             .await
             .expect("LoginSuccess still allows the real PlayerSpawn");
-        assert_eq!(spawned.runtime_id, RUNTIME_ID);
+        assert_eq!(spawned.runtime_id(), RUNTIME_ID);
         assert_eq!(next_time(transport).await, 1);
         let Inbound::Packet(raw) = transport.recv().await.unwrap() else {
             panic!("the radius reply retains its FIFO position")

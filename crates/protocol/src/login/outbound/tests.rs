@@ -17,7 +17,6 @@ fn session() -> (TestSession, DuplexStream, impl Future<Output = ()>) {
             transport,
             Some(crate::ClientBlobCache::default()),
             crate::login::startup::ready_fixture(1),
-            false,
         ),
         peer,
         writer,

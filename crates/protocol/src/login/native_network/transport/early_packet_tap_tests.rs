@@ -13,7 +13,11 @@ use nethernet_tokio::{AcceptedSession, NetherServer, ServerData};
 use std::{sync::Arc, time::Duration};
 
 /// Sends original generated entries through the public server's reliable channel.
-async fn send(peer: &AcceptedSession, codec: &BatchCodec, packets: &[crate::Packet]) {
+async fn send<S: bedrock_net::BatchPhase>(
+    peer: &AcceptedSession,
+    codec: &BatchCodec<S>,
+    packets: &[crate::Packet],
+) {
     let entries = packets.iter().map(packet_bytes).collect::<Vec<_>>();
     for message in codec.encode(&entries).unwrap() {
         peer.session.send(message).await.unwrap();
@@ -21,7 +25,10 @@ async fn send(peer: &AcceptedSession, codec: &BatchCodec, packets: &[crate::Pack
 }
 
 /// Checks a real native response without substituting a fake packet connection.
-async fn receive(peer: &mut AcceptedSession, codec: &BatchCodec) -> Vec<packets::Packet> {
+async fn receive<S: bedrock_net::BatchPhase>(
+    peer: &mut AcceptedSession,
+    codec: &BatchCodec<S>,
+) -> Vec<packets::Packet> {
     let message = peer.reliable.recv().await.unwrap().unwrap();
     let DecodeOutcome::Packets { packets, .. } = codec.decode(message).unwrap() else {
         panic!("native response must be a valid batch");
@@ -109,7 +116,7 @@ async fn tapped_native_join() {
     ];
     let server = async {
         let mut peer = listener.accept().await.unwrap();
-        let mut codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
+        let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
         assert!(matches!(
             &receive(&mut peer, &codec).await[0],
             packets::Packet::RequestNetworkSettings(_)
@@ -123,7 +130,7 @@ async fn tapped_native_join() {
             })],
         )
         .await;
-        codec.enable_compression(CompressionSettings {
+        let codec = codec.negotiate(CompressionSettings {
             algorithm: CompressionAlgorithm::Deflate,
             threshold: u16::MAX,
         });

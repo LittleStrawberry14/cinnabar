@@ -2,28 +2,27 @@
 
 mod acquisition;
 
-use super::{Connection, PacketConnection, apply_handshake, failure, handshake_failure};
+use super::{Connection, PacketConnection, apply_key_exchange, failure, handshake_failure};
 use crate::ProtocolError;
 use bedrock_client::{
-    handshake::ClientHandshake,
-    packs::{PackError, PackEvent, PackNegotiation},
+    handshake::{ClientPackOffer, PacksEvent},
+    packs::PackError,
 };
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
-use std::{io, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
 /// Tries cache and CDN before requesting missing archives on the retained game connection.
 pub(super) async fn acquire(
     connection: &mut Connection,
-    handshake: &mut ClientHandshake,
-    mut negotiation: PackNegotiation,
+    mut preloading: ClientPackOffer,
     cache_root: Option<&Path>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
-    let offers = negotiation.offers().cloned().collect::<Vec<_>>();
+    let offers = preloading.offers().cloned().collect::<Vec<_>>();
     let cache = if offers.is_empty() {
         None
     } else {
@@ -51,38 +50,44 @@ pub(super) async fn acquire(
             stores.register(&offer);
         }
         if let Some(bytes) = preload.archive {
-            negotiation
+            preloading
                 .supply_preloaded(offer.pack_id_version.pack_uuid, bytes)
                 .map_err(pack_failure)?;
         }
     }
-    stores.queue_completed(&cache, &negotiation, &cancelled.0);
-    connection
-        .send(negotiation.start().map_err(pack_failure)?)
-        .await?;
+    let (mut negotiation, response) = preloading.start().map_err(pack_failure)?;
+    stores.queue_completed(&cache, |id| negotiation.completed_archive(id), &cancelled.0);
+    connection.send(response).await?;
     loop {
         let packet = connection.next_packet().await.map_err(failure)?;
         if matches!(&*packet.data, packets::Packet::ResourcePackStack(_)) {
             // The library transfers exclusive archive ownership at the stack boundary.
             wait_io(connection, stores.finish()).await;
         }
-        match negotiation.receive(*packet.data).map_err(pack_failure)? {
-            PackEvent::Send(packets) => {
-                stores.queue_completed(&cache, &negotiation, &cancelled.0);
+        match negotiation
+            .receive(*packet.data)
+            .map_err(handshake_failure)?
+        {
+            PacksEvent::Send { packs, packets } => {
+                negotiation = packs;
+                stores.queue_completed(
+                    &cache,
+                    |id| negotiation.completed_archive(id),
+                    &cancelled.0,
+                );
                 send_packets(connection, packets).await?;
             }
-            PackEvent::Finished { response, handoff } => {
+            PacksEvent::Finished(complete) => {
+                let (response, handoff) = complete.into_parts();
                 connection.send(response).await?;
                 return Ok(handoff);
             }
-            PackEvent::Unhandled(packet) => {
-                let event = handshake.receive(*packet).map_err(handshake_failure)?;
-                if apply_handshake(connection, event).await?.is_some() {
-                    return Err(failure(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "repeated resource-pack offer",
-                    )));
-                }
+            PacksEvent::KeyExchange(exchange) => {
+                negotiation = apply_key_exchange(connection, exchange).await?;
+            }
+            PacksEvent::Unhandled { packs, packet } => {
+                connection.defer_unhandled(*packet)?;
+                negotiation = packs;
             }
         }
     }

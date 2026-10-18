@@ -152,7 +152,6 @@ mod tests {
             transport,
             Some(cache.with_store(disk.clone())),
             crate::login::startup::ready_fixture(1),
-            false,
         );
         let waker = noop_waker();
         let mut context = Context::from_waker(&waker);
@@ -204,7 +203,6 @@ mod tests {
             transport,
             Some(cache.with_store(disk.clone())),
             crate::login::startup::ready_fixture(1),
-            false,
         );
         let mut earlier = super::super::tests::cached_level_chunk(vec![1]);
         earlier.chunk_position.x = wire::ZigZag32(1);
