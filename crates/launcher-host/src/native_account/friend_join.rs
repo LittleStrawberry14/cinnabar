@@ -160,6 +160,7 @@ impl FriendJoin {
             return Err(invalid("friend join is no longer admitting"));
         }
         check_deadline(self.deadline)?;
+        self.update_ambiguity();
         self.connect().await?;
         if let Some(retry_at) = self.retry_at {
             if Instant::now() < retry_at {
@@ -307,6 +308,7 @@ impl FriendJoin {
             return Ok(());
         }
         check_deadline(deadline)?;
+        self.update_ambiguity();
         self.closing = true;
         if self.ambiguous && self.session.is_none() {
             self.reconcile(deadline).await?;
@@ -546,6 +548,16 @@ impl FriendJoin {
             ));
         }
         Ok(())
+    }
+
+    /// Distinguishes cancellation during credential acquisition from an actually dispatched join write.
+    fn update_ambiguity(&mut self) {
+        if self.ambiguous {
+            self.ambiguous = self
+                .attempt
+                .as_ref()
+                .is_some_and(mpsd::JoinAttempt::needs_reconciliation);
+        }
     }
 }
 
