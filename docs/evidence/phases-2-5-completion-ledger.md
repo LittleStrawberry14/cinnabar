@@ -2,26 +2,26 @@
 
 ## Native direct networking (in progress)
 
-The optional native backend composes reusable packet-driven pack negotiation with
-the client's resource-pack admission, spawn and play owners. Shared JSONC, archive
-handoff and pack-transfer behavior now belong to bedrock-packs/bedrock-client;
-Cinnabar retains bounded asynchronous CDN/cache I/O. Signed-out direct joins and
-their retries bypass Go provisioning. In-band archives are bounded and
-hash-checked; their final server stack retains order, versions, sub-packs and keys.
-The extraction awaits executable validation. The Go backend remains the default.
-Account services, reusable Login/connection sequencing, hosting, browser transport
-and broad network/device acceptance remain incomplete. This closes no parity or
-Go-removal gate.
+The optional native backend consumes reusable Login, pack and spawn negotiation
+and shared JSONC/archive handoffs. Cinnabar retains bounded CDN/cache I/O,
+installation and presentation. Owning protocol tests and strict protocol/host
+clippy pass, including service progress during incoming backpressure. Reusable
+networking and SDK candidates pass Linux/macOS/Windows/MSRV CI; pure protocol and
+client WebAssembly checks pass. Concrete friend/Messaging admission is source
+reviewed, but membership lifetime through connection/play and native friend UI
+qualification remain incomplete. Go stays the default. Real-account, broad
+server/device/network, performance and source-based parity gates remain open.
 
 ## Native protected checkpoint revisions (in progress)
 
-The native account store binds opaque checkpoints to the selected account and
-exact OAuth record. Cross-process snapshot changes retire stale SDK caches;
-credential dispatch suppresses active and saved cache reuse until final protected
-publication. Generation-only records retain proof with conservative refresh.
-The SDK continues to require fresh policy/time admission. Final SDK pinning,
-executable validation, live-account restart acceptance and broader derived-service
-persistence remain incomplete; this closes no parity or account-release gate.
+The native store binds opaque checkpoints to the selected account, exact OAuth
+record and SDK snapshot revision. Cross-process changes retire stale caches;
+credential dispatch suppresses active and saved cache reuse until publication.
+Proof and completed refresh survive cancellation, and the SDK still requires
+fresh policy/time admission. Owning checkpoint regressions and the pinned SDK's
+CI pass. Live-account restart acceptance, full application integration gates and
+remaining service coverage are incomplete; no account-release gate closes.
+
 This ledger records acceptance evidence, separately from feature implementation. An
 open gate does not mean its feature is absent. Older rows without evidence are not
 a current implementation audit; check the owning code and later entries before

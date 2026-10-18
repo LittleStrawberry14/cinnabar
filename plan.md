@@ -1,93 +1,56 @@
 ## Native direct networking (in progress)
 
-The optional `native-networking` feature adds direct connections through the
-Cinnabar networking libraries. The menu can acquire credentials for the selected
-saved account and join RakNet with the same connection key used for its token mint,
-Login and key exchange. Account acquisition retains proof/session ownership and
-publishes saved credentials only after identity verification. Direct CLI startup
-still uses signed-out identity; directed NetherNet LAN is available without account
-signaling. The Go backend remains the default.
+The optional `native-networking` backend supports signed-out direct RakNet and
+directed NetherNet LAN connections. Selected-account RakNet joins acquire and
+validate credentials through the native Microsoft/Xbox and Minecraft services,
+retaining the original connection key through token mint, Login and key exchange.
+The working Go backend remains the default.
 
-Native resource-pack acquisition tries the bounded persistent archive cache and
-CDN before requesting missing data in-band. The external bedrock-client crate
-owns generated-packet negotiation and bounded transfer state; bedrock-packs owns
-JSONC, archive handoffs and shared compressed-byte limits. Cinnabar retains cache
-and HTTP I/O, selected install paths and presentation/admission. Go, web and native
-handoffs use the same external types directly. The generated codec is one pinned
-protocolgen Git dependency; its target fingerprint and ownership gates remain.
-This extraction is pending executable validation. Full Login, connection and
-spawn ownership remains to be moved into the reusable client library.
+The external bedrock-client crate owns generated-packet Login, resource-pack and
+spawn negotiation. Bedrock-packs owns shared JSONC parsing, archive handoffs and
+transfer limits. Cinnabar owns bounded persistent cache/CDN I/O, installation,
+presentation and the play adapter. All consumers resolve one generated protocol
+crate. Owning tests, native library CI and pure WebAssembly checks pass; broad
+client/server and device acceptance remain open.
 
-Opt-in native Microsoft device-code sign-in and saved-account validation use the
-existing menu presenter and account mutation worker. Interactive attempts release
-file leases while waiting for approval, retain OAuth/proof in a fenced pending slot,
-and commit only after Xbox identity verification. Native saved validation publishes
-profile metadata under its selected generation lease. Cancellation cannot promote
-an unverified identity or erase a newer pending attempt. A failed or expired native
-saved-account check stops the requested join with an authentication error; it does
-not downgrade the join to signed-out identity. Explicit signed-out joins remain
-available. Native direct and Realm joins do not await an unrelated Go account-core
-readiness check.
+Native device-code sign-in and saved-account validation use the existing menu and
+account mutation worker. Interactive attempts release file leases while awaiting
+approval and publish only after Xbox identity verification. Protected checkpoints
+bind the exact account, OAuth record and snapshot revision, retiring stale SDK
+owners while preserving proof and completed refreshes across cancellation.
+Restored optional service state requires fresh policy/time admission. Owning
+checkpoint regressions pass; live-account restart acceptance remains incomplete.
+A failed selected-account validation stops its join without changing identity.
 
-Native protected checkpoints now bind the selected account, exact OAuth record and
-opaque SDK snapshot revision. Credential dispatch suppresses persisted cache reuse
-until final publication, including the saved-account backup; proof and authoritative
-refresh survive cancellation or failed writes. A changed checkpoint rebuilds the SDK
-owner and revalidates its XUID. Restored optional state still requires the SDK's fresh
-NSAL policy/time admission. Final SDK revision binding and executable validation of
-this application integration remain pending; broader derived-service reuse stays open.
+Native Realm and friend-world discovery project existing menu cards through one
+selected-account owner, fencing stale account and Go replies. Realm resolution
+and final credential mint retain that same owner. Realm codes preview without
+accepting membership; pending service replies retry within the resolution bound.
+Authenticated unsupported transports fail explicitly. Invitation acceptance and
+unrelated catalog feeds retain their existing Go owners.
 
-Native Realms and friend-world discovery project the existing menu cards from one
-selected-account worker. It fences old account/credential revisions and Go catalog
-replies, while leaving unrelated Go feeds available. A click cancels listing before connection
-Native multiplayer preparation now qualifies the issued credential against bounded
-OpenID/JWKS metadata from the configured authorization issuer, using the existing
-pure Rust signature/key/claims owner. The handoff checks account and connection-key
-identity and retains the original service-time observation and minimum mint/JWT
-validity through actual Login admission, including RakNet capacity waits. Known
-keys are reused and local mint unknown-key refresh remains on demand. Peer SDP
-uses the bounded provider metadata captured at mint qualification; remote-key
-refresh during a connection is not implemented. An explicit native
-Player Messaging join can prepare its protected socket and multiplayer mint on
-that same leased account, then carry one shared P-384 proof owner through signed
-SDP and Login. Peer provider verification checks the remote peer's own identity
-and fingerprint proof; it does not substitute the local selected account. The
-original service clock and hard admission deadline survive transport queueing.
-The caller must supply a peer messaging UUID and an admitted session nonce;
-listing a friend world does not supply that admission. The existing session
-runtime polls the SDK/NetherNet adapter through play, including service-only
-maintenance while bounded game input waits for application capacity. Accepted
-data drains before a staged service failure, without another runtime, bridge
-task or payload queue. End-to-end protected messaging, delayed-login/provider HTTP and
-live-account acceptance remain incomplete; this source milestone does not close
-a parity gate.
+Protected Player Messaging preparation qualifies the issued credential against
+bounded provider metadata and retains the original proof, service clock and hard
+Login deadline. One shared P-384 owner signs SDP and Login. Peer verification
+checks the remote identity and fingerprint proof. The existing session runtime
+keeps service control progressing while bounded game input waits for capacity,
+and drains accepted data before reporting a service failure.
 
-Native Realms discovery projects the existing menu cards from a selected-account
-worker. It fences old account/credential revisions and Go Realms replies, while
-leaving unrelated Go feeds available. A click cancels listing before connection
-acquisition; Realm resolution and final key mint retain the same native Minecraft,
-proof and Session-Id owner. Service pending responses retry within the existing
-resolution bound, and the resolved endpoint moves with the authentication handoff.
-Default/RakNet addresses preserve IPv6 text; advertised authenticated NetherNet and
-unknown protocols fail explicitly. Realm-code resolution previews without accepting
-membership. The existing invitation acceptance controller remains Go-owned.
+Concrete friend admission retains the selected service handle, reference and
+account generation, establishes an acknowledged RTA binding before joining,
+and accepts only the joined host's peer identity and per-player nonce. Credential
+preparation and dirty-session revalidation share one leased SDK owner. Conditional
+cleanup preserves the original member binding and validator. Discovery cards do
+not grant admission. Retaining this membership through full connection, loading,
+play and every cancellation path is still being integrated; native friend UI
+joining stays unavailable until that lifetime is qualified.
 
-Friend-world discovery queries the followed activity group through the same account
-and projects only listed worlds with usable advertised signaling. The menu preserves
-each successful catalog section if another service fails, skips unavailable observations
-and retains one card per host/world. Acquisition and each sequential service read are
-bounded; cancellation returns the mutable SDK owner after protected refresh persistence.
-A missing activity closed flag retains the pinned baseline zero-value behavior;
-absent related session metadata is skipped. Native friend-world clicks report unavailable
-joining until signed NetherNet and MPSD admission are ready;
-listing does not join sessions or create RTA subscriptions. Existing Xbox people,
-profile, invitations and unrelated catalog services retain their Go owners.
-
-Hosted Xbox profile creation, persistent derived-token reuse, friend and remaining
-service joins, signed NetherNet friend/Realm admission, hosting, browser transport and the broader
-account, network/device and performance acceptance matrix remain incomplete. Native
-sign-in, Realms and friend-world HTTP/UI acceptance remain open. No parity gate closes
-and the working Go backend remains required during validation.
+Incomplete: native hosted-world approval and publication, remaining profile and
+invitation services, signed Realm NetherNet admission, browser transport adoption,
+remote provider-key refresh, end-to-end service/transport cancellation, compiled
+UI captures, real-account/device/server/network acceptance and Go-baseline
+performance measurements. Source-based vanilla parity and full maintainer gates
+remain open. These results do not authorize changing the default or removing Go.
 
 ## Native extension UI and HUD support (in progress)
 
