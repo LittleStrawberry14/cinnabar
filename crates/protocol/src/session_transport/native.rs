@@ -3,6 +3,7 @@
 use bytes::Bytes;
 use std::{
     io,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 use tokio::sync::{mpsc, oneshot};
@@ -58,11 +59,65 @@ impl NativeReader {
 }
 
 #[derive(Clone)]
-pub(crate) struct NativeSender(mpsc::Sender<SendBatch>);
+pub(crate) struct NativeSender {
+    send: mpsc::Sender<SendBatch>,
+    closed: Arc<Mutex<bool>>,
+}
 
 struct SendBatch {
     body: Bytes,
     written: oneshot::Sender<io::Result<()>>,
+}
+
+/// Serializes queue commitment with receiver closure and every receiver-drop path.
+struct Writes {
+    receive: mpsc::Receiver<SendBatch>,
+    closed: Arc<Mutex<bool>>,
+}
+
+impl Drop for Writes {
+    fn drop(&mut self) {
+        self.fail();
+    }
+}
+
+impl Writes {
+    /// Prevents every later commitment, including a permit reserved before closure.
+    fn close_admission(&mut self) {
+        let mut closed = self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *closed = true;
+        self.receive.close();
+    }
+
+    /// Resolves queued receipts once no producer can append a late batch.
+    fn fail(&mut self) {
+        self.close_admission();
+        while self.receive.try_recv().is_ok() {}
+    }
+
+    /// Whether this queue still accepts new transport work.
+    fn is_active(&self) -> bool {
+        !*self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Creates one bounded queue whose admission gate outlives its receiver.
+fn write_channel(capacity: usize) -> (NativeSender, Writes) {
+    let (send, receive) = mpsc::channel(capacity);
+    let closed = Arc::new(Mutex::new(false));
+    (
+        NativeSender {
+            send,
+            closed: Arc::clone(&closed),
+        },
+        Writes { receive, closed },
+    )
 }
 
 impl NativeSender {
@@ -73,11 +128,31 @@ impl NativeSender {
     ) -> io::Result<oneshot::Receiver<io::Result<()>>> {
         Connection::check_body_size(&body)?;
         let permit =
-            self.0.reserve().await.map_err(|_| {
+            self.send.reserve().await.map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "native connection closed")
             })?;
+        self.commit(permit, body)
+    }
+
+    /// Publishes an already size-checked batch atomically with respect to receiver teardown.
+    fn commit(
+        &self,
+        permit: mpsc::Permit<'_, SendBatch>,
+        body: Bytes,
+    ) -> io::Result<oneshot::Receiver<io::Result<()>>> {
         let (written, receipt) = oneshot::channel();
+        let closed = self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *closed {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "native connection closed",
+            ));
+        }
         permit.send(SendBatch { body, written });
+        drop(closed);
         Ok(receipt)
     }
 }
@@ -85,12 +160,11 @@ impl NativeSender {
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
     pub(crate) fn from_native(mut connection: impl PacketConnection) -> Self {
-        let (send, outgoing) = mpsc::channel::<SendBatch>(QUEUED_BATCHES);
+        let (send, mut writes) = write_channel(QUEUED_BATCHES);
         let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
         let (stop, mut stopping) = oneshot::channel();
         let task = tokio::spawn(async move {
             let mut pending: Option<io::Result<Bytes>> = None;
-            let mut writes = Writes::Active(outgoing);
             loop {
                 tokio::select! {
                     _ = &mut stopping => break,
@@ -103,24 +177,21 @@ impl SessionTransport {
                         if ended { break; }
                     }
                     result = connection.recv_body(), if pending.is_none() => {
-                        if result.is_err() { writes.reject(); }
+                        if result.is_err() { writes.fail(); }
                         pending = Some(result);
                     }
-                    batch = writes.recv() => {
-                        let Some(batch) = batch else { writes = Writes::Drained; continue };
-                        let result = if writes.is_active() {
-                            connection.send_body(batch.body).await
-                        } else {
-                            Err(io::Error::new(io::ErrorKind::BrokenPipe, "native writes stopped"))
-                        };
-                        if result.is_err() { writes.reject(); }
+                    batch = writes.receive.recv(), if writes.is_active() => {
+                        let Some(batch) = batch else { break };
+                        let result = connection.send_body(batch.body).await;
+                        if result.is_err() { writes.fail(); }
                         let _ = batch.written.send(result);
                     }
                 }
             }
-            if let Writes::Active(mut outgoing) = writes {
-                outgoing.close();
-                while let Some(batch) = outgoing.recv().await {
+            let drain = writes.is_active();
+            writes.close_admission();
+            if drain {
+                while let Some(batch) = writes.receive.recv().await {
                     let result = connection.send_body(batch.body).await;
                     let failed = result.is_err();
                     let _ = batch.written.send(result);
@@ -138,7 +209,7 @@ impl SessionTransport {
                 stop: Some(stop),
                 closed: false,
             }),
-            frames: PacketSender::Native(NativeSender(send)),
+            frames: PacketSender::Native(send),
             timers: bridge::tasks::Timers::tokio(),
             startup: Default::default(),
             received: Default::default(),
@@ -151,39 +222,5 @@ impl SessionTransport {
             split_frames: 0,
             delivered: (0, 0),
         }
-    }
-}
-
-/// Outgoing admission stays owned until even pre-close permits have settled.
-enum Writes {
-    Active(mpsc::Receiver<SendBatch>),
-    Rejecting(mpsc::Receiver<SendBatch>),
-    Drained,
-}
-
-impl Writes {
-    /// Receives every accepted batch, including permits committed after closure.
-    async fn recv(&mut self) -> Option<SendBatch> {
-        match self {
-            Self::Active(receiver) | Self::Rejecting(receiver) => receiver.recv().await,
-            Self::Drained => std::future::pending().await,
-        }
-    }
-
-    /// Rejects new reservations while keeping outstanding admissions observable.
-    fn reject(&mut self) {
-        let previous = std::mem::replace(self, Self::Drained);
-        *self = match previous {
-            Self::Active(mut receiver) | Self::Rejecting(mut receiver) => {
-                receiver.close();
-                Self::Rejecting(receiver)
-            }
-            Self::Drained => Self::Drained,
-        };
-    }
-
-    /// Whether this owner may still submit new wire writes.
-    fn is_active(&self) -> bool {
-        matches!(self, Self::Active(_))
     }
 }

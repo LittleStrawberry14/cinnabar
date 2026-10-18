@@ -7,7 +7,34 @@ struct ReplayConnection {
     reads: usize,
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
+async fn a_permit_committed_after_receive_error_cannot_strand_its_receipt() {
+    use bedrock_protocol_1_26_51::packets;
+    let (incoming, receive) = mpsc::channel(1);
+    let mut transport = SessionTransport::from_native(ReplayConnection {
+        incoming: receive,
+        fifth_read: None,
+        reads: 0,
+    });
+    let PacketSender::Native(sender) = transport.sender() else {
+        panic!("native fixture")
+    };
+    let permit = sender.send.reserve().await.unwrap();
+    drop(incoming);
+    let super::super::Reader::Native(reader) = &mut transport.reader else {
+        panic!("native reader")
+    };
+    (&mut reader.task).await.unwrap();
+    let body =
+        crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
+            .unwrap();
+    assert_eq!(
+        sender.commit(permit, body).unwrap_err().kind(),
+        io::ErrorKind::BrokenPipe
+    );
+}
+
+#[tokio::test]
 async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingress() {
     use bedrock_protocol_1_26_51::packets;
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
@@ -27,17 +54,38 @@ async fn a_permit_committed_after_failure_is_rejected_without_waiting_for_ingres
     let PacketSender::Native(sender) = transport.sender() else {
         panic!("native fixture")
     };
-    let sender = sender.0;
-    let permit = sender.reserve().await.unwrap();
+    let permit = sender.send.reserve().await.unwrap();
     assert!(transport.sender().send(body.clone()).await.is_err());
-    let (written, receipt) = oneshot::channel();
-    permit.send(SendBatch { body, written });
-    let result = tokio::time::timeout(std::time::Duration::from_secs(1), receipt).await;
-    assert!(
-        result.is_ok(),
-        "a pre-close admission kept its receipt unresolved"
+    assert_eq!(
+        sender.commit(permit, body).unwrap_err().kind(),
+        io::ErrorKind::BrokenPipe
     );
-    assert!(result.unwrap().map_or(true, |written| written.is_err()));
+}
+
+#[tokio::test]
+async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
+    let (_incoming, receive) = mpsc::channel(1);
+    let mut transport = SessionTransport::from_native(ReplayConnection {
+        incoming: receive,
+        fifth_read: None,
+        reads: 0,
+    });
+    let PacketSender::Native(sender) = transport.sender() else {
+        panic!("native fixture")
+    };
+    let permit = sender.send.reserve().await.unwrap();
+    let super::super::Reader::Native(reader) = &mut transport.reader else {
+        panic!("native reader")
+    };
+    reader.task.abort();
+    assert!((&mut reader.task).await.unwrap_err().is_cancelled());
+    assert_eq!(
+        sender
+            .commit(permit, Bytes::from_static(b"unsent"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::BrokenPipe
+    );
 }
 
 impl PacketConnection for ReplayConnection {
@@ -116,8 +164,8 @@ async fn write_failure_keeps_a_received_transfer_behind_full_ingress() {
 
 #[tokio::test]
 async fn cancelling_admission_neither_accepts_nor_repeats_a_batch() {
-    let (send, mut receive) = mpsc::channel(1);
-    let sender = NativeSender(send);
+    let (sender, mut writes) = write_channel(1);
+    let receive = &mut writes.receive;
     let first = sender.accept(Bytes::from_static(b"first")).await.unwrap();
     {
         let mut blocked = std::pin::pin!(sender.accept(Bytes::from_static(b"cancelled")));
@@ -145,8 +193,8 @@ async fn cancelling_admission_neither_accepts_nor_repeats_a_batch() {
 
 #[tokio::test]
 async fn oversized_batches_never_consume_queue_capacity() {
-    let (send, mut receive) = mpsc::channel(1);
-    let sender = NativeSender(send);
+    let (sender, mut writes) = write_channel(1);
+    let receive = &mut writes.receive;
     let bytes = Bytes::from(vec![
         0;
         bedrock_net::BatchLimits::default().max_decoded_bytes
