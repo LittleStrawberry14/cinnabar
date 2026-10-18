@@ -209,7 +209,12 @@ impl SessionTransport {
                     }
                 }
             }
+            // Retire the transport before waiting on receive capacity. Accepted input
+            // still precedes channel completion even when transport close fails.
             let _ = connection.close().await;
+            if let Some(item) = pending {
+                let _ = incoming.send(item).await;
+            }
         });
         Self {
             reader: Reader::Native(NativeReader {
