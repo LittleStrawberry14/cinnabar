@@ -19,6 +19,7 @@ pub use cinnabar_api::{
 /// Shared values and wire enums for the Rust and Go bridge.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod contract;
+pub mod gateway_egress;
 pub use contract::{
     AuthState, Backend, CinnabarRelease, ConnectStage, ConnectTarget, GameMode, Lifecycle,
     MAX_FRAME_LEN, PackAcquisition, PackApplication, PackDownstreamOutcome, PackOffer, Transport,
