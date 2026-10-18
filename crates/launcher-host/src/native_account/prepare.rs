@@ -69,7 +69,7 @@ impl NativeAccount {
         random_id: protocol::ClientRandomId,
     ) -> io::Result<protocol::NativeAuthentication> {
         operation.rearm()?;
-        let fresh = serde_json::to_vec(&metadata::DeviceProfile::fresh())
+        let fresh = serde_json::to_vec(&protocol::NativeDeviceProfile::fresh())
             .map_err(|_| io::Error::other("serialize native device profile"))?;
         let profile = loop {
             match operation
@@ -77,9 +77,9 @@ impl NativeAccount {
                 .as_ref()
                 .expect("acquired lease")
                 .device_profile(&self.device_path, &fresh, |bytes| {
-                    metadata::DeviceProfile::parse(bytes).is_ok()
+                    protocol::NativeDeviceProfile::parse(bytes).is_ok()
                 }) {
-                Ok(bytes) => break metadata::DeviceProfile::parse(&bytes)?,
+                Ok(bytes) => break protocol::NativeDeviceProfile::parse(&bytes)?,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     tokio::time::sleep(LEASE_RETRY).await
                 }
@@ -120,7 +120,7 @@ impl NativeAccount {
                 .as_ref()
                 .expect("verified identity")
                 .gamertag,
-        );
+        )?;
         let raw = serde_json::value::to_raw_value(&claims)
             .map_err(|_| io::Error::other("serialize native client data"))?;
         let cached = operation.cached.as_mut().expect("account owner");
@@ -131,7 +131,10 @@ impl NativeAccount {
             .transpose()?
             .unwrap_or(false);
         if !same_provider {
-            cached.provider = Some(provider::Provider::new(&issuer)?);
+            cached.provider = Some(protocol::NativeProvider::new(
+                &issuer,
+                bedrock_services::minecraft::USER_AGENT,
+            )?);
         }
         let prepared = cached
             .provider

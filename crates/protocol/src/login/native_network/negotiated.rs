@@ -4,6 +4,8 @@ use super::{
     Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
     handshake_failure, packs, transport,
 };
+use crate::login::client_data::{NativeClaims, RawClientData};
+use crate::session_wire::SessionIdentity;
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
 use bedrock_client::handshake::{
     ClientHandshake, ClientLogin, ClientPackOffer, HandshakeOptions, LoginEvent, SettingsEvent,
@@ -12,8 +14,10 @@ use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
-use serde_json::{json, value::RawValue};
+use serde_json::{Value, json};
+use std::time::Instant;
 use std::{io, sync::Arc, time::SystemTime};
+use zeroize::Zeroizing;
 
 /// Moves the same codec, ciphers, unread FIFO and selected archives into startup.
 pub(super) struct NegotiatedConnection {
@@ -33,30 +37,8 @@ pub(super) async fn negotiate(
             "native join does not accept a core target override",
         )));
     }
-    let (key, authentication, messaging) = match authentication {
-        Some(authentication) => {
-            authentication::ensure_current(authentication.expires, std::time::Instant::now())
-                .map_err(ProtocolError::Authentication)?;
-            let handoff = authentication
-                .into_handoff()
-                .map_err(ProtocolError::Authentication)?;
-            (
-                handoff.key,
-                Some((handoff.token, handoff.claims, handoff.expires)),
-                handoff.messaging,
-            )
-        }
-        None => (
-            Arc::new(
-                SigningKey::try_generate_from_rng(&mut SysRng)
-                    .map_err(io::Error::other)
-                    .map_err(failure)?,
-            ),
-            None,
-            None,
-        ),
-    };
-    let transport = transport::Transport::connect(target, messaging)
+    let credentials = Credentials::new(authentication)?;
+    let transport = transport::Transport::connect(target, credentials.messaging)
         .await
         .map_err(|error| {
             if authentication::is_expired(&error) {
@@ -66,11 +48,109 @@ pub(super) async fn negotiate(
             }
         })?;
     let mut connection = Connection::new(transport);
+    let (packs, _) = negotiate_connected(
+        &mut connection,
+        &target.address,
+        LoginData::Desktop(login),
+        Credentials {
+            messaging: None,
+            ..credentials
+        },
+        packs::Acquisition::Desktop(login.settings.resource_pack_cache_dir.as_deref()),
+    )
+    .await?;
+    Ok(NegotiatedConnection { connection, packs })
+}
+
+/// Retains one original proof, credential deadline and provider-authenticated player projection.
+pub(super) struct Credentials {
+    key: Arc<SigningKey>,
+    authentication: Option<(Zeroizing<String>, NativeClaims, Instant)>,
+    pub(super) messaging: Option<authentication::MessagingAdmission>,
+    identity: Option<SessionIdentity>,
+}
+
+impl Credentials {
+    /// Qualifies the original handoff before any connection is admitted or protocol output sent.
+    pub(super) fn new(authentication: Option<NativeAuthentication>) -> Result<Self, ProtocolError> {
+        let (key, authentication, messaging, identity) = match authentication {
+            Some(authentication) => {
+                authentication::ensure_current(authentication.expires, std::time::Instant::now())
+                    .map_err(ProtocolError::Authentication)?;
+                let handoff = authentication
+                    .into_handoff()
+                    .map_err(ProtocolError::Authentication)?;
+                (
+                    handoff.key,
+                    Some((handoff.token, handoff.claims, handoff.expires)),
+                    handoff.messaging,
+                    Some(handoff.identity),
+                )
+            }
+            None => (
+                Arc::new(
+                    SigningKey::try_generate_from_rng(&mut SysRng)
+                        .map_err(io::Error::other)
+                        .map_err(failure)?,
+                ),
+                None,
+                None,
+                None,
+            ),
+        };
+        Ok(Self {
+            key,
+            authentication,
+            messaging,
+            identity,
+        })
+    }
+}
+
+/// Keeps desktop metadata construction in its original phase while accepting the gateway's owned claims.
+pub(super) enum LoginData<'a> {
+    Desktop(&'a SessionLogin<'a>),
+    Relay {
+        claims: RawClientData,
+        client_cache: bool,
+    },
+}
+
+impl LoginData<'_> {
+    /// Uses only the cache support that the actual downstream claims to implement.
+    fn client_cache(&self) -> bool {
+        match self {
+            Self::Desktop(login) => login.cache.is_some(),
+            Self::Relay { client_cache, .. } => *client_cache,
+        }
+    }
+}
+
+/// Negotiates the sole typed Settings/Login/packs sequence on an already-owned concrete transport.
+pub(super) async fn negotiate_connected(
+    connection: &mut Connection,
+    address: &str,
+    input: LoginData<'_>,
+    credentials: Credentials,
+    acquisition: packs::Acquisition<'_>,
+) -> Result<(ResourcePackHandoff, SessionIdentity), ProtocolError> {
+    let Credentials {
+        key,
+        authentication,
+        messaging,
+        identity,
+    } = credentials;
+    if messaging.is_some() {
+        return Err(failure(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "prepared messaging cannot use a preconnected RakNet socket",
+        )));
+    }
     let configured = ClientHandshake::new(
         key,
         HandshakeOptions {
             batch_encryption: connection.transport.batch_encryption(),
-            blob_cache: login.cache.is_some(),
+            blob_cache: input.client_cache(),
             max_login_bytes: connection.max_decoded_bytes(),
             ..Default::default()
         },
@@ -97,41 +177,53 @@ pub(super) async fn negotiate(
         }
     };
     let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
-        (serde_json::Value::Object(claims), Some((token, expires)))
+        (claims, Some((token, expires)))
     } else {
-        let mut claims = super::super::client_data::login_client_data(
-            login.display_name,
-            login.client_random_id,
-            login.skin.as_ref(),
-            login.settings,
-        );
-        // Signed-out desktop identity is independent of Xbox title/device authentication.
-        claims["DeviceOS"] = json!(native_device_os());
-        claims["DeviceModel"] = json!("");
-        claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
-        claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
+        let claims = match input {
+            LoginData::Desktop(login) => {
+                let mut claims = super::super::client_data::login_client_data(
+                    login.display_name,
+                    login.client_random_id,
+                    login.skin.as_ref(),
+                    login.settings,
+                );
+                // Signed-out desktop identity is independent of Xbox title/device authentication.
+                claims["DeviceOS"] = json!(native_device_os());
+                claims["DeviceModel"] = json!("");
+                claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
+                claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
+                let Value::Object(claims) = claims else {
+                    unreachable!("local claim builder returns an object")
+                };
+                NativeClaims::Canonical(claims)
+            }
+            LoginData::Relay { claims, .. } => NativeClaims::Relay(claims),
+        };
         (claims, None)
     };
-    claims["ServerAddress"] = json!(target.address);
-    claims["Nonce"] = json!(connection.transport.nonce());
-    let claims = RawValue::from_string(
-        serde_json::to_string(&claims)
-            .map_err(io::Error::other)
-            .map_err(failure)?,
-    )
-    .map_err(io::Error::other)
-    .map_err(failure)?;
+    let identity = match identity {
+        Some(identity) => identity,
+        None => SessionIdentity {
+            // The existing typed OfflineIdentity owner retains its original metadata rejection.
+            display_name: claims.display_name().map_err(failure)?,
+            xuid: String::new(),
+            uuid: uuid::Uuid::new_v4().to_string(),
+        },
+    };
+    claims
+        .set_transport(address, connection.transport.nonce())
+        .map_err(failure)?;
+    let claims = claims.into_raw().map_err(failure)?;
     let deadline = token.as_ref().map(|(_, expires)| *expires);
     let (handshake, packet) = if let Some((token, expires)) = token {
         authentication::ensure_current(expires, std::time::Instant::now())
             .map_err(ProtocolError::Authentication)?;
         login_ready.login_authenticated(&token, &claims)
     } else {
-        let identity = uuid::Uuid::new_v4().to_string();
         login_ready.login_offline(
             &OfflineIdentity {
-                display_name: login.display_name,
-                identity: &identity,
+                display_name: &identity.display_name,
+                identity: &identity.uuid,
                 xuid: "",
                 playfab_id: "",
                 playfab_title_id: "",
@@ -145,14 +237,9 @@ pub(super) async fn negotiate(
         Some(deadline) => connection.send_before(packet, deadline).await?,
         None => connection.send(packet).await?,
     }
-    let offer = receive_offer(&mut connection, handshake).await?;
-    let packs = packs::acquire(
-        &mut connection,
-        offer,
-        login.settings.resource_pack_cache_dir.as_deref(),
-    )
-    .await?;
-    Ok(NegotiatedConnection { connection, packs })
+    let offer = receive_offer(connection, handshake).await?;
+    let packs = packs::acquire(connection, offer, acquisition).await?;
+    Ok((packs, identity))
 }
 
 /// Processes post-Login controls until the actual offer moves the same key into pack transfer.

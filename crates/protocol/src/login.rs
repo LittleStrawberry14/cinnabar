@@ -21,6 +21,8 @@ mod cache_status;
 #[cfg(test)]
 mod cache_status_ingress_tests;
 mod client_data;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use client_data::{NativeDeviceProfile, RawClientData};
 mod game_data;
 mod latency_probe;
 mod outbound;
@@ -34,7 +36,10 @@ pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod native_network;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use native_network::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
+pub use native_network::{
+    NativeAuthentication, NativeCredential, NativeProvider, NativeRelayConnecting,
+    NativeRelayConnection, NativeRelayHandoff, NativeRelayRetired, NativeTokenVerifier,
+};
 mod unused_packets;
 mod web_handoff;
 use boundary::boundary_wakeup;

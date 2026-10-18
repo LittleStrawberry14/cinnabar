@@ -17,7 +17,7 @@ carry the notice “(c) Mojang AB. All rights reserved.” and are subject to th
 ## Gophertunnel login identifier
 
 The self-signed login ID derivation and its regression vectors in
-`crates/launcher-host/src/native_account/metadata.rs` are adapted from
+`crates/protocol/src/login/client_data/native_profile.rs` are adapted from
 [Gophertunnel](https://github.com/HashimTheArab/gophertunnel/tree/81e65c54fb21587a6492014857710e32740c2a4f/minecraft/protocol/login).
 
 The native profile statistics selection and aggregation in
@@ -47,6 +47,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Go URL and JSON semantics
+
+The original Rust origin policy in `web/gateway/src/backend/origin.rs` follows
+host parsing and unescaping rules from Go's `net/url` package. Canonical claim
+alias matching in `crates/protocol/src/login/client_data/raw.rs` follows Go's
+`encoding/json` ASCII-name folding rules. Shared conformance corpora are original
+synthetic data.
+
+Copyright 2009 The Go Authors.
+Copyright 2013 The Go Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+* Redistributions in binary form must reproduce the above
+  copyright notice, this list of conditions and the following disclaimer
+  in the documentation and/or other materials provided with the distribution.
+* Neither the name of Google LLC nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Setup window panorama
 

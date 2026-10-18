@@ -416,7 +416,7 @@ fn native_provider_preserves_hard_expiry_and_the_actual_login_token_and_key() {
     )
     .unwrap();
     assert_eq!(authentication.expires, observed + Duration::from_secs(5));
-    assert_eq!(authentication.claims["ThirdPartyName"], "Synthetic");
+    assert_eq!(authentication.claims.display_name().unwrap(), "Synthetic");
     assert!(
         authentication::ensure_current(authentication.expires, observed + Duration::from_secs(5))
             .is_err()
@@ -453,4 +453,54 @@ fn native_provider_preserves_hard_expiry_and_the_actual_login_token_and_key() {
             .verify_es384(SigningKey::from_slice(&[2; 48]).unwrap().verifying_key())
             .is_err()
     );
+}
+
+/// The actual provider qualifier and Login signer retain raw values under the original proof/key.
+#[test]
+fn native_provider_raw_claims_keep_canonical_identity_and_signed_opaque_values() {
+    let observed = Instant::now();
+    let client = RawValue::from_string(r#"{"Unknown":1e99999,"ClientRandomId":0,"ThirdPartyName":"stale","thirdpartyname":"alias","ſerverAddreſſ":"stale","nonce":"stale"}"#.into()).unwrap();
+    let authentication = NativeAuthentication::new_relay(
+        key(),
+        credential(
+            signed(claims(), "synthetic"),
+            observed,
+            Duration::from_secs(5),
+        ),
+        crate::RawClientData::from_raw(&client).unwrap(),
+        &verifier(),
+        XUID,
+        observed,
+    )
+    .unwrap();
+    assert_eq!(authentication.expires, observed + Duration::from_secs(5));
+    assert_eq!(authentication.claims.display_name().unwrap(), "Synthetic");
+    let mut handoff = authentication.into_handoff().unwrap();
+    handoff
+        .claims
+        .set_transport("selected.example:19132", "original-nonce")
+        .unwrap();
+    let raw = handoff.claims.into_raw().unwrap();
+    let request = encode_authenticated_request(
+        &handoff.key,
+        &handoff.token,
+        &raw,
+        bedrock_net::BatchLimits::default().max_decoded_bytes,
+    )
+    .unwrap();
+    let length = u32::from_le_bytes(request[..4].try_into().unwrap()) as usize;
+    let rest = &request[4 + length..];
+    let length = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+    let client = Jws::parse(std::str::from_utf8(&rest[4..4 + length]).unwrap()).unwrap();
+    client.verify_es384(handoff.key.verifying_key()).unwrap();
+    assert_eq!(client.payload, [raw.get().as_bytes(), b"\n"].concat());
+    let projected = crate::RawClientData::from_raw(&raw).unwrap();
+    assert_eq!(
+        projected.display_name().unwrap().as_deref(),
+        Some("Synthetic")
+    );
+    assert_eq!(projected.random_id().unwrap(), Some(0));
+    assert!(raw.get().contains(r#""Unknown":1e99999"#));
+    assert!(!raw.get().contains("stale"));
+    assert!(!raw.get().contains("alias"));
 }

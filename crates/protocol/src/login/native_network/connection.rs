@@ -251,6 +251,50 @@ impl Connection {
         Ok(())
     }
 
+    /// Restores early raw frames ahead of unread siblings on this same FIFO.
+    pub(super) fn replay_deferred(&mut self) {
+        for packet in self.take_deferred().into_iter().rev() {
+            let bytes = packet.inner_frame();
+            let mut reader = wire::Reader::from_shared(bytes);
+            reader
+                .read_var_u32()
+                .expect("deferred packet has a validated length prefix");
+            self.pending.push_front(bytes.slice(reader.position()..));
+        }
+    }
+
+    /// Removes one original complete header/body while retaining siblings for the next call.
+    pub(super) async fn next_raw(&mut self) -> io::Result<Bytes> {
+        self.current = None;
+        self.fill().await?;
+        let bytes = self.pending.pop_front().expect("fill supplies packets");
+        self.current = Some(bytes.clone());
+        Ok(bytes)
+    }
+
+    /// Restores actual already-consumed handoff frames ahead of the original unread siblings.
+    pub(super) fn prepend_raw(&mut self, packets: Vec<Bytes>) {
+        for packet in packets.into_iter().rev() {
+            self.pending.push_front(packet);
+        }
+    }
+
+    /// Restores an unconsumed actual terminal before retiring a partial relay negotiation.
+    pub(super) fn replay_current(&mut self) {
+        if let Some(bytes) = self.current.take() {
+            self.pending.push_front(bytes);
+        }
+    }
+
+    /// Borrows a decoded terminal only when the last actual packet carried it.
+    pub(super) fn current_terminal(&self) -> io::Result<Option<crate::session_wire::CoreMessage>> {
+        self.current
+            .as_ref()
+            .map(|bytes| super::relay::terminal(bytes))
+            .transpose()
+            .map(Option::flatten)
+    }
+
     /// Decodes one handshake packet while preserving every sibling from its batch.
     pub(super) async fn next_packet(&mut self) -> io::Result<Packet> {
         self.current = None;

@@ -68,6 +68,12 @@ allowed_dependencies = ["assets", "bridge", "web-transport", "semantic-input", "
 forbidden_dependencies = ["launcher-host", "bevy", "wgpu"]
 
 [[crates]]
+name = "web-gateway"
+path = "web/gateway"
+allowed_dependencies = ["bridge", "protocol", "test-time"]
+forbidden_dependencies = ["app", "launcher-host", "web-client", "web-transport", "bevy", "wgpu"]
+
+[[crates]]
 name = "web-transport"
 path = "web/transport"
 allowed_dependencies = ["bridge"]

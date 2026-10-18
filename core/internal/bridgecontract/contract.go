@@ -33,6 +33,32 @@ const (
 	LatencyTraceEnv = "CINNABAR_LATENCY_TRACE"
 	// HostedWorldMaxPlayers: Vanilla's player limit for a hosted local world, the host included.
 	HostedWorldMaxPlayers = 8
+	// RelayMaxSessions: Maximum retained relay accounts and transport connections.
+	RelayMaxSessions = 256
+	// RelayMaxPerIP: Maximum relay accounts or connections admitted per peer address.
+	RelayMaxPerIP = 4
+	// RelayIdleSeconds: Original idle lifetime of a detached relay account.
+	RelayIdleSeconds = 600
+	// RelayResumeSeconds: Original lifetime of each independently issued resume bearer.
+	RelayResumeSeconds = 120
+	// RelayHelloSeconds: Original pre-Hello and control write budget.
+	RelayHelloSeconds = 10
+	// RelayResumeBytes: Random bytes in one relay resume capability.
+	RelayResumeBytes = 32
+	// RelayControlRequestBurst: Control request token-bucket burst.
+	RelayControlRequestBurst = 4
+	// RelayActionRefillMillis: Time to replenish one per-peer admission action.
+	RelayActionRefillMillis = 5000
+	// RelayActionBurst: Per-peer admission action token-bucket burst.
+	RelayActionBurst = 6
+	// RelayMaxActionClients: Maximum remembered peer action limiters.
+	RelayMaxActionClients = 1024
+	// RelaySignInSeconds: Original overall interactive sign-in budget.
+	RelaySignInSeconds = 900
+	// RelayUploadBytesPerSecond: Original play upload pacing rate.
+	RelayUploadBytesPerSecond = 262144
+	// RelayProgressCoalesceMillis: Original delay coalescing control join progress.
+	RelayProgressCoalesceMillis = 100
 	// RelayVersion: Browser relay protocol version.
 	RelayVersion = 2
 	// RelayControlBytes: Largest relay Hello or control JSON payload in bytes.
@@ -79,6 +105,24 @@ const (
 	RelayEventConnect = "connect"
 	// RelayEventError: Report a bounded public refusal code.
 	RelayEventError = "error"
+	// NativeAuthRelyingParty: Xbox authorization scope used to verify the signing-in account identity.
+	NativeAuthRelyingParty = "http://xboxlive.com"
+	// NativeAuthClientID: Microsoft application used by native and gateway Android account owners.
+	NativeAuthClientID = "0000000048183522"
+	// NativeAuthUserAgent: Android acquisition user agent shared with the configured Go owner.
+	NativeAuthUserAgent = "XAL Android 2025.11.20251111.000"
+	// NativeAuthDeviceVersion: Android Xbox device operating-system version.
+	NativeAuthDeviceVersion = "13"
+	// NativeAuthSandbox: Xbox account environment.
+	NativeAuthSandbox = "RETAIL"
+	// NativeAccountDeviceOS: Bedrock device platform for an authenticated Android account.
+	NativeAccountDeviceOS = 1
+	// NativeAccountDefaultModel: Original Rust Android account profile model.
+	NativeAccountDefaultModel = "GOOGLE Pixel 8"
+	// NativeAccountInputMode: Default input mode claimed by the Android account profile.
+	NativeAccountInputMode = 2
+	// NativeAccountPlatformType: Platform claimed by Android when client metadata leaves it unset.
+	NativeAccountPlatformType = 1
 	// GameVersion: Game version reported by the client.
 	GameVersion = "1.26.50"
 	// DefaultBedrockPort: Default port for an addressed Bedrock server.
