@@ -564,7 +564,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             client_random_id: client_random_id.expect("connection requested"),
             client_blob_cache: client_blob_cache.cache(),
             player_skin: local_player_skin.clone(),
-            login_settings: crate::session::login_settings(&menu, None),
+            login_settings: crate::session::login_settings(
+                &menu,
+                None,
+                args.parallel_resource_pack_urls,
+            ),
             actor_artwork: Some(actor_artwork.clone()),
             ui_catalog: Some(ui_catalog.0.clone()),
             log_dir: menu.layout().log_dir(),
@@ -680,6 +684,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     .insert_resource(
         SessionController::new(core_process)
             .with_native_transport(args.native_transport)
+            .with_parallel_resource_pack_urls(args.parallel_resource_pack_urls)
             .with_client_random_id(client_random_id)
             .with_address(args.address.as_deref()),
     )
