@@ -2,6 +2,10 @@
 
 mod approval;
 mod directory;
+mod login;
+pub use login::{HostedLoginApproval, NativeHostedLoginPolicy};
+mod serve;
+pub use serve::{ClosingHostedPeer, NativeHostedPeer, NativeHostedProcess};
 mod slot;
 pub(crate) use slot::HostSlot;
 

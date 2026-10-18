@@ -178,6 +178,22 @@ impl nethernet::identity::TokenVerifier for NativeTokenVerifier {
     }
 }
 
+impl bedrock_net::login::LoginVerifier for NativeTokenVerifier {
+    /// Authenticates the joining peer through the same configured provider owner used for SDP.
+    /// The peer's own XUID/cpk are retained; no local selected-host identity is substituted.
+    fn verify(
+        &self,
+        token: &str,
+        now: SystemTime,
+    ) -> Result<bedrock_net::login::TrustedIdentity, bedrock_net::login::LoginError> {
+        use bedrock_net::login::LoginError;
+        let claims = self
+            .verify_peer(token, now)
+            .map_err(|_| LoginError::Authentication)?;
+        player::identity(&claims)
+    }
+}
+
 /// Bounds credential decoding and admits only the configured verifier's supported signature algorithm.
 pub(super) fn parsed(token: &str) -> io::Result<Jws> {
     if token.is_empty() || token.len() > MAX_TOKEN_BYTES {

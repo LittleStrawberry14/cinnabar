@@ -81,6 +81,25 @@ impl HostOpening {
     pub(crate) fn max_players(&self) -> u32 {
         self.max_players
     }
+
+    /// Uses only the captured original child; callers dispatch this pipe write on the existing worlds worker.
+    pub(crate) fn request_bridge(
+        &self,
+        bootstrap: &bridge::host_world::contract::Bootstrap,
+    ) -> io::Result<()> {
+        self.validate()?;
+        if self.world.backend != bridge::Backend::Dragonfly {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "native world bridge requires Dragonfly",
+            ));
+        }
+        self.instance
+            .upgrade()
+            .ok_or_else(unavailable)?
+            .native_world_bridge(bootstrap)?;
+        self.validate()
+    }
 }
 
 impl Manager {

@@ -1,9 +1,11 @@
 //! Exclusive native transport ownership for one direct connection.
 
+mod accepted;
 mod inbox;
 mod lan;
 mod messaging;
 mod raknet;
+use accepted::AcceptedTransport;
 use inbox::Inbox;
 use lan::LanTransport;
 use messaging::MessagingTransport;
@@ -24,9 +26,21 @@ pub(super) enum Transport {
     RakNet(RakNetTransport),
     NetherNetLan(Box<LanTransport>),
     Messaging(Box<MessagingTransport>),
+    Accepted(Box<AcceptedTransport>),
 }
 
 impl Transport {
+    /// Takes only the caller's actual Ready association, never dialing another backend.
+    pub(super) fn from_accepted(accepted: nethernet_tokio::AcceptedSession) -> Self {
+        Self::Accepted(Box::new(AcceptedTransport::new(accepted)))
+    }
+
+    /// Ends server sending synchronously while retaining the same receiver prefix.
+    pub(super) fn retire_accepted(&mut self) {
+        if let Self::Accepted(accepted) = self {
+            accepted.close();
+        }
+    }
     /// Retains the caller's already-established exact numeric RakNet socket without resolving again.
     pub(super) fn from_raknet(connection: RakNetConnection) -> Self {
         Self::RakNet(RakNetTransport::new(connection))
@@ -157,6 +171,7 @@ impl Transport {
             Self::RakNet(_) => BatchHeader::RakNet,
             Self::NetherNetLan(_) => BatchHeader::NetherNet,
             Self::Messaging(_) => BatchHeader::NetherNet,
+            Self::Accepted(_) => BatchHeader::NetherNet,
         }
     }
 
@@ -175,6 +190,7 @@ impl Transport {
             Self::Messaging(transport) => transport.send_until(message, deadline).await,
             Self::RakNet(transport) => transport.send_until(message, deadline).await,
             Self::NetherNetLan(transport) => transport.send_until(message, deadline).await,
+            Self::Accepted(transport) => transport.send_until(message, deadline).await,
         }
     }
 
@@ -184,6 +200,7 @@ impl Transport {
             Self::Messaging(transport) => transport.recv().await,
             Self::RakNet(transport) => transport.recv().await,
             Self::NetherNetLan(transport) => transport.recv().await,
+            Self::Accepted(transport) => transport.recv().await,
         }
     }
 
@@ -204,6 +221,10 @@ impl Transport {
             }
             Self::RakNet(transport) => transport.close().await,
             Self::NetherNetLan(transport) => {
+                transport.close();
+                Ok(())
+            }
+            Self::Accepted(transport) => {
                 transport.close();
                 Ok(())
             }
