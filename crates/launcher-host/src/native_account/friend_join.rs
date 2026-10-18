@@ -115,6 +115,7 @@ pub struct FriendJoin {
     retry_at: Option<Instant>,
     deadline: Instant,
     admitted: bool,
+    prepared: bool,
     admission_identity: Option<(Uuid, [u8; 32])>,
     closing: bool,
     closed: bool,
@@ -144,6 +145,7 @@ impl NativeAccount {
             retry_at: None,
             deadline,
             admitted: false,
+            prepared: false,
             admission_identity: None,
             closing: false,
             closed: false,
@@ -152,6 +154,67 @@ impl NativeAccount {
 }
 
 impl FriendJoin {
+    /// Prepares this joined world's signed transport on the same verified leased account.
+    /// Retain and drive this owner alongside the returned connection, then explicitly close it.
+    /// Matching updates during preparation retire the handoff and require an explicit retry.
+    pub async fn prepare_friend(
+        &mut self,
+        claims: serde_json::Value,
+        random_id: protocol::ClientRandomId,
+    ) -> io::Result<(
+        protocol::NativeConnectionTarget,
+        protocol::NativeAuthentication,
+    )> {
+        if !self.admitted || self.prepared || self.closing || self.closed {
+            return Err(invalid("friend membership is not active"));
+        }
+        if !claims.is_object() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native client data must be a JSON object",
+            ));
+        }
+        let mut operation = self.operation(self.deadline).await?;
+        while self.changed {
+            self.refresh_owned(&mut operation, self.deadline).await?;
+        }
+        let admission = self.current_admission()?;
+        admission.validate(&operation)?;
+        let (peer, nonce) = admission.into_parts();
+        let target = protocol::NativeMessagingTarget::new(peer, nonce)?;
+        let account = Arc::clone(&self.account);
+        let prepared = service(
+            self.socket
+                .as_mut()
+                .ok_or_else(|| invalid("friend RTA is unavailable"))?,
+            self.subscription
+                .ok_or_else(|| invalid("friend subscription is unavailable"))?,
+            &self.selection.reference,
+            &mut self.changed,
+            self.deadline,
+            account.prepare_messaging_borrowed(&mut operation, target, claims, random_id),
+        )
+        .await??;
+        if self.changed {
+            // Its protected socket needs continuous driving; retire it before awaiting another service read.
+            drop(prepared);
+            while self.changed {
+                self.refresh_owned(&mut operation, self.deadline).await?;
+            }
+            self.current_admission()?.validate(&operation)?;
+            operation.persist()?;
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "friend-world metadata changed during preparation; retry",
+            ));
+        }
+        check_deadline(self.deadline)?;
+        operation.persist()?;
+        check_deadline(self.deadline)?;
+        self.prepared = true;
+        Ok(prepared)
+    }
+
     /// Establishes active RTA, joins once, then keeps control traffic progressing until host admission.
     /// Cancellation keeps the stable join intent, known session and ambiguity fence in this owner.
     /// A canceled/failed ambiguous PUT is reconciled by the selected reference, never blindly replayed.
@@ -279,25 +342,7 @@ impl FriendJoin {
         while self.changed {
             self.refresh(deadline).await?;
         }
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| invalid("friend membership is unavailable"))?;
-        self.check_binding(session)?;
-        let admission = world::admission(
-            session.description(),
-            self.scope.as_ref().expect("admitted scope"),
-            &self.selection.host,
-        )?
-        .ok_or_else(|| invalid("friend-world admission was revoked"))?;
-        if self.admission_identity
-            != Some((
-                admission.peer,
-                Sha256::digest(admission.nonce.as_bytes()).into(),
-            ))
-        {
-            return Err(invalid("friend-world admission identity changed"));
-        }
+        self.current_admission()?;
         Ok(())
     }
 
@@ -491,6 +536,21 @@ impl FriendJoin {
     /// Refreshes, rather than merging, title metadata while keeping subscription controls progressing.
     async fn refresh(&mut self, deadline: Instant) -> io::Result<()> {
         let mut operation = self.operation(deadline).await?;
+        self.refresh_owned(&mut operation, deadline).await?;
+        operation.persist()?;
+        Ok(())
+    }
+
+    /// Refreshes under an already held lease so preparation never reacquires its own account owner.
+    async fn refresh_owned(
+        &mut self,
+        operation: &mut Operation,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.scope
+            .as_ref()
+            .ok_or_else(|| invalid("friend account scope is unavailable"))?
+            .check(operation)?;
         // Preserve the dirty fence if this future is canceled before the complete snapshot arrives.
         self.changed = true;
         let mut changed = false;
@@ -516,7 +576,6 @@ impl FriendJoin {
         .await?
         .map_err(directory_error)?;
         self.changed = changed;
-        operation.persist()?;
         Ok(())
     }
 
@@ -565,6 +624,32 @@ impl FriendJoin {
             ));
         }
         Ok(())
+    }
+
+    /// Revalidates the retained member/peer/nonce identity before mint, handoff or continued play.
+    fn current_admission(&self) -> io::Result<FriendAdmission> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| invalid("friend membership is unavailable"))?;
+        self.check_binding(session)?;
+        let admission = world::admission(
+            session.description(),
+            self.scope
+                .as_ref()
+                .ok_or_else(|| invalid("friend account scope is unavailable"))?,
+            &self.selection.host,
+        )?
+        .ok_or_else(|| invalid("friend-world admission was revoked"))?;
+        if self.admission_identity
+            != Some((
+                admission.peer,
+                Sha256::digest(admission.nonce.as_bytes()).into(),
+            ))
+        {
+            return Err(invalid("friend-world admission identity changed"));
+        }
+        Ok(admission)
     }
 
     /// Distinguishes cancellation during credential acquisition from an actually dispatched join write.
