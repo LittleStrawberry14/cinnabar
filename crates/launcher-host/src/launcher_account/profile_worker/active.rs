@@ -24,6 +24,9 @@ enum Exit {
     Unavailable,
 }
 
+#[cfg(all(test, unix))]
+mod artwork_tests;
+
 /// Pins each actual fetch/artwork phase across same-account refresh wakes.
 /// Generation/source changes and terminal stop drop it before a replacement starts.
 /// Fetch and artwork retain their original independent finite time budgets.
