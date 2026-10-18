@@ -45,9 +45,22 @@ OpenID/JWKS metadata from the configured authorization issuer, using the existin
 pure Rust signature/key/claims owner. The handoff checks account and connection-key
 identity and retains the original service-time observation and minimum mint/JWT
 validity through actual Login admission, including RakNet capacity waits. Known
-keys are reused and unknown-key refresh remains on demand. Signed NetherNet and
-end-to-end delayed-login/provider HTTP acceptance remain incomplete; this source
-milestone does not close a parity gate.
+keys are reused and local mint unknown-key refresh remains on demand. Peer SDP
+uses the bounded provider metadata captured at mint qualification; remote-key
+refresh during a connection is not implemented. An explicit native
+Player Messaging join can prepare its protected socket and multiplayer mint on
+that same leased account, then carry one shared P-384 proof owner through signed
+SDP and Login. Peer provider verification checks the remote peer's own identity
+and fingerprint proof; it does not substitute the local selected account. The
+original service clock and hard admission deadline survive transport queueing.
+The caller must supply a peer messaging UUID and an admitted session nonce;
+listing a friend world does not supply that admission. The existing session
+runtime polls the SDK/NetherNet adapter through play, including service-only
+maintenance while bounded game input waits for application capacity. Accepted
+data drains before a staged service failure, without another runtime, bridge
+task or payload queue. End-to-end protected messaging, delayed-login/provider HTTP and
+live-account acceptance remain incomplete; this source milestone does not close
+a parity gate.
 
 Native Realms discovery projects the existing menu cards from a selected-account
 worker. It fences old account/credential revisions and Go Realms replies, while
@@ -71,7 +84,7 @@ listing does not join sessions or create RTA subscriptions. Existing Xbox people
 profile, invitations and unrelated catalog services retain their Go owners.
 
 Hosted Xbox profile creation, persistent derived-token reuse, friend and remaining
-service joins, signed NetherNet signaling, hosting, browser transport and the broader
+service joins, signed NetherNet friend/Realm admission, hosting, browser transport and the broader
 account, network/device and performance acceptance matrix remain incomplete. Native
 sign-in, Realms and friend-world HTTP/UI acceptance remain open. No parity gate closes
 and the working Go backend remains required during validation.

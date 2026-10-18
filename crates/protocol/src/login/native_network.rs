@@ -107,11 +107,11 @@ impl LoginSequence {
         native_join(target, login, None, prepare).await
     }
 
-    /// Joins RakNet with an already acquired account credential and its owned proof key.
+    /// Joins RakNet or explicitly prepared Player Messaging with an acquired account credential.
     ///
     /// Account HTTP and persistence stay with the application. The connection
     /// retains this key through signed client data and the server key exchange.
-    /// Signed identity-aware NetherNet signaling is not yet supported here.
+    /// Player Messaging additionally requires a protected socket and joined-session target.
     ///
     /// # Errors
     /// Rejects unsupported transport or invalid framing, and returns connection,
@@ -122,10 +122,10 @@ impl LoginSequence {
         authentication: NativeAuthentication,
         prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
     ) -> Result<(PlaySession, P), ProtocolError> {
-        if target.transport != NativeTransport::RakNet {
+        if target.transport == NativeTransport::NetherNetLan {
             return Err(failure(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "native account joins require RakNet until signed NetherNet signaling is available",
+                "native account joins require RakNet or prepared signed Player Messaging",
             )));
         }
         native_join(target, login, Some(authentication), prepare).await
@@ -165,28 +165,38 @@ async fn connect<P: Send + 'static>(
             "native join does not accept a core target override",
         )));
     }
-    let (key, authentication) = match authentication {
-        Some(NativeAuthentication {
-            key,
-            token,
-            claims,
-            expires,
-        }) => {
-            authentication::ensure_current(expires, std::time::Instant::now())
+    let (key, authentication, messaging) = match authentication {
+        Some(authentication) => {
+            authentication::ensure_current(authentication.expires, std::time::Instant::now())
                 .map_err(ProtocolError::Authentication)?;
-            (key, Some((token, claims, expires)))
+            let handoff = authentication
+                .into_handoff()
+                .map_err(ProtocolError::Authentication)?;
+            (
+                handoff.key,
+                Some((handoff.token, handoff.claims, handoff.expires)),
+                handoff.messaging,
+            )
         }
         None => (
-            SigningKey::try_generate_from_rng(&mut SysRng)
-                .map_err(io::Error::other)
-                .map_err(failure)?,
+            std::sync::Arc::new(
+                SigningKey::try_generate_from_rng(&mut SysRng)
+                    .map_err(io::Error::other)
+                    .map_err(failure)?,
+            ),
+            None,
             None,
         ),
     };
-    let key = Arc::new(key);
-    let transport = transport::Transport::connect(target)
+    let transport = transport::Transport::connect(target, messaging)
         .await
-        .map_err(failure)?;
+        .map_err(|error| {
+            if authentication::is_expired(&error) {
+                ProtocolError::Authentication(error)
+            } else {
+                failure(error)
+            }
+        })?;
     let mut connection = Connection::new(transport);
     let mut handshake = ClientHandshake::new(
         key,

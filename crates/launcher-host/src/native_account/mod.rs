@@ -5,6 +5,7 @@ mod catalog;
 mod catalog_worker;
 mod friend_join;
 mod friends;
+mod messaging;
 mod metadata;
 mod operation;
 mod prepare;

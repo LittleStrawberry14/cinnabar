@@ -424,3 +424,38 @@ fn restore_keeps_the_proof_but_adopts_only_the_current_protected_refresh() {
         original.checkpoint().unwrap().as_bytes()
     );
 }
+
+/// Shared preparation cannot borrow another selected account's acquired mutable owner.
+#[tokio::test]
+async fn borrowed_messaging_cannot_reuse_another_account_operation() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = Arc::new(NativeAccount::new(
+        AccountStore::new(directory.path().join("first.json")),
+        directory.path().join("device.json"),
+        None,
+    ));
+    let second = NativeAccount::new(
+        AccountStore::new(directory.path().join("second.json")),
+        directory.path().join("device.json"),
+        None,
+    );
+    let mut operation = first.begin().unwrap();
+    let target = protocol::NativeMessagingTarget::new(
+        uuid::Uuid::from_u128(1),
+        "synthetic-joined-challenge".into(),
+    )
+    .unwrap();
+    let result = second
+        .prepare_messaging_borrowed(
+            &mut operation,
+            target,
+            serde_json::json!({}),
+            protocol::ClientRandomId::new(1).unwrap(),
+        )
+        .await;
+    let error = match result {
+        Ok(_) => panic!("another account's mutable operation was admitted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+}

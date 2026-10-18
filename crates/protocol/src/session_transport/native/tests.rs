@@ -211,3 +211,5 @@ async fn oversized_batches_never_consume_queue_capacity() {
     let _receipt = sender.accept(Bytes::from_static(b"fits")).await.unwrap();
     assert_eq!(receive.recv().await.unwrap().body, b"fits"[..]);
 }
+
+mod service;

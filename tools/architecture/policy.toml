@@ -86,6 +86,7 @@ path = "crates/protocol"
 # generated handshake, pack negotiation and spawn owners are external; adapters
 # retain account admission, I/O, raw FIFO bounds and presentation policy.
 # NetherNet's pure JWS/JWK owner supplies credential verification primitives.
+# Optional Player Messaging composes the SDK socket in the external networking edge.
 allowed_dependencies = ["simulation-clock", "block-transform", "bridge", "render-api", "test-time", "protocol-ids", "resource-pack"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]
@@ -1279,7 +1280,8 @@ exports = [
 [[crates]]
 name = "launcher-host"
 path = "crates/launcher-host"
-# Optional account services use this runtime/storage edge; protocol and transport stay HTTP-free.
+# Optional account services acquire protected messaging upgrades on this runtime/storage edge.
+# The external networking adapter owns socket/signaling composition; protocol owns native admission.
 allowed_dependencies = ["cosmetics", "bridge", "crash-report", "launcher", "protocol", "resource-pack", "server-experience", "test-time", "update-manifest", "update-installer"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]

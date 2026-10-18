@@ -1,12 +1,15 @@
 //! Qualified provider credentials and their original finite validity.
 
+mod messaging;
 mod verifier;
+pub(super) use messaging::MessagingAdmission;
 pub use verifier::NativeTokenVerifier;
 
 use p384::ecdsa::SigningKey;
 use serde_json::{Map, Value, value::RawValue};
 use std::{
     io,
+    sync::Arc,
     time::{Instant, SystemTime},
 };
 use zeroize::Zeroizing;
@@ -15,8 +18,7 @@ use zeroize::Zeroizing;
 /// No clock is read, and no token lifetime is restarted by this owner.
 pub struct NativeCredential {
     token: Zeroizing<String>,
-    service_time: SystemTime,
-    observed: Instant,
+    clock: ServiceClock,
     hard_expiry: SystemTime,
 }
 
@@ -38,8 +40,10 @@ impl NativeCredential {
         verifier::parsed(&token)?;
         Ok(Self {
             token,
-            service_time,
-            observed,
+            clock: ServiceClock {
+                service_time,
+                observed,
+            },
             hard_expiry,
         })
     }
@@ -60,12 +64,7 @@ impl NativeCredential {
 
     /// Advances the original service UTC observation with caller-supplied monotonic time.
     fn now(&self, now: Instant) -> io::Result<SystemTime> {
-        self.service_time
-            .checked_add(
-                now.checked_duration_since(self.observed)
-                    .ok_or_else(expired)?,
-            )
-            .ok_or_else(expired)
+        self.clock.now(now)
     }
 }
 
@@ -79,6 +78,12 @@ pub struct NativeAuthentication {
     pub(super) token: Zeroizing<String>,
     pub(super) claims: Map<String, Value>,
     pub(super) expires: Instant,
+    clock: ServiceClock,
+    verifier: Arc<NativeTokenVerifier>,
+    messaging: Option<(
+        bedrock_net::messaging::PreparedMessaging,
+        crate::NativeMessagingTarget,
+    )>,
 }
 
 impl NativeAuthentication {
@@ -128,10 +133,11 @@ impl NativeAuthentication {
             .expect("qualified identity has expiry")
             .min(credential.hard_expiry);
         let expires = credential
+            .clock
             .observed
             .checked_add(
                 expiry
-                    .duration_since(credential.service_time)
+                    .duration_since(credential.clock.service_time)
                     .map_err(|_| expired())?,
             )
             .ok_or_else(expired)?;
@@ -150,7 +156,86 @@ impl NativeAuthentication {
             token: credential.token,
             claims,
             expires,
+            clock: credential.clock,
+            verifier: Arc::new(verifier.clone()),
+            messaging: None,
         })
+    }
+
+    /// Associates this selected-account mint with that account's protected messaging socket.
+    /// The peer route must be the caller's explicit joined-session target.
+    pub fn with_messaging(
+        mut self,
+        prepared: bedrock_net::messaging::PreparedMessaging,
+        target: crate::NativeMessagingTarget,
+    ) -> io::Result<Self> {
+        if self.messaging.is_some() || prepared.peer() != target.peer() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native messaging target mismatch",
+            ));
+        }
+        self.messaging = Some((prepared, target));
+        Ok(self)
+    }
+
+    /// Returns the original absolute Login admission deadline without extending the minted lifetime.
+    pub fn expires_at(&self) -> Instant {
+        self.expires
+    }
+
+    /// Retains the sole proof key, original service clock and configured peer verifier during SDP.
+    pub(super) fn into_handoff(self) -> io::Result<AuthenticationHandoff> {
+        let key = Arc::new(self.key);
+        let messaging = self
+            .messaging
+            .map(|(prepared, target)| {
+                MessagingAdmission::new(
+                    prepared,
+                    target,
+                    Arc::clone(&key),
+                    &self.token,
+                    self.clock,
+                    self.verifier,
+                    self.expires,
+                )
+            })
+            .transpose()?;
+        Ok(AuthenticationHandoff {
+            key,
+            token: self.token,
+            claims: self.claims,
+            expires: self.expires,
+            messaging,
+        })
+    }
+}
+
+/// The one qualified key owner after connection admission begins.
+pub(super) struct AuthenticationHandoff {
+    pub(super) key: Arc<SigningKey>,
+    pub(super) token: Zeroizing<String>,
+    pub(super) claims: Map<String, Value>,
+    pub(super) expires: Instant,
+    pub(super) messaging: Option<MessagingAdmission>,
+}
+
+/// The mint's original calibrated service observation, shared by local SDP and peer verification.
+#[derive(Clone, Copy)]
+struct ServiceClock {
+    service_time: SystemTime,
+    observed: Instant,
+}
+
+impl ServiceClock {
+    /// Advances service UTC with explicit monotonic time; rollback or overflow fails closed.
+    fn now(self, now: Instant) -> io::Result<SystemTime> {
+        self.service_time
+            .checked_add(
+                now.checked_duration_since(self.observed)
+                    .ok_or_else(expired)?,
+            )
+            .ok_or_else(expired)
     }
 }
 

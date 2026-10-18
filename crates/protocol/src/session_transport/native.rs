@@ -176,9 +176,18 @@ impl SessionTransport {
                         permit.send(item);
                         if ended { break; }
                     }
-                    result = connection.recv_body(), if pending.is_none() => {
-                        if result.is_err() { writes.fail(); }
-                        pending = Some(result);
+                    result = async {
+                        if pending.is_none() {
+                            Some(connection.recv_body().await)
+                        } else {
+                            connection.maintain().await;
+                            None
+                        }
+                    } => {
+                        if let Some(result) = result {
+                            if result.is_err() { writes.fail(); }
+                            pending = Some(result);
+                        }
                     }
                     batch = writes.receive.recv(), if writes.is_active() => {
                         let Some(batch) = batch else { break };
