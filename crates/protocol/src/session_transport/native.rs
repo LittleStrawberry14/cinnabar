@@ -2,7 +2,9 @@
 
 use bytes::Bytes;
 use std::{
+    future::Future,
     io,
+    pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
 };
@@ -13,19 +15,25 @@ use crate::login::native_network::{Connection, PacketConnection};
 
 const QUEUED_BATCHES: usize = 4;
 
+type PendingInput = Option<io::Result<Bytes>>;
+
 #[cfg(test)]
 pub(crate) mod tests;
 
 pub(crate) struct NativeReader {
     incoming: mpsc::Receiver<io::Result<Bytes>>,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<PendingInput>>,
+    tail: PendingInput,
+    failure: Option<tokio::task::JoinError>,
     stop: Option<oneshot::Sender<()>>,
     closed: bool,
 }
 
 impl Drop for NativeReader {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -38,12 +46,26 @@ impl NativeReader {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task).await;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            std::future::poll_fn(|cx| self.poll_driver(cx)),
+        )
+        .await;
         self.closed = true;
         match result {
-            Ok(result) => result.map_err(io::Error::other),
+            Ok(Ok(pending)) => {
+                if let Some(item) = pending {
+                    self.tail = Some(item);
+                }
+                self.failure
+                    .take()
+                    .map_or(Ok(()), |error| Err(io::Error::other(error)))
+            }
+            Ok(Err(error)) => Err(io::Error::other(error)),
             Err(_) => {
-                self.task.abort();
+                if let Some(task) = &self.task {
+                    task.abort();
+                }
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "native close timed out",
@@ -52,9 +74,32 @@ impl NativeReader {
         }
     }
 
-    /// Polls complete, bounded batch bodies without losing an item on cancellation.
+    /// Takes completed driver ownership once, retaining the handle across pending polls.
+    fn poll_driver(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<PendingInput, tokio::task::JoinError>> {
+        let Some(task) = &mut self.task else {
+            return Poll::Ready(Ok(None));
+        };
+        let result = std::task::ready!(Pin::new(task).poll(cx));
+        self.task = None;
+        Poll::Ready(result)
+    }
+
+    /// Drains queued bodies before the driver's retained input, without losing either on cancellation.
     pub(super) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<io::Result<Bytes>>> {
-        self.incoming.poll_recv(cx)
+        match self.incoming.poll_recv(cx) {
+            Poll::Ready(None) => {}
+            other => return other,
+        }
+        match std::task::ready!(self.poll_driver(cx)) {
+            Ok(Some(item)) => self.tail = Some(item),
+            Ok(None) => {}
+            Err(error) if !self.closed => self.failure = Some(error),
+            Err(_) => {}
+        }
+        Poll::Ready(self.tail.take())
     }
 }
 
@@ -209,17 +254,17 @@ impl SessionTransport {
                     }
                 }
             }
-            // Retire the transport before waiting on receive capacity. Accepted input
-            // still precedes channel completion even when transport close fails.
+            // Move the same pending input through task completion so close never
+            // waits for capacity held by its own caller's receive borrow.
             let _ = connection.close().await;
-            if let Some(item) = pending {
-                let _ = incoming.send(item).await;
-            }
+            pending
         });
         Self {
             reader: Reader::Native(NativeReader {
                 incoming: receive,
-                task,
+                task: Some(task),
+                tail: None,
+                failure: None,
                 stop: Some(stop),
                 closed: false,
             }),
