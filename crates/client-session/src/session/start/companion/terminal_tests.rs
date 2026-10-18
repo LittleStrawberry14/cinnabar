@@ -269,3 +269,161 @@ async fn companion_only_failure_cancels_pending_network_before_cleanup() {
         ["network finished", "companion close"]
     );
 }
+
+struct DecodedBoundary {
+    error: Option<protocol::ProtocolError>,
+    disconnect: Option<protocol::ServerDisconnectEvent>,
+    transfer: Option<protocol::ServerTransferEvent>,
+    final_stats: bool,
+    order: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl NetworkSession for DecodedBoundary {
+    type Error = protocol::ProtocolError;
+    type Outbound = crate::session::tests::PacketOutbound<&'static str>;
+
+    fn outbound(&mut self) -> Result<Self::Outbound, Self::Error> {
+        Ok(Self::Outbound::accepting())
+    }
+
+    async fn receive_world_event(&mut self, _: i32) -> Result<protocol::WorldEvent, Self::Error> {
+        self.final_stats = true;
+        Err(self.error.take().expect("one decoded terminal"))
+    }
+
+    fn decode_error_count(&self) -> u64 {
+        0
+    }
+
+    fn take_server_disconnect(&mut self) -> Option<protocol::ServerDisconnectEvent> {
+        self.disconnect.take()
+    }
+
+    fn take_server_transfer(&mut self) -> Option<protocol::ServerTransferEvent> {
+        self.transfer.take()
+    }
+
+    fn blob_cache_enabled(&self) -> bool {
+        self.final_stats
+    }
+
+    async fn close(&mut self) {
+        self.order.lock().unwrap().push("network close");
+    }
+}
+
+/// The actual play pump retains the decoded boundary before waiting on finite final cache telemetry.
+async fn play_terminal(kind: u8, body: &[u8]) {
+    let error = decoded_terminal(kind, body).await;
+    let message = error.to_string();
+    let disconnect = error.server_disconnect();
+    let transfer = error.server_transfer();
+    let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
+    fill_controls(&channels.control_event_tx);
+    let shutdown = handle.shutdown.clone();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let boundary = DecodedBoundary {
+        error: Some(error),
+        disconnect: disconnect.clone(),
+        transfer: transfer.clone(),
+        final_stats: false,
+        order: Arc::clone(&order),
+    };
+    let (fail, failed) = oneshot::channel();
+    let mut companion = FailedCompanion {
+        failed,
+        order: Arc::clone(&order),
+    };
+    let work = run_network_pump(
+        boundary,
+        NetworkSequencer::new(SessionGeneration::new(1), 0, 42),
+        channels.command_rx,
+        channels.control_event_tx,
+        channels.world_event_tx,
+        channels.shutdown_rx,
+    );
+    let worker = async {
+        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        order.lock().unwrap().push("network finished");
+        companion.close().await;
+        result
+    };
+    tokio::pin!(worker);
+    assert!(
+        poll_fn(|cx| Poll::Ready(worker.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    fail.send(()).unwrap();
+    let competing = poll_fn(|cx| Poll::Ready(worker.as_mut().poll(cx))).await;
+    release_controls(&mut handle);
+    let result = match competing {
+        Poll::Ready(result) => result,
+        Poll::Pending => worker.await,
+    };
+    require_original_terminal(&mut handle, &message, disconnect, transfer);
+    assert!(
+        result.is_ok(),
+        "retained play boundary must own the outcome"
+    );
+    assert_eq!(
+        *order.lock().unwrap(),
+        ["network close", "network finished", "companion close"]
+    );
+}
+
+#[tokio::test]
+async fn retained_play_transfer_survives_companion_failure_during_final_telemetry() {
+    play_terminal(
+        bridge::contract::KIND_TRANSFER,
+        br#"{"address":"next.example.test","port":19133,"reload_world":false}"#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn retained_play_disconnect_survives_companion_failure_during_final_telemetry() {
+    play_terminal(bridge::contract::KIND_DISCONNECT, br#"{"reason":25,"message":"original server disconnect","filtered_message":"","hide_screen":false}"#).await;
+}
+
+#[tokio::test]
+async fn explicit_user_cancel_still_retires_a_retained_startup_transfer() {
+    let error = decoded_terminal(
+        bridge::contract::KIND_TRANSFER,
+        br#"{"address":"next.example.test","port":19133,"reload_world":false}"#,
+    )
+    .await;
+    let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(1));
+    fill_controls(&channels.control_event_tx);
+    let shutdown = handle.shutdown.clone();
+    let (_fail, failed) = oneshot::channel();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let mut companion = FailedCompanion {
+        failed,
+        order: Arc::clone(&order),
+    };
+    let work = channels.run(
+        |_| async move { Err::<PreparedLoginReader, _>(error) },
+        NoOutbound,
+        SessionTrace::default(),
+    );
+    let worker = async {
+        let result = run_with_companion(work, &mut companion, &shutdown).await;
+        companion.close().await;
+        result
+    };
+    tokio::pin!(worker);
+    assert!(
+        poll_fn(|cx| Poll::Ready(worker.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    handle.shutdown();
+    worker.await.unwrap();
+    release_controls(&mut handle);
+    assert!(
+        handle.control_events.try_recv().is_err(),
+        "explicit cancellation must not start a redial"
+    );
+    assert_eq!(*order.lock().unwrap(), ["companion close"]);
+}
