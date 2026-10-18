@@ -64,11 +64,27 @@ impl NativeAccount {
         };
         let key = SigningKey::try_generate_from_rng(&mut SysRng)
             .map_err(|_| io::Error::other("native connection key generation failed"))?;
-        let token = operation
-            .minecraft()?
-            .multiplayer_token(key.verifying_key())
-            .await
-            .map_err(service_error)?;
+        let (credential, issuer) = {
+            let services = operation.minecraft()?;
+            let token = services
+                .multiplayer_token(key.verifying_key())
+                .await
+                .map_err(service_error)?;
+            let observed = std::time::Instant::now();
+            let credential = protocol::NativeCredential::new(
+                token.as_str().to_owned(),
+                services.service_time(),
+                token.expires_at(),
+                observed,
+            )?;
+            (
+                credential,
+                services
+                    .authorization_issuer()
+                    .map_err(service_error)?
+                    .to_owned(),
+            )
+        };
         profile.apply(
             &mut claims,
             random_id,
@@ -83,7 +99,27 @@ impl NativeAccount {
         );
         let raw = serde_json::value::to_raw_value(&claims)
             .map_err(|_| io::Error::other("serialize native client data"))?;
-        let prepared = protocol::NativeAuthentication::new(key, token.as_str().to_owned(), &raw)?;
+        let cached = operation.cached.as_mut().expect("account owner");
+        let same_provider = cached
+            .provider
+            .as_ref()
+            .map(|provider| provider.matches(&issuer))
+            .transpose()?
+            .unwrap_or(false);
+        if !same_provider {
+            cached.provider = Some(provider::Provider::new(&issuer)?);
+        }
+        let prepared = cached
+            .provider
+            .as_mut()
+            .expect("account provider")
+            .authentication(
+                key,
+                credential,
+                &raw,
+                &cached.identity.as_ref().expect("verified identity").xuid,
+            )
+            .await?;
         operation.persist()?;
         Ok(prepared)
     }
@@ -116,6 +152,7 @@ impl Operation {
                 binding,
                 owner,
                 identity,
+                provider,
             } = self.cached.take().expect("account owner");
             let Owner::Xbox(account) = owner else {
                 unreachable!("checked Xbox owner")
@@ -126,6 +163,7 @@ impl Operation {
                 binding,
                 owner: Owner::Minecraft(Box::new(services)),
                 identity,
+                provider,
             });
             self.published = false;
         }

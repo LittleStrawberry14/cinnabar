@@ -6641,7 +6641,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a#a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=298c89b6d229dbc0c1870a3337e558bf8cddbe44#298c89b6d229dbc0c1870a3337e558bf8cddbe44"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6665,7 +6665,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a#a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=298c89b6d229dbc0c1870a3337e558bf8cddbe44#298c89b6d229dbc0c1870a3337e558bf8cddbe44"
 dependencies = [
  "bytes",
  "futures",
@@ -7966,6 +7966,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "futures",
+ "nethernet",
  "nethernet-tokio",
  "p384",
  "protocol-ids",
@@ -7973,6 +7974,7 @@ dependencies = [
  "render-api",
  "reqwest 0.13.5",
  "resource-pack",
+ "rsa",
  "rustls",
  "serde",
  "serde_json",

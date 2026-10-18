@@ -100,6 +100,7 @@ impl NativeAccount {
                 .replace_credentials(import_credentials(lease, &policy)?)
                 .map_err(service_error)?;
             operation.cached = Some(Cached {
+                provider: None,
                 generation: lease.generation().to_owned(),
                 binding: lease.binding(),
                 owner: Owner::Xbox(Box::new(account)),

@@ -52,6 +52,7 @@ fn cancelling_after_oauth_rotation_persists_before_releasing_the_lease() {
         .unwrap();
     let proof = sdk.checkpoint().unwrap();
     operation.cached = Some(Cached {
+        provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
         owner: Owner::Xbox(Box::new(sdk)),
@@ -133,6 +134,7 @@ fn unverified_rotation_does_not_overwrite_a_selected_saved_account() {
             )
             .unwrap();
         operation.cached = Some(Cached {
+            provider: None,
             generation: lease.generation().into(),
             binding: lease.binding(),
             owner: Owner::Xbox(Box::new(sdk)),
@@ -224,6 +226,7 @@ fn oversized_access_does_not_poison_go_fallback_or_lose_the_rotated_refresh() {
         )
         .unwrap();
     operation.cached = Some(Cached {
+        provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
         owner: Owner::Xbox(Box::new(sdk)),
@@ -269,6 +272,7 @@ fn changed_xuid_cannot_reuse_a_service_session_without_a_selected_account() {
     let services = minecraft::Minecraft::new(sdk, config).unwrap();
     let session_id = services.session_id();
     let mut cached = Cached {
+        provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
         owner: Owner::Minecraft(Box::new(services)),

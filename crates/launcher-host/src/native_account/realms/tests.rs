@@ -88,6 +88,7 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
     let mut operation = account.begin().unwrap();
     let lease = store.try_native_lease().unwrap();
     operation.cached = Some(Cached {
+        provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
         owner: Owner::Xbox(Box::new(sdk)),

@@ -100,15 +100,71 @@ impl Connection {
         &mut self,
         packets: &[Packet],
     ) -> Result<(), crate::ProtocolError> {
+        self.send_packets_until(packets, None).await
+    }
+
+    /// Admits Login only while its original credential remains valid, including capacity waits.
+    pub(super) async fn send_before<P>(
+        &mut self,
+        packet: P,
+        deadline: std::time::Instant,
+    ) -> Result<(), crate::ProtocolError>
+    where
+        packets::Packet: From<P>,
+    {
+        self.send_packets_until(&[Packet::new(packet)], Some(deadline))
+            .await
+    }
+
+    /// Preserves received terminal input on transport failure, but reports expiry as authentication failure.
+    async fn send_packets_until(
+        &mut self,
+        packets: &[Packet],
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), crate::ProtocolError> {
         let body = crate::session_transport::batch_body(packets)
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode")
             })
             .map_err(super::failure)?;
-        match self.send_body(body).await {
+        match self.send_body_until(body, deadline).await {
             Ok(()) => Ok(()),
+            Err(error) if super::authentication::is_expired(&error) => {
+                Err(crate::ProtocolError::Authentication(error))
+            }
             Err(error) => Err(super::preserve_negotiation_boundary(self, error).await),
         }
+    }
+
+    /// Encodes without restarting a finite Login credential deadline.
+    async fn send_body_until(
+        &mut self,
+        body: Bytes,
+        deadline: Option<std::time::Instant>,
+    ) -> io::Result<()> {
+        Self::check_body_size(&body)?;
+        let entries = wire::Frames::new(body, self.limits.max_packets)
+            .map(|frame| {
+                let frame = frame.map_err(io::Error::other)?;
+                let mut reader = wire::Reader::from_shared(frame.frame());
+                reader.read_var_u32().map_err(io::Error::other)?;
+                Ok(frame.frame().slice(reader.position()..))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
+            if let Some((encryptor, _)) = &mut self.ciphers {
+                let marker = self.transport.header().marker();
+                let body = if marker.is_some() {
+                    message.slice(1..)
+                } else {
+                    message
+                };
+                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
+                self.check_wire_size(&message)?;
+            }
+            self.transport.send_until(message, deadline).await?;
+        }
+        Ok(())
     }
 
     /// Refuses an oversized queue item before it can retain connection capacity.
@@ -213,29 +269,7 @@ fn envelope(marker: Option<u8>, body: Bytes) -> Bytes {
 impl PacketConnection for Connection {
     /// Advances the cipher only inside this owner's uninterrupted write operation.
     async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
-        Self::check_body_size(&body)?;
-        let entries = wire::Frames::new(body, self.limits.max_packets)
-            .map(|frame| {
-                let frame = frame.map_err(io::Error::other)?;
-                let mut reader = wire::Reader::from_shared(frame.frame());
-                reader.read_var_u32().map_err(io::Error::other)?;
-                Ok(frame.frame().slice(reader.position()..))
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
-            if let Some((encryptor, _)) = &mut self.ciphers {
-                let marker = self.transport.header().marker();
-                let body = if marker.is_some() {
-                    message.slice(1..)
-                } else {
-                    message
-                };
-                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
-                self.check_wire_size(&message)?;
-            }
-            self.transport.send(message).await?;
-        }
-        Ok(())
+        self.send_body_until(body, None).await
     }
 
     /// Reframes the unread batch as ordinary Bedrock entries for lazy play decoding.
