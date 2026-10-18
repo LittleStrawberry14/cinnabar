@@ -74,6 +74,7 @@ func (l *Listener) Accept() (session.Conn, error) {
 			if c.ctx.Err() == nil {
 				return c, nil
 			}
+			_ = c.Close()
 		}
 	}
 }
