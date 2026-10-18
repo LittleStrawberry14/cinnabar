@@ -237,11 +237,13 @@ impl NativeLease {
                 "native account identity does not match the selection",
             ));
         }
-        self.write_checkpoint(self.selected_id(), checkpoint)?;
         if let Some(id) = &self.selected_id {
             self.store
                 .write_credentials(id, &read_credentials(&self.store.active_cache)?)?;
+            self.write_checkpoint(Some(id), checkpoint)?;
             remove_optional(&checkpoint_path(&self.store, None))?;
+        } else {
+            self.write_checkpoint(None, checkpoint)?;
         }
         Ok(())
     }

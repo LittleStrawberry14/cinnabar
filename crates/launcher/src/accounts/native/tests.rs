@@ -166,3 +166,36 @@ fn active_oauth_publication_preserves_go_reader_compatibility() {
         .unwrap();
     assert_eq!(native.refresh_token(), "next-refresh");
 }
+
+/// A failed proof promotion cannot leave the saved account behind the active refresh rotation.
+#[test]
+fn failed_verified_proof_promotion_keeps_the_saved_refresh_current() {
+    let fixture = Fixture::new();
+    fixture.sign_in("current");
+    fixture
+        .store
+        .remember_current("123", "Saved", None)
+        .unwrap();
+    let mut native = fixture.store.try_native_lease().unwrap();
+    native
+        .publish_oauth("new-access", "rotated-refresh", "2099-01-01T00:00:00Z")
+        .unwrap();
+    let blocked_proof = checkpoint_path(&fixture.store, Some("123"));
+    private_directory(&blocked_proof).unwrap();
+    assert!(
+        native
+            .publish_verified_identity("123", b"current-proof")
+            .is_err()
+    );
+    native.publish_active_checkpoint(b"current-proof").unwrap();
+    drop(native);
+    fs::remove_dir(&blocked_proof).unwrap();
+    remove_optional(&fixture.store.active_cache).unwrap();
+    fixture.store.activate("123").unwrap();
+    let reopened = fixture.store.try_native_lease().unwrap();
+    assert_eq!(reopened.refresh_token(), "rotated-refresh");
+    assert_eq!(
+        reopened.checkpoint().unwrap().unwrap().as_slice(),
+        b"current-proof"
+    );
+}
