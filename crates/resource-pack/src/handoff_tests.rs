@@ -1,6 +1,6 @@
 use std::io::{Cursor, Write};
 
-use protocol::{ResourcePackArchive, ResourcePackHandoff};
+use crate::{ResourcePackArchive, ResourcePackHandoff};
 use uuid::Uuid;
 use zip::{ZipWriter, write::SimpleFileOptions};
 

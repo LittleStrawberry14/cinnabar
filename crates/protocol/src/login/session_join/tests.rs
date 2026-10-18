@@ -1,3 +1,4 @@
+use resource_pack::ResourcePackHandoff;
 use std::path::{Path, PathBuf};
 
 use bedrock_protocol_1_26_51::enums::PlayStatusType;

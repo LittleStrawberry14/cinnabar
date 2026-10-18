@@ -93,7 +93,7 @@ impl LayeredPackView {
     }
 }
 
-#[cfg(all(test, feature = "handoff"))]
+#[cfg(test)]
 mod tests {
     use crate::{LayeredPackView, test_support::layered_pack_view};
 

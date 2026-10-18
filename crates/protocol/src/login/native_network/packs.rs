@@ -1,76 +1,90 @@
-//! Bounded in-band pack acquisition and server-selected stack ordering.
+//! Bounded native CDN/chunk acquisition and persistent original archive caching.
 
+mod acquisition;
 mod builtins;
+mod transfer;
 
 use super::{Connection, disconnected, failure};
-use crate::{ProtocolError, ResourcePackArchive, ResourcePackHandoff};
-use bedrock_protocol_1_26_51::{
-    packets,
-    types::{PackInfoData, ResourcePackClientResponseData},
-    wire,
-};
-use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, io};
+use crate::ProtocolError;
+use bedrock_protocol_1_26_51::{packets, types::ResourcePackClientResponseData};
+use futures::{StreamExt, stream};
+use resource_pack::ResourcePackHandoff;
+use std::{collections::BTreeMap, io, path::Path, sync::Arc};
+use transfer::Download;
 
-const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_PACK_TOTAL_BYTES: u64 = MAX_PACK_BYTES * 4;
+const MAX_CDN_DOWNLOADS: usize = 4;
 
-struct Download {
-    offer: PackInfoData,
-    name: wire::Str,
-    size: u64,
-    chunk_size: u32,
-    hash: Vec<u8>,
-    next_chunk: u32,
-    bytes: Vec<u8>,
-    complete: bool,
-}
-
-/// Downloads advertised packs over the game connection, verifies each SHA-256,
-/// and returns only the archives selected by the server's final stack.
+/// Tries cache and CDN before requesting missing archives over the game connection.
+/// The same connection and FIFO survive every response and final stack transition.
 pub(super) async fn acquire(
     connection: &mut Connection,
     offer: packets::ResourcePacksInfo,
+    cache_root: Option<&Path>,
 ) -> Result<ResourcePackHandoff, ProtocolError> {
-    let mut downloads = BTreeMap::new();
+    let cancelled = acquisition::Cancellation::new();
+    let mut downloads = Vec::new();
+    let mut ids = std::collections::BTreeSet::new();
     let mut total = 0_u64;
-    let mut requested = Vec::new();
+    let mut skipped_offers = 0_usize;
     for pack in offer.resource_packs {
         let id = pack.pack_id_version.pack_uuid;
-        if downloads.contains_key(&id) {
-            tracing::warn!(%id, "skipped duplicate native pack offer");
+        if !ids.insert(id) {
+            skipped_offers += 1;
             continue;
         }
         total = total
             .checked_add(pack.pack_size.0)
             .ok_or_else(|| invalid("pack sizes overflow"))?;
-        if pack.pack_size.0 > MAX_PACK_BYTES || total > MAX_PACK_TOTAL_BYTES {
+        if downloads.len() >= resource_pack::MAX_PACKS
+            || pack.pack_size.0 > resource_pack::MAX_ARCHIVE_BYTES as u64
+            || total > resource_pack::MAX_STACK_ARCHIVE_BYTES as u64
+        {
             return Err(invalid("pack offer exceeds download budget"));
         }
-        let name: wire::Str = format!(
-            "{id}_{}",
-            pack.pack_id_version.pack_version.version.to_string_lossy()
-        )
-        .into();
-        requested.push(name.clone());
-        downloads.insert(
-            id,
-            Download {
-                size: pack.pack_size.0,
-                offer: pack,
-                name,
-                chunk_size: 0,
-                hash: Vec::new(),
-                next_chunk: 0,
-                bytes: Vec::new(),
-                complete: false,
-            },
+        downloads.push(Download::new(pack)?);
+    }
+    if skipped_offers != 0 {
+        tracing::warn!(skipped_offers, "skipped duplicate native pack offers");
+    }
+    let cache = if downloads.is_empty() {
+        None
+    } else {
+        acquisition::open_cache(cache_root).await
+    };
+    let client = if downloads
+        .iter()
+        .any(|download| !download.offer.cdn_url.is_empty())
+    {
+        acquisition::http_client().ok()
+    } else {
+        None
+    };
+    let mut preloads = stream::iter(downloads.into_iter().enumerate().map(|(index, download)| {
+        let preload = acquisition::preload(
+            download,
+            cache.clone(),
+            client.clone(),
+            Arc::clone(&cancelled.0),
         );
+        async move { (index, preload.await) }
+    }))
+    .buffer_unordered(MAX_CDN_DOWNLOADS)
+    .collect::<Vec<_>>()
+    .await;
+    preloads.sort_unstable_by_key(|(index, _)| *index);
+    let mut downloads = BTreeMap::new();
+    let mut requested = Vec::new();
+    let mut stores = acquisition::Stores::new();
+    for (_, download) in preloads {
+        if download.complete.is_some() {
+            stores.queue(&cache, &download, &cancelled.0);
+        } else {
+            requested.push(download.name.clone());
+        }
+        downloads.insert(download.offer.pack_id_version.pack_uuid, download);
     }
     let response = if requested.is_empty() {
-        ResourcePackClientResponseData::DownloadingFinished {
-            response_type: "downloadingfinished".into(),
-        }
+        finished()
     } else {
         ResourcePackClientResponseData::Downloading {
             response_type: "downloading".into(),
@@ -87,121 +101,69 @@ pub(super) async fn acquire(
                 let id = pack_id(
                     info.resource_name
                         .to_str()
-                        .map_err(io::Error::other)
-                        .map_err(failure)?,
+                        .map_err(|_| invalid("pack identity is not UTF-8"))?,
                 )?;
                 let download = downloads
                     .get_mut(&id)
                     .ok_or_else(|| invalid("pack data info was not advertised"))?;
-                if download.chunk_size != 0 || download.complete {
-                    return Err(invalid("repeated pack data info"));
-                }
                 total = total
                     .checked_sub(download.size)
                     .and_then(|sum| sum.checked_add(info.file_size.0))
                     .ok_or_else(|| invalid("pack sizes overflow"))?;
-                if info.file_size.0 == 0
-                    || info.file_size.0 > MAX_PACK_BYTES
-                    || total > MAX_PACK_TOTAL_BYTES
-                    || info.chunk_size.0 == 0
-                    || info.file_hash.len() != 32
-                {
-                    return Err(invalid("invalid pack size, chunk size or SHA-256"));
+                if total > resource_pack::MAX_STACK_ARCHIVE_BYTES as u64 {
+                    return Err(invalid("pack transfer exceeds total budget"));
                 }
-                download.size = info.file_size.0;
-                download.chunk_size = info.chunk_size.0;
-                download.hash = info.file_hash.to_vec();
-                download.name = info.resource_name;
-                request(connection, download).await?;
+                send_requests(connection, download.begin(info)?).await?;
             }
             packets::Packet::ResourcePackChunkData(chunk) => {
                 let id = pack_id(
                     chunk
                         .resource_name
                         .to_str()
-                        .map_err(io::Error::other)
-                        .map_err(failure)?,
+                        .map_err(|_| invalid("pack identity is not UTF-8"))?,
                 )?;
                 let download = downloads
                     .get_mut(&id)
                     .ok_or_else(|| invalid("chunk pack was not advertised"))?;
-                if chunk.chunk_id.0 < download.next_chunk {
-                    tracing::debug!(%id, "skipped duplicate pack chunk");
-                    continue;
-                }
-                if download.chunk_size == 0
-                    || download.complete
-                    || chunk.chunk_id.0 != download.next_chunk
-                {
-                    return Err(invalid("unexpected pack chunk index"));
-                }
-                let remaining = download
-                    .size
-                    .checked_sub(download.bytes.len() as u64)
-                    .ok_or_else(|| invalid("pack exceeded declared size"))?;
-                let expected = remaining.min(download.chunk_size.into());
-                if chunk.chunk_data.len() as u64 != expected {
-                    return Err(invalid("pack chunk length does not match remaining data"));
-                }
-                download
-                    .bytes
-                    .try_reserve(chunk.chunk_data.len())
-                    .map_err(io::Error::other)
+                let complete_before = download.complete.is_some();
+                send_requests(connection, download.chunk(chunk)?).await?;
+                if !complete_before && download.complete.is_some() {
+                    let bytes = Arc::clone(
+                        download
+                            .complete
+                            .as_ref()
+                            .expect("completed chunk owns bytes"),
+                    );
+                    acquisition::verify(
+                        bytes,
+                        id,
+                        download
+                            .offer
+                            .pack_id_version
+                            .pack_version
+                            .version
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                    .await
                     .map_err(failure)?;
-                download.bytes.extend_from_slice(&chunk.chunk_data);
-                download.next_chunk = download
-                    .next_chunk
-                    .checked_add(1)
-                    .ok_or_else(|| invalid("pack chunk index overflow"))?;
-                if download.bytes.len() as u64 == download.size {
-                    if Sha256::digest(&download.bytes).as_slice() != download.hash {
-                        return Err(invalid("downloaded pack SHA-256 mismatch"));
-                    }
-                    download.complete = true;
-                    if downloads.values().all(|download| download.complete) {
+                    stores.queue(&cache, download, &cancelled.0);
+                    if downloads
+                        .values()
+                        .all(|download| download.complete.is_some())
+                    {
                         connection
                             .send(packets::ResourcePackClientResponse {
-                                response: ResourcePackClientResponseData::DownloadingFinished {
-                                    response_type: "downloadingfinished".into(),
-                                },
+                                response: finished(),
                             })
                             .await?;
                     }
-                } else {
-                    request(connection, download).await?;
                 }
             }
             packets::Packet::ResourcePackStack(stack) => {
-                if downloads.values().any(|download| !download.complete) {
-                    return Err(invalid("pack stack preceded completed downloads"));
-                }
-                let mut archives = Vec::with_capacity(stack.texture_pack_list.len());
-                for pack in stack.texture_pack_list {
-                    let id = pack_id(
-                        pack.pack_id
-                            .to_str()
-                            .map_err(io::Error::other)
-                            .map_err(failure)?,
-                    )?;
-                    if !downloads.contains_key(&id)
-                        && builtins::contains(id, &pack.version.to_string_lossy())
-                    {
-                        continue;
-                    }
-                    let download = downloads
-                        .remove(&id)
-                        .ok_or_else(|| invalid("stack contains an unavailable pack"))?;
-                    if download.offer.pack_id_version.pack_version.version != pack.version {
-                        return Err(invalid("stack pack version differs from offer"));
-                    }
-                    archives.push(ResourcePackArchive::with_content_key(
-                        id,
-                        pack.version.to_string_lossy().into_owned(),
-                        pack.sub_pack_name.to_string_lossy().into_owned(),
-                        download.bytes,
-                        download.offer.content_key.as_bytes().to_vec(),
-                    ));
-                }
+                // Cache workers release their shared bytes before the application takes ownership.
+                stores.finish().await;
+                let handoff = transfer::finish(downloads, stack, offer.resource_pack_required)?;
                 connection
                     .send(packets::ResourcePackClientResponse {
                         response: ResourcePackClientResponseData::ResourcePackStackFinished {
@@ -209,8 +171,7 @@ pub(super) async fn acquire(
                         },
                     })
                     .await?;
-                return Ok(ResourcePackHandoff::from_archives(archives)
-                    .with_required(offer.resource_pack_required || stack.texture_pack_required));
+                return Ok(handoff);
             }
             packets::Packet::PlayStatus(status)
                 if status.status
@@ -225,28 +186,38 @@ pub(super) async fn acquire(
     }
 }
 
-/// Requests only the next chunk for this pack; independent packs may progress concurrently.
-async fn request(connection: &mut Connection, download: &Download) -> Result<(), ProtocolError> {
-    let chunk = i32::try_from(download.next_chunk)
-        .map_err(|_| invalid("pack chunk count exceeds wire range"))?;
-    connection
-        .send(packets::ResourcePackChunkRequest {
-            resource_name: download.name.clone(),
-            chunk: wire::I32LE(chunk),
-        })
-        .await
+/// Coalesces each request window into immediate batches under the shared packet-count limit.
+async fn send_requests(
+    connection: &mut Connection,
+    requests: Vec<packets::ResourcePackChunkRequest>,
+) -> Result<(), ProtocolError> {
+    let packets = requests
+        .into_iter()
+        .map(crate::Packet::new)
+        .collect::<Vec<_>>();
+    for batch in packets.chunks(bedrock_net::BatchLimits::default().max_packets) {
+        connection.send_packets(batch).await?;
+    }
+    Ok(())
 }
 
-/// Accepts the protocol's UUID or UUID_version resource name without treating it as a path.
+/// Produces the completion response for both an all-cached offer and the final chunk.
+fn finished() -> ResourcePackClientResponseData {
+    ResourcePackClientResponseData::DownloadingFinished {
+        response_type: "downloadingfinished".into(),
+    }
+}
+
+/// Accepts UUID or UUID_version resource names without treating server text as a path.
 fn pack_id(name: &str) -> Result<uuid::Uuid, ProtocolError> {
     uuid::Uuid::parse_str(name.split('_').next().unwrap_or(name))
         .map_err(|_| invalid("pack identity is not a UUID"))
 }
 
-/// Reports a malformed pack transfer while retaining its original error context.
-fn invalid(message: &str) -> ProtocolError {
-    failure(io::Error::new(
-        io::ErrorKind::InvalidData,
-        message.to_owned(),
-    ))
+/// Reports malformed pack framing without including keys, URLs or archive contents.
+fn invalid(message: &'static str) -> ProtocolError {
+    failure(io::Error::new(io::ErrorKind::InvalidData, message))
 }
+
+#[cfg(test)]
+mod tests;

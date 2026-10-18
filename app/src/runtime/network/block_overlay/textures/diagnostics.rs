@@ -202,14 +202,14 @@ mod tests {
                 .unwrap();
             zip.write_all(bytes).unwrap();
         }
-        let archive = protocol::ResourcePackArchive::unencrypted(
+        let archive = resource_pack::ResourcePackArchive::unencrypted(
             id.parse().unwrap(),
             "1.0.0".into(),
             String::new(),
             zip.finish().unwrap().into_inner(),
         );
         LayeredPackView::new(resource_pack::validate_handoff(
-            protocol::ResourcePackHandoff::from_archives(vec![archive]),
+            resource_pack::ResourcePackHandoff::from_archives(vec![archive]),
         ))
     }
 

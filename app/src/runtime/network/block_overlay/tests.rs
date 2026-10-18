@@ -110,14 +110,14 @@ fn view_with_catalog(geometry: &[u8], terrain: &str) -> LayeredPackView {
             .unwrap();
         writer.write_all(bytes).unwrap();
     }
-    let archive = protocol::ResourcePackArchive::unencrypted(
+    let archive = resource_pack::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
         String::new(),
         writer.finish().unwrap().into_inner(),
     );
     LayeredPackView::new(resource_pack::validate_handoff(
-        protocol::ResourcePackHandoff::from_archives(vec![archive]),
+        resource_pack::ResourcePackHandoff::from_archives(vec![archive]),
     ))
 }
 

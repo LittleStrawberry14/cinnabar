@@ -37,6 +37,18 @@ pub fn parse_jsonc<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, serde_json::E
     serde_json::from_slice(&prepare_jsonc(bytes)?)
 }
 
+/// Parses the first JSONC value in a pack manifest, ignoring trailing data.
+/// Hash line comments and an unfinished trailing comment are accepted. Syntax inside
+/// the first value must still form valid JSON after comment and trailing-comma removal.
+pub fn parse_jsonc_lenient<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, serde_json::Error> {
+    let text = decode_text(bytes);
+    let stripped =
+        strip_comments(text.as_bytes(), false).expect("lenient comment stripping retains input");
+    let prepared = strip_trailing_commas(&stripped);
+    let mut decoder = serde_json::Deserializer::from_slice(&prepared);
+    T::deserialize(&mut decoder)
+}
+
 /// Returns valid strict JSON bytes, or `None` for malformed syntax.
 #[must_use]
 pub fn normalize_jsonc(bytes: &[u8]) -> Option<Vec<u8>> {
@@ -48,14 +60,14 @@ pub fn normalize_jsonc(bytes: &[u8]) -> Option<Vec<u8>> {
 /// Converts pack text and replaces comments and trailing commas with whitespace.
 fn prepare_jsonc(bytes: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
     let text = decode_text(bytes);
-    let stripped = strip_comments(text.as_bytes()).ok_or_else(|| {
+    let stripped = strip_comments(text.as_bytes(), true).ok_or_else(|| {
         <serde_json::Error as serde::de::Error>::custom("unterminated string or block comment")
     })?;
     Ok(strip_trailing_commas(&stripped))
 }
 
 /// Replaces comments outside strings with spaces while preserving line breaks.
-fn strip_comments(bytes: &[u8]) -> Option<Vec<u8>> {
+fn strip_comments(bytes: &[u8], strict: bool) -> Option<Vec<u8>> {
     let mut output = bytes.to_vec();
     let mut index = 0;
     let mut in_string = false;
@@ -74,7 +86,7 @@ fn strip_comments(bytes: &[u8]) -> Option<Vec<u8>> {
         } else if byte == b'"' {
             in_string = true;
             index += 1;
-        } else if bytes.get(index..index + 2) == Some(b"//") {
+        } else if bytes.get(index..index + 2) == Some(b"//") || !strict && byte == b'#' {
             while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
                 output[index] = b' ';
                 index += 1;
@@ -84,7 +96,7 @@ fn strip_comments(bytes: &[u8]) -> Option<Vec<u8>> {
             index += 2;
             loop {
                 if index >= bytes.len() {
-                    return None;
+                    return (!strict).then_some(output);
                 }
                 if bytes.get(index..index + 2) == Some(b"*/") {
                     output[index..index + 2].fill(b' ');
@@ -100,7 +112,7 @@ fn strip_comments(bytes: &[u8]) -> Option<Vec<u8>> {
             index += 1;
         }
     }
-    (!in_string).then_some(output)
+    (!strict || !in_string).then_some(output)
 }
 
 /// Blanks a final comma after a value, leaving strings and missing values intact.

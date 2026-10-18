@@ -8,11 +8,12 @@ pub(crate) use connection::{Connection, PacketConnection};
 use super::{JoinPreparation, LoginSequence, NativeJoinPreparation, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
 use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
-use crate::{GameData, ProtocolError, ResourcePackHandoff};
+use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
 use bedrock_net::login::{OfflineIdentity, encode_offline_request, finish_key_exchange};
 use bedrock_net::{CompressionAlgorithm, CompressionSettings};
 use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, wire};
+use resource_pack::ResourcePackHandoff;
 use serde_json::{json, value::RawValue};
 use std::{
     io,
@@ -234,7 +235,12 @@ async fn connect<P: Send + 'static>(
             }
         }
     };
-    let packs = packs::acquire(&mut connection, offer).await?;
+    let packs = packs::acquire(
+        &mut connection,
+        offer,
+        login.settings.resource_pack_cache_dir.as_deref(),
+    )
+    .await?;
     let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;

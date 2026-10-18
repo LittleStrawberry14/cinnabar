@@ -23,7 +23,6 @@ mod client_data;
 mod game_data;
 mod latency_probe;
 mod outbound;
-mod pack_handoff;
 mod packet_trace;
 mod raw_equipment;
 pub(crate) mod session_join;
@@ -47,7 +46,6 @@ pub use client_data::{
 pub use game_data::{GameData, StartupItems, StartupSettings};
 pub use latency_probe::network_stack_latency_reply;
 pub use outbound::PlayOutbound;
-pub use pack_handoff::{ResourcePackArchive, ResourcePackContentKey, ResourcePackHandoff};
 pub use packet_trace::PacketIdTraceSnapshot;
 use packet_trace::PacketIdTraceState;
 #[cfg(test)]

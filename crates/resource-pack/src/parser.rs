@@ -9,8 +9,7 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "handoff")]
-use protocol::ResourcePackArchive;
+use crate::ResourcePackArchive;
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive};
 
@@ -21,7 +20,6 @@ use crate::{
     manifest::read_manifest,
     pack::{EntryIndex, ValidatedPack, read_entry},
 };
-#[cfg(feature = "handoff")]
 use crate::{
     MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK, MAX_PACKS, MAX_STACK_ARCHIVE_BYTES,
     PackRejection, ValidatedPackStack,
@@ -39,9 +37,21 @@ pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
     validate_archive_parts(Uuid::nil(), "0.0.0", "", bytes.to_vec(), None, None).map(|_| ())
 }
 
+/// Checks an offered archive against its manifest without modifying the original bytes.
+/// Content keys and subpack selection remain owned by the eventual application handoff.
+pub fn verify_archive_identity(
+    bytes: &[u8],
+    pack_id: Uuid,
+    version: &str,
+) -> Result<(), AdmissionError> {
+    if bytes.len() > MAX_ARCHIVE_BYTES {
+        return Err(AdmissionError::ArchiveTooLarge);
+    }
+    validate_archive_parts(pack_id, version, "", bytes.to_vec(), None, None).map(|_| ())
+}
+
 /// Admits highest-priority-first server entries, then stores layers lowest priority first.
 /// Stack-wide bounds drop later entries; rejection indexes retain the server order.
-#[cfg(feature = "handoff")]
 pub(super) fn validate_stack(
     archives: Vec<ResourcePackArchive>,
     memory: Option<u32>,
@@ -88,7 +98,6 @@ pub(super) fn validate_stack(
     }
 }
 
-#[cfg(feature = "handoff")]
 fn admit_stack_entry<T>(
     archive: ResourcePackArchive,
     seen: &mut HashSet<Uuid>,

@@ -1,6 +1,7 @@
 //! Joins through the core's session endpoint: the core makes the only login and acquires the packs,
 //! and this client continues from StartGame with its own spawn sequence.
 
+use resource_pack::{ResourcePackArchive, ResourcePackHandoff};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -16,8 +17,7 @@ use crate::disconnect::{disconnect_reason, join_disconnect};
 use crate::packet_tap::{PacketOutcome, PacketTap};
 use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
 use crate::{
-    ClientBlobCache, ClientSkin, GameData, PROTOCOL_VERSION, ProtocolError, ResourcePackArchive,
-    ResourcePackHandoff, ServerTransferEvent,
+    ClientBlobCache, ClientSkin, GameData, PROTOCOL_VERSION, ProtocolError, ServerTransferEvent,
 };
 
 /// Prepared ordered play I/O and the host's timer registration function.

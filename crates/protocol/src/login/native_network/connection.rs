@@ -92,8 +92,15 @@ impl Connection {
     where
         packets::Packet: From<P>,
     {
-        let packet = Packet::new(packet);
-        let body = crate::session_transport::batch_body(&[packet])
+        self.send_packets(&[Packet::new(packet)]).await
+    }
+
+    /// Sends a bounded negotiation batch immediately, retaining terminal input on a failed write.
+    pub(super) async fn send_packets(
+        &mut self,
+        packets: &[Packet],
+    ) -> Result<(), crate::ProtocolError> {
+        let body = crate::session_transport::batch_body(packets)
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode")
             })

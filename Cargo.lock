@@ -7866,6 +7866,8 @@ dependencies = [
  "protocol-ids",
  "rand",
  "render-api",
+ "reqwest 0.13.5",
+ "resource-pack",
  "rustls",
  "serde",
  "serde_json",
@@ -8532,10 +8534,13 @@ name = "resource-pack"
 version = "0.1.20"
 dependencies = [
  "aes 0.8.4",
+ "cap-fs-ext",
+ "cap-std",
  "pack-json",
- "protocol",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
  "uuid",
  "zeroize",
