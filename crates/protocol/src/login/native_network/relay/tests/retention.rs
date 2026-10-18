@@ -133,7 +133,14 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
                 None,
                 &crate::LoginSettings::default(),
             );
-            joining.negotiate(claims, false, None).await.unwrap();
+            joining
+                .negotiate(
+                    crate::RawClientData::from_value(&claims).unwrap(),
+                    false,
+                    None,
+                )
+                .await
+                .unwrap();
             assert!(
                 joining.startup_bytes < PADDING_BYTES,
                 "the owning byte charge contains only actual retained startup frames"
