@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 const PREFIX: &[u8] = b"CNAC\x01";
-const MAX_GENERATION_BYTES: usize = 128;
+pub(super) const MAX_GENERATION_BYTES: usize = 128;
 
 /// One selected sign-in, held against Go refresh and account-store replacement.
 /// This owner has no Debug/Clone; callers must acquire nonblocking and bound their wait.
@@ -62,7 +62,8 @@ impl AccountStore {
         let pending = self.pending_cache();
         let _pending = cache_try_leases(&pending)?;
         remove_optional(&pending)?;
-        remove_optional(&derived_path(&pending))
+        remove_optional(&derived_path(&pending))?;
+        super::pending::remove_attempt(self)
     }
 
     /// Tries all credential leases once, releasing acquired files if any later lease is busy.
@@ -176,38 +177,14 @@ impl NativeLease {
     /// Saved accounts/checkpoints remain untouched; the complete JSON must fit the Go reader.
     pub fn publish_oauth(&mut self, access: &str, refresh: &str, expiry: &str) -> io::Result<()> {
         self.recheck()?;
-        if refresh.is_empty() {
-            return Err(invalid("native OAuth requires a refresh credential"));
-        }
-        if access
-            .len()
-            .saturating_add(refresh.len())
-            .saturating_add(expiry.len())
-            > MAX_OAUTH_CACHE_BYTES
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::FileTooLarge,
-                "OAuth cache exceeds the shared credential limit",
-            ));
-        }
         let token_type = (!self.oauth.other.contains_key("token_type")).then_some("Bearer");
-        let oauth = Zeroizing::new(
-            serde_json::to_vec(&OAuthPublication {
-                access_token: access,
-                refresh_token: refresh,
-                expiry,
-                cinnabar_sign_in_generation: self.generation(),
-                token_type,
-                other: &self.oauth.other,
-            })
-            .map_err(|_| invalid("serialize native credentials"))?,
-        );
-        if oauth.len() > MAX_OAUTH_CACHE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::FileTooLarge,
-                "OAuth cache exceeds the shared credential limit",
-            ));
-        }
+        let oauth = oauth_bytes(
+            self.generation(),
+            access,
+            refresh,
+            expiry,
+            &self.oauth.other,
+        )?;
         write_private_bounded(
             &self.store.active_cache,
             &oauth,
@@ -248,6 +225,35 @@ impl NativeLease {
         Ok(())
     }
 
+    /// Saves public profile metadata under the same selected-generation lease as its credentials.
+    pub fn remember_verified_profile(
+        &mut self,
+        profile: &AccountProfile,
+    ) -> io::Result<AccountProfile> {
+        self.recheck()?;
+        let mut profile = checked_profile(
+            &profile.id,
+            &profile.gamertag,
+            profile.picture_path.as_deref(),
+        )?;
+        if self.selected_id().is_some_and(|id| id != profile.id) {
+            return Err(invalid("verified profile does not match selected account"));
+        }
+        let mut index = self.store.index()?;
+        let previous = index.profiles.get(&profile.id);
+        self.store.save_picture(&mut profile, previous)?;
+        self.store
+            .write_credentials(&profile.id, &read_credentials(&self.store.active_cache)?)?;
+        index.active = Some(profile.id.clone());
+        index.profiles.insert(profile.id.clone(), profile.clone());
+        self.store.write_index(&index)?;
+        self.selected_id = Some(profile.id.clone());
+        if let Some(checkpoint) = self.read_checkpoint(None)? {
+            self.publish_verified_identity(&profile.id, &checkpoint)?;
+        }
+        Ok(profile)
+    }
+
     /// Retains active proof ownership while identity is unknown, without touching a saved account.
     pub fn publish_active_checkpoint(&self, checkpoint: &[u8]) -> io::Result<()> {
         self.recheck()?;
@@ -256,23 +262,7 @@ impl NativeLease {
 
     /// Writes a generation-bound proof to the explicitly chosen private slot.
     fn write_checkpoint(&self, identity: Option<&str>, checkpoint: &[u8]) -> io::Result<()> {
-        let generation = self.generation();
-        if checkpoint
-            .len()
-            .saturating_add(PREFIX.len() + 2 + generation.len())
-            > MAX_FILE_BYTES as usize
-        {
-            return Err(invalid("invalid native checkpoint size"));
-        }
-        let length =
-            u16::try_from(generation.len()).map_err(|_| invalid("invalid sign-in generation"))?;
-        let mut bytes = Zeroizing::new(Vec::with_capacity(
-            PREFIX.len() + 2 + generation.len() + checkpoint.len(),
-        ));
-        bytes.extend_from_slice(PREFIX);
-        bytes.extend_from_slice(&length.to_le_bytes());
-        bytes.extend_from_slice(generation.as_bytes());
-        bytes.extend_from_slice(checkpoint);
+        let bytes = checkpoint_bytes(self.generation(), checkpoint)?;
         write_private(&checkpoint_path(&self.store, identity), &bytes)?;
         Ok(())
     }
@@ -296,6 +286,72 @@ impl NativeLease {
     }
 }
 
+/// Encodes one Go-readable OAuth publication, enforcing the shared complete-record bound.
+pub(super) fn oauth_bytes(
+    generation: &str,
+    access: &str,
+    refresh: &str,
+    expiry: &str,
+    other: &BTreeMap<String, serde_json::Value>,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    if refresh.is_empty() {
+        return Err(invalid("native OAuth requires a refresh credential"));
+    }
+    if access
+        .len()
+        .saturating_add(refresh.len())
+        .saturating_add(expiry.len())
+        > MAX_OAUTH_CACHE_BYTES
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "OAuth cache exceeds the shared credential limit",
+        ));
+    }
+    let oauth = Zeroizing::new(
+        serde_json::to_vec(&OAuthPublication {
+            access_token: access,
+            refresh_token: refresh,
+            expiry,
+            cinnabar_sign_in_generation: generation,
+            token_type: (!other.contains_key("token_type")).then_some("Bearer"),
+            other,
+        })
+        .map_err(|_| invalid("serialize native credentials"))?,
+    );
+    if oauth.len() > MAX_OAUTH_CACHE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "OAuth cache exceeds the shared credential limit",
+        ));
+    }
+    Ok(oauth)
+}
+
+/// Encodes the shared generation fence for active, pending and saved proof owners.
+pub(super) fn checkpoint_bytes(
+    generation: &str,
+    checkpoint: &[u8],
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    if checkpoint
+        .len()
+        .saturating_add(PREFIX.len() + 2 + generation.len())
+        > MAX_FILE_BYTES as usize
+    {
+        return Err(invalid("invalid native checkpoint size"));
+    }
+    let length =
+        u16::try_from(generation.len()).map_err(|_| invalid("invalid sign-in generation"))?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(
+        PREFIX.len() + 2 + generation.len() + checkpoint.len(),
+    ));
+    bytes.extend_from_slice(PREFIX);
+    bytes.extend_from_slice(&length.to_le_bytes());
+    bytes.extend_from_slice(generation.as_bytes());
+    bytes.extend_from_slice(checkpoint);
+    Ok(bytes)
+}
+
 /// Validates the authoritative OAuth generation without echoing credential JSON on failure.
 fn parse_oauth(bytes: &[u8]) -> io::Result<OAuth> {
     let oauth: OAuth =
@@ -316,7 +372,7 @@ fn parse_oauth(bytes: &[u8]) -> io::Result<OAuth> {
 }
 
 /// Keeps one slot per saved identity; its envelope rejects an older generation after reauthentication.
-fn checkpoint_path(store: &AccountStore, selected_id: Option<&str>) -> PathBuf {
+pub(super) fn checkpoint_path(store: &AccountStore, selected_id: Option<&str>) -> PathBuf {
     store.directory.join(format!(
         "native-{}.checkpoint",
         selected_id.unwrap_or("active")

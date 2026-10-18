@@ -253,7 +253,18 @@ impl MenuRuntime {
     }
 
     pub(super) fn cancel_add_account(&mut self) {
+        #[cfg(feature = "native-networking")]
+        let native = self
+            .auth_process
+            .as_ref()
+            .and_then(|process| process.native_attempt_generation())
+            .map(str::to_owned);
         self.stop_sign_in();
+        #[cfg(feature = "native-networking")]
+        if let Some(generation) = native {
+            self.accounts.operation = Some(Operation::RestoreNative(generation));
+            return;
+        }
         self.accounts.operation = Some(Operation::Restore);
     }
 
@@ -329,10 +340,11 @@ impl MenuRuntime {
                         .then(|| profile.picture_path.clone()),
                 }));
             }
-        } else if self
-            .accounts
-            .remember_retry
-            .is_none_or(|retry| std::time::Instant::now() >= retry)
+        } else if !self.native_sign_in
+            && self
+                .accounts
+                .remember_retry
+                .is_none_or(|retry| std::time::Instant::now() >= retry)
             && self.accounts.remember.is_none()
             && self.accounts.remembered.as_ref() != Some(&identity)
             && let Some(receiver) = remember(self.account_store(), profile.clone())

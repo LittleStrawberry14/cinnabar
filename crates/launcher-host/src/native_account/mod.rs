@@ -19,10 +19,10 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-const ACQUISITION_TIMEOUT: Duration = Duration::from_secs(30);
-const LEASE_RETRY: Duration = Duration::from_millis(25);
-const XBOX_RELYING_PARTY: &str = "http://xboxlive.com";
-const REFRESH_ONLY_EXPIRY: &str = "1970-01-01T00:00:00Z";
+pub(super) const ACQUISITION_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const LEASE_RETRY: Duration = Duration::from_millis(25);
+pub(super) const XBOX_RELYING_PARTY: &str = "http://xboxlive.com";
+pub(super) const REFRESH_ONLY_EXPIRY: &str = "1970-01-01T00:00:00Z";
 
 /// Retains proof and service credentials for one selected application account.
 /// No runtime, polling task or HTTP request is created until `prepare` is polled.
@@ -122,6 +122,121 @@ impl NativeAccount {
         mut claims: Value,
         random_id: protocol::ClientRandomId,
     ) -> io::Result<protocol::NativeAuthentication> {
+        let mut operation = Arc::clone(&self).acquire_verified().await?;
+        if matches!(
+            operation.cached.as_ref().expect("account owner").owner,
+            Owner::Xbox(_)
+        ) {
+            let identity = operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity");
+            let version = u32::try_from(protocol::PROTOCOL_VERSION)
+                .map_err(|_| io::Error::other("invalid application protocol version"))?;
+            let config = minecraft::Config::desktop(
+                protocol::GAME_VERSION,
+                version,
+                metadata::service_device_id(&identity.xuid)?,
+            );
+            operation.persist()?;
+            let Cached {
+                generation,
+                binding,
+                owner,
+                identity,
+            } = operation.cached.take().expect("account owner");
+            let Owner::Xbox(account) = owner else {
+                unreachable!("checked Xbox owner")
+            };
+            let services = minecraft::Minecraft::new(*account, config).map_err(service_error)?;
+            operation.cached = Some(Cached {
+                generation,
+                binding,
+                owner: Owner::Minecraft(Box::new(services)),
+                identity,
+            });
+            operation.published = false;
+        }
+        let fresh = serde_json::to_vec(&metadata::DeviceProfile::fresh())
+            .map_err(|_| io::Error::other("serialize native device profile"))?;
+        let profile = loop {
+            match operation
+                .lease
+                .as_ref()
+                .expect("acquired lease")
+                .device_profile(&self.device_path, &fresh, |bytes| {
+                    metadata::DeviceProfile::parse(bytes).is_ok()
+                }) {
+                Ok(bytes) => break metadata::DeviceProfile::parse(&bytes)?,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(LEASE_RETRY).await
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let key = SigningKey::try_generate_from_rng(&mut SysRng)
+            .map_err(|_| io::Error::other("native connection key generation failed"))?;
+        let token = operation
+            .minecraft()?
+            .multiplayer_token(key.verifying_key())
+            .await
+            .map_err(service_error)?;
+        profile.apply(
+            &mut claims,
+            random_id,
+            &operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity")
+                .gamertag,
+        );
+        let raw = serde_json::value::to_raw_value(&claims)
+            .map_err(|_| io::Error::other("serialize native client data"))?;
+        let prepared = protocol::NativeAuthentication::new(key, token.as_str().to_owned(), &raw)?;
+        operation.persist()?;
+        Ok(prepared)
+    }
+
+    /// Validates the selected saved account without minting a Minecraft service credential.
+    /// Cancellation retains any SDK-visible OAuth rotation through the operation's existing Drop owner.
+    pub async fn validate(self: Arc<Self>) -> io::Result<launcher::accounts::AccountProfile> {
+        tokio::time::timeout(ACQUISITION_TIMEOUT, async {
+            let mut operation = self.acquire_verified().await?;
+            let identity = operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity");
+            let profile = launcher::accounts::AccountProfile::from_identity(
+                &identity.xuid,
+                &identity.gamertag,
+            )?;
+            operation.persist()?;
+            operation
+                .lease
+                .as_mut()
+                .expect("acquired lease")
+                .remember_verified_profile(&profile)
+        })
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "native account validation timed out",
+            )
+        })?
+    }
+
+    /// Acquires and verifies one concrete account owner before either validation or service minting.
+    async fn acquire_verified(self: Arc<Self>) -> io::Result<Operation> {
         let mut operation = loop {
             match self.begin() {
                 Ok(operation) => break operation,
@@ -233,84 +348,7 @@ impl NativeAccount {
                 .await?;
             operation.verify_identity(authorization.xuid(), authorization.gamertag())?;
         }
-        if matches!(
-            operation.cached.as_ref().expect("account owner").owner,
-            Owner::Xbox(_)
-        ) {
-            let identity = operation
-                .cached
-                .as_ref()
-                .expect("account owner")
-                .identity
-                .as_ref()
-                .expect("verified identity");
-            let version = u32::try_from(protocol::PROTOCOL_VERSION)
-                .map_err(|_| io::Error::other("invalid application protocol version"))?;
-            let config = minecraft::Config::desktop(
-                protocol::GAME_VERSION,
-                version,
-                metadata::service_device_id(&identity.xuid)?,
-            );
-            operation.persist()?;
-            let Cached {
-                generation,
-                binding,
-                owner,
-                identity,
-            } = operation.cached.take().expect("account owner");
-            let Owner::Xbox(account) = owner else {
-                unreachable!("checked Xbox owner")
-            };
-            let services = minecraft::Minecraft::new(*account, config).map_err(service_error)?;
-            operation.cached = Some(Cached {
-                generation,
-                binding,
-                owner: Owner::Minecraft(Box::new(services)),
-                identity,
-            });
-            operation.published = false;
-        }
-        let fresh = serde_json::to_vec(&metadata::DeviceProfile::fresh())
-            .map_err(|_| io::Error::other("serialize native device profile"))?;
-        let profile = loop {
-            match operation
-                .lease
-                .as_ref()
-                .expect("acquired lease")
-                .device_profile(&self.device_path, &fresh, |bytes| {
-                    metadata::DeviceProfile::parse(bytes).is_ok()
-                }) {
-                Ok(bytes) => break metadata::DeviceProfile::parse(&bytes)?,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(LEASE_RETRY).await
-                }
-                Err(error) => return Err(error),
-            }
-        };
-        let key = SigningKey::try_generate_from_rng(&mut SysRng)
-            .map_err(|_| io::Error::other("native connection key generation failed"))?;
-        let token = operation
-            .minecraft()?
-            .multiplayer_token(key.verifying_key())
-            .await
-            .map_err(service_error)?;
-        profile.apply(
-            &mut claims,
-            random_id,
-            &operation
-                .cached
-                .as_ref()
-                .expect("account owner")
-                .identity
-                .as_ref()
-                .expect("verified identity")
-                .gamertag,
-        );
-        let raw = serde_json::value::to_raw_value(&claims)
-            .map_err(|_| io::Error::other("serialize native client data"))?;
-        let prepared = protocol::NativeAuthentication::new(key, token.as_str().to_owned(), &raw)?;
-        operation.persist()?;
-        Ok(prepared)
+        Ok(operation)
     }
 
     /// Reserves the owned SDK value with a short data lock, never retaining that guard during I/O.
@@ -499,7 +537,7 @@ impl Drop for Operation {
 }
 
 /// Chooses the current application's Android policy explicitly, independent of SDK defaults.
-fn authentication_policy() -> xbox::Config {
+pub(super) fn authentication_policy() -> xbox::Config {
     xbox::Config {
         client_id: "0000000048183522".into(),
         user_agent: "XAL Android 2025.11.20251111.000".into(),
@@ -510,7 +548,7 @@ fn authentication_policy() -> xbox::Config {
 }
 
 /// Formats an acquired absolute expiry without panicking on an unrepresentable service value.
-fn oauth_expiry(expires: std::time::SystemTime) -> io::Result<String> {
+pub(super) fn oauth_expiry(expires: std::time::SystemTime) -> io::Result<String> {
     let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "invalid native OAuth expiry");
     let elapsed = expires.duration_since(UNIX_EPOCH).map_err(|_| invalid())?;
     let nanos = i128::try_from(elapsed.as_nanos()).map_err(|_| invalid())?;
@@ -532,8 +570,23 @@ fn import_credentials(lease: &NativeLease, policy: &xbox::Config) -> io::Result<
 }
 
 /// Keeps HTTP bodies, URLs and credential values out of the application error surface.
-fn service_error(_: bedrock_services::Error) -> io::Error {
-    io::Error::other("native account service acquisition failed; retry or sign in again")
+fn service_error(error: bedrock_services::Error) -> io::Error {
+    if matches!(error, bedrock_services::Error::SignInRequired) {
+        io::Error::other(RenewSignIn)
+    } else {
+        io::Error::other("native account service acquisition failed; retry or sign in again")
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Microsoft sign-in must be renewed")]
+struct RenewSignIn;
+
+/// Identifies only an explicit OAuth invalid-grant response, without guessing from service failures.
+pub(super) fn requires_sign_in(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<RenewSignIn>())
 }
 
 #[cfg(test)]

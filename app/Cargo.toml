@@ -51,7 +51,7 @@ frame-trace = ["bevy/trace", "bevy/debug", "dep:tracing-chrome"]
 tracy = ["bevy/trace", "bevy/debug", "dep:tracing-tracy", "dep:profiling", "chunk-pipeline/tracy", "render/tracy", "client-ui/tracy"]
 # Compiles the offline pack reports and benchmarks into the test build.
 reports = []
-native-networking = ["protocol/native-networking", "client-session/native-networking", "launcher-host/native-networking"]
+native-networking = ["client-shell/native-networking", "protocol/native-networking", "client-session/native-networking", "launcher-host/native-networking"]
 # Opt-in allocator for release-profile measurements.
 mimalloc = ["dep:mimalloc"]
 
