@@ -23,6 +23,16 @@ bedrock-services.workspace = true
 bedrock-net = { workspace = true, features = ["raknet"] }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"] }
 rand = "0.10"
+httparse = "1"
+http = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs"] }
+tokio-websockets = { version = "0.13", default-features = false, features = ["server", "aws_lc_rs"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rcgen = "0.14"
+test-time = { path = "../../crates/test-time" }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-websockets = { version = "0.13", default-features = false, features = ["client", "getrandom"] }
 
 [lints]
 workspace = true
