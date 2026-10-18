@@ -90,10 +90,10 @@ impl Peer {
             &codec,
             &[
                 Packet::ResourcePackStack(packets::ResourcePackStack::default()),
-                Packet::StartGame(packets::StartGame {
+                Packet::StartGame(Box::new(packets::StartGame {
                     runtime_id: ActorRuntimeID(42),
                     ..Default::default()
-                }),
+                })),
             ],
         )
         .await;

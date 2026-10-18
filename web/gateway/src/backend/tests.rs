@@ -1,5 +1,6 @@
 //! Real accepted TCP/TLS/WebSocket owners with explicit fixture trust and finite task ownership.
 
+use super::Backend;
 use super::*;
 use bridge::{
     contract::*,
