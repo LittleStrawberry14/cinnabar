@@ -6,7 +6,10 @@ use bevy::prelude::{Commands, Resource};
 use bridge::bridge_endpoint_exists;
 use launcher::menu::auth::AuthState;
 use launcher_host::{
-    auth::AuthSupervisor, launcher_core::LauncherCore, lifecycle::core_health::RestartBackoff,
+    auth::AuthSupervisor,
+    core_process::CoreStopOutcome,
+    launcher_core::{AccountCorePolicy, LauncherCore, TitlePresenceOwner},
+    lifecycle::core_health::RestartBackoff,
 };
 #[cfg(test)]
 use launcher_host::{core_process::CoreProcessGuard, session_cleanup::SessionDirectoryGuard};
@@ -47,7 +50,10 @@ pub struct LauncherCoreSlot {
     /// Sign-in mode whose spawn failed, or whose core kept exiting; retried only once the mode
     /// changes or a profile refresh asks for it.
     failed: Option<bool>,
-    retiring: Option<crossbeam_channel::Receiver<()>>,
+    retiring: Option<crossbeam_channel::Receiver<CoreStopOutcome>>,
+    retirement_blocked: bool,
+    last_retirement: Option<CoreStopOutcome>,
+    title_presence_owner: TitlePresenceOwner,
     /// Paces restarts of a core that exits on its own.
     backoff: RestartBackoff,
     /// When the current core was spawned, by the `now` that spawned it.
@@ -70,14 +76,8 @@ impl LauncherCoreSlot {
         mut worlds: Option<&mut LocalWorlds>,
         now: Instant,
     ) {
-        if let Some(retiring) = &self.retiring {
-            if matches!(
-                retiring.try_recv(),
-                Err(crossbeam_channel::TryRecvError::Empty)
-            ) {
-                return;
-            }
-            self.retiring = None;
+        if !self.retirement_complete() {
+            return;
         }
         if let Some((status, authenticated)) = self
             .core
@@ -118,7 +118,7 @@ impl LauncherCoreSlot {
                 .is_none_or(|p| p.cleanup_complete())
         {
             let job = menu.account_operation_job();
-            if let Some(mut old) = self.core.take() {
+            if let Some(old) = self.core.take() {
                 commands.remove_resource::<LauncherAccount>();
                 menu.close_realm_membership();
                 if let Some(worlds) = worlds.as_deref_mut() {
@@ -126,11 +126,7 @@ impl LauncherCoreSlot {
                 }
                 menu.control_auth = None;
                 menu.accounts.skip_control = true;
-                let mut guard = std::mem::take(&mut old._guard);
-                guard.stop_detached(move || {
-                    drop(old);
-                    job();
-                });
+                self.begin_retirement(old, job);
             } else {
                 let _ = std::thread::Builder::new()
                     .name("account-switch".into())
@@ -151,7 +147,7 @@ impl LauncherCoreSlot {
                 .as_ref()
                 .is_some_and(|core| core.auth_cache != auth_cache);
             if path_changed && self.core.is_some() && menu.accounts.pending_ready {
-                let mut old = self.core.take().expect("account core");
+                let old = self.core.take().expect("account core");
                 commands.remove_resource::<LauncherAccount>();
                 menu.close_realm_membership();
                 if let Some(worlds) = worlds.as_deref_mut() {
@@ -160,27 +156,33 @@ impl LauncherCoreSlot {
                 menu.control_auth = None;
                 menu.accounts.skip_control = true;
                 menu.feeds.profile = Default::default();
-                let (done, retired) = crossbeam_channel::bounded(1);
-                self.retiring = Some(retired);
-                let mut guard = std::mem::take(&mut old._guard);
-                guard.stop_detached(move || {
-                    drop(old);
-                    let _ = done.send(());
-                });
+                self.begin_retirement(old, || {});
                 return;
             }
             let restart_due = self.restart_at.is_none_or(|at| now >= at);
-            if (current != Some(wanted) || path_changed)
+            let presence_changed = self
+                .core
+                .as_ref()
+                .is_some_and(|core| core.title_presence_owner != self.title_presence_owner);
+            if (current != Some(wanted) || path_changed || presence_changed)
                 && self.failed != Some(wanted)
                 && restart_due
             {
-                self.retire(commands, menu, worlds.as_deref_mut());
+                if self.core.is_some() {
+                    let old = self.core.take().expect("account core");
+                    self.detach_clients(commands, menu, worlds.as_deref_mut());
+                    self.begin_retirement(old, || {});
+                    return;
+                }
                 match LauncherCore::spawn(
                     &menu.layout,
                     auth_cache.as_deref(),
-                    upstream_client_cache,
-                    menu.is_launcher(),
                     &pack_runtime::pack_language::active_language_code(),
+                    AccountCorePolicy {
+                        upstream_client_cache,
+                        lease_game_cache: menu.is_launcher(),
+                        title_presence_owner: self.title_presence_owner,
+                    },
                 ) {
                     Ok(core) => {
                         self.core = Some(core);
@@ -222,14 +224,8 @@ impl LauncherCoreSlot {
     ) {
         if let Some(old) = self.core.take() {
             drop(old);
-            commands.remove_resource::<LauncherAccount>();
-            menu.close_realm_membership();
-            if let Some(worlds) = worlds {
-                worlds.detach();
-            }
-            menu.control_auth = None;
-            menu.accounts.skip_control = true;
-            menu.feeds.profile = Default::default();
+            self.last_retirement = Some(CoreStopOutcome::ExitedAfterGracefulClose);
+            self.detach_clients(commands, menu, worlds);
         }
     }
 
@@ -265,6 +261,8 @@ impl LauncherCoreSlot {
         core.begin_join(address, local_world)
     }
 }
+
+mod presence;
 
 impl MenuRuntime {
     /// The validated sign-in's auth cache, for the launcher core and joins.
@@ -316,6 +314,7 @@ mod tests {
                 socket_dir: socket_dir.clone(),
                 authenticated: false,
                 auth_cache: None,
+                title_presence_owner: TitlePresenceOwner::Core,
                 attached: true,
             }),
             failed: None,

@@ -45,6 +45,11 @@ not grant admission. Retaining this membership through full connection, loading,
 play and every cancellation path is still being integrated; native friend UI
 joining stays unavailable until that lifetime is qualified.
 
+Title presence remains owned by the Go account worker. Its process policy is now
+part of account-core restart identity; policy changes wait for the old process's
+actual retirement outcome, and unconfirmed exit blocks replacement. The native
+account-lifetime heartbeat and cleanup owner is not wired or enabled yet.
+
 Incomplete: native hosted-world approval and publication, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled
