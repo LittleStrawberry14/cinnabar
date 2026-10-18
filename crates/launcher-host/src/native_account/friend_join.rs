@@ -425,20 +425,19 @@ impl FriendJoin {
             scope.check(&operation)?;
         }
         operation.promote()?;
-        if let Some(socket) = &self.socket {
-            if !operation.minecraft()?.owns_rta(socket.connection()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "friend-world proof owner changed",
-                ));
-            }
+        if let Some(socket) = &self.socket
+            && !operation.minecraft()?.owns_rta(socket.connection())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "friend-world proof owner changed",
+            ));
         }
         if !self.closing
             && let Some(expires) = self.selection.expires
+            && operation.minecraft()?.service_time() >= expires
         {
-            if operation.minecraft()?.service_time() >= expires {
-                return Err(invalid("friend-world invitation expired"));
-            }
+            return Err(invalid("friend-world invitation expired"));
         }
         Ok(operation)
     }
@@ -590,10 +589,10 @@ impl FriendJoin {
         )
         .await?
         .map_err(socket_error)?;
-        if let rta::Event::Subscribed { subscription, .. } = &event {
-            if Some(*subscription) == self.subscription {
-                self.subscribed = true;
-            }
+        if let rta::Event::Subscribed { subscription, .. } = &event
+            && Some(*subscription) == self.subscription
+        {
+            self.subscribed = true;
         }
         event_changed(
             event,
