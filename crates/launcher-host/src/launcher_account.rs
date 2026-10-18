@@ -76,6 +76,8 @@ struct Snapshot {
     home_wake: Option<Sender<()>>,
     /// Wakes Profile independently when its account identity changes.
     profile_wake: Option<Sender<()>>,
+    /// Selects one presentation source for this account's existing profile worker.
+    profile_source: profile_worker::Source,
     xbox_presence: bridge::XboxPresenceState,
     title_presence_owner: crate::launcher_core::TitlePresenceOwner,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -183,8 +185,8 @@ impl LauncherAccount {
         Self::start(socket_dir, artwork, Snapshot::default())
     }
 
-    /// Starts native title presence on the same event worker after the previous core was reaped.
-    /// The account is the menu's existing selected owner, shared with catalog and game operations.
+    /// Starts native title presence after the previous core was reaped, and native profile reads.
+    /// Both use the menu's existing selected owner, shared with catalog and game operations.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     pub fn with_native_presence(
         socket_dir: PathBuf,
@@ -196,6 +198,7 @@ impl LauncherAccount {
             artwork,
             Snapshot {
                 title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
+                profile_source: profile_worker::Source::Native(account.clone()),
                 native_presence_account: account,
                 ..Default::default()
             },

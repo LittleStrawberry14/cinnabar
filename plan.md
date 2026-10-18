@@ -73,6 +73,16 @@ successful HTTP responses do not prove ordering of a previously ambiguous write.
 Owning host, bridge and shell presence tests pass. End-to-end protected HTTP,
 process transitions and real-account presence qualification remain open.
 
+Native sign-in reads the selected account's profile overview and independent
+friend/follower counts on the existing profile worker. Reads reuse the leased
+SDK owner, preserve unavailable counts and pass through the existing artwork
+cache, then recheck the selected generation and verified Xbox identity before
+publication. Independent facets release the account lease between requests.
+Active profile cancellation on account replacement is incomplete. Native persona
+artwork, featured screenshots, statistics and achievements remain unavailable until
+their service owners are implemented. Source review, owning execution and live
+profile acceptance are open; the Go profile remains the default.
+
 Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled

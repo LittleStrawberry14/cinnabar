@@ -2,6 +2,9 @@
 
 use super::*;
 
+mod source;
+pub(super) use source::Source;
+
 /// A local RPC guard, longer than the core's service deadline and response write allowance.
 /// This is transport recovery, not a vanilla animation or service timeout constant.
 pub(super) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -42,7 +45,10 @@ fn poll_with_timeout(
     let mut last_log = None;
     loop {
         while requests.try_recv().is_ok() {}
-        let generation = auth_generation(shared);
+        let (generation, source) = {
+            let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+            (snapshot.auth_generation, snapshot.profile_source.clone())
+        };
         let started = Instant::now();
         let logging =
             last_log.is_none_or(|last: Instant| started.duration_since(last) >= FEED_RETRY);
@@ -55,23 +61,33 @@ fn poll_with_timeout(
             );
         }
         let result = runtime.block_on(async {
-            let mut result = tokio::time::timeout(timeout, bridge::profile(socket_dir)).await;
+            let mut result = tokio::time::timeout(timeout, source.fetch(socket_dir)).await;
             if let Ok(Ok(profile)) = &mut result {
-                artwork::fill(&images, artwork::profile_slots(profile)).await;
+                artwork::fill(&images, artwork::profile_slots(profile.profile_mut())).await;
             }
             result
         });
         let outcome = match &result {
+            Ok(Ok(profile)) if profile.partial() => "partial",
             Ok(Ok(_)) => "success",
             Ok(Err(_)) => "unavailable",
             Err(_) => "timeout",
         };
-        let failed = !matches!(result, Ok(Ok(_)));
-        let profile = result.ok().and_then(Result::ok).ok_or(());
-        let current = auth_generation(shared) == generation;
-        publish_account(shared, generation, |snapshot| {
-            snapshot.profile = Some(profile)
-        });
+        let profile = result
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|profile| profile.into_current().ok())
+            .ok_or(());
+        let failed = profile.is_err();
+        let current = {
+            let mut snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+            let current = snapshot.auth_generation == generation
+                && source.same_account(&snapshot.profile_source);
+            if current {
+                snapshot.profile = Some(profile);
+            }
+            current
+        };
         if logging {
             tracing::info!(
                 request = "profile.v1",

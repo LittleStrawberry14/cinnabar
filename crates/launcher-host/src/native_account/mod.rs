@@ -12,6 +12,7 @@ mod metadata;
 mod operation;
 mod prepare;
 pub(crate) mod presence;
+mod profile;
 mod provider;
 mod realms;
 mod restore;
@@ -24,6 +25,7 @@ pub use friend_join::{
 pub use friends::NativeFriendWorld;
 pub(crate) use hosted_world::HostSlot;
 pub use hosted_world::{HostedApproval, NativeHostedWorld};
+pub(crate) use profile::NativeProfile;
 pub use realms::is_realm_target;
 
 use bedrock_services::{
