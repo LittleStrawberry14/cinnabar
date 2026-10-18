@@ -8,7 +8,7 @@ use nethernet_tokio::{ConnectionConfig, NetherError};
 use p384::ecdsa::SigningKey;
 use std::{io, sync::Arc, time::Instant};
 
-pub(super) struct MessagingTransport {
+pub(in crate::login::native_network) struct MessagingTransport {
     connection: MessagingConnection,
     key: Arc<SigningKey>,
     target: crate::NativeMessagingTarget,
@@ -110,6 +110,11 @@ impl MessagingTransport {
             .await
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "NetherNet peer closed"))
+    }
+
+    /// Drives only service/control/signaling; terminal reporting waits behind accepted input.
+    pub(super) async fn maintain(&mut self) {
+        self.connection.maintain().await;
     }
 
     /// Ends the existing transport without creating a cleanup task.

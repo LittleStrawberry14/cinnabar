@@ -244,6 +244,14 @@ impl Transport {
         }
     }
 
+    /// Polls service/control progress while application payload admission is paused.
+    pub(super) async fn maintain(&mut self) {
+        match self {
+            Self::Messaging(transport) => transport.maintain().await,
+            _ => std::future::pending().await,
+        }
+    }
+
     /// Sends a graceful close while the owner remains alive.
     pub(super) async fn close(&mut self) -> io::Result<()> {
         match self {

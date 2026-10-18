@@ -291,6 +291,11 @@ impl PacketConnection for Connection {
         Ok(Bytes::from(body))
     }
 
+    /// Keeps protected service progress alive without decoding or consuming game input.
+    async fn maintain(&mut self) {
+        self.transport.maintain().await;
+    }
+
     /// Ends the actual transport, without starting another connection.
     async fn close(&mut self) -> io::Result<()> {
         self.transport.close().await

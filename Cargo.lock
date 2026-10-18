@@ -831,7 +831,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=42f818615d36e5676bf811fd816dbf69be4318fe#42f818615d36e5676bf811fd816dbf69be4318fe"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=85935509c3b1fd2c6e95540b5dd624fa83126dba#85935509c3b1fd2c6e95540b5dd624fa83126dba"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",

@@ -39,8 +39,10 @@ and fingerprint proof; it does not substitute the local selected account. The
 original service clock and hard admission deadline survive transport queueing.
 The caller must supply a peer messaging UUID and an admitted session nonce;
 listing a friend world does not supply that admission. The existing session
-runtime polls the SDK/NetherNet adapter through play, without another runtime or
-bridge task. End-to-end protected messaging, delayed-login/provider HTTP and
+runtime polls the SDK/NetherNet adapter through play, including service-only
+maintenance while bounded game input waits for application capacity. Accepted
+data drains before a staged service failure, without another runtime, bridge
+task or payload queue. End-to-end protected messaging, delayed-login/provider HTTP and
 live-account acceptance remain incomplete; this source milestone does not close
 a parity gate.
 

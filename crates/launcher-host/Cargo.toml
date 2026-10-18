@@ -47,7 +47,7 @@ zip = { version = "7", default-features = false, features = ["deflate-flate2-zli
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "7f8b480fb7f4b66c42358409da19ad520b20b47a", optional = true }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "42f818615d36e5676bf811fd816dbf69be4318fe", features = ["messaging"], optional = true }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "85935509c3b1fd2c6e95540b5dd624fa83126dba", features = ["messaging"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }

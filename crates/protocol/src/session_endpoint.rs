@@ -1,7 +1,8 @@
 //! Application-owned choice of connection backend.
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-const MAX_NATIVE_JOIN_NONCE_BYTES: usize = 4096;
+/// Largest host-issued admission nonce retained for a native game login.
+pub const MAX_NATIVE_JOIN_NONCE_BYTES: usize = 4096;
 
 /// Native direct transport selected by application composition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
