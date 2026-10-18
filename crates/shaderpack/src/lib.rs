@@ -13,11 +13,14 @@
 
 mod buffers;
 mod compile;
+mod custom_uniforms;
 mod diagnostics;
 mod dimensions;
+mod discover;
 mod dispatch;
 mod environment;
 mod expr;
+mod ids;
 mod options;
 mod pack;
 mod preprocess;
@@ -33,9 +36,12 @@ mod translate;
 
 pub use buffers::{BufferDirectives, BufferFormat, BufferId, BufferSettings};
 pub use compile::CompiledStage;
+pub use custom_uniforms::{CustomUniformError, CustomUniforms, UniformValue};
 pub use diagnostics::{Diagnostic, Phase, SourceLocation};
+pub use discover::{DiscoveredPack, discover_packs};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
+pub use ids::{BlockIdMap, IdMaps, NamedIdMap, RenderLayer};
 pub use options::{OptionKind, OptionValues, PackOption};
 pub use pack::{PackTranslation, ShaderPack, TranslateConfig};
 pub use preprocess::ConstDirective;
@@ -52,9 +58,10 @@ pub use reflection::{
     BufferBinding, ColorOutput, ComputeDispatch, FIRST_OTHER_ATTRIBUTE_LOCATION,
     FIRST_TEXTURE_BINDING, IMAGE_GROUP, LEGACY_UNIFORMS, LOOSE_UNIFORM_BINDING,
     LOOSE_UNIFORM_BLOCK, ProgramReflection, SAMPLER_BINDING, SAMPLER_NAME, SHADOW_SAMPLER_BINDING,
-    SHADOW_SAMPLER_NAME, STORAGE_BUFFER_GROUP, SampleType, SamplerBinding, ScalarType, StageMask,
-    StorageImageBinding, TEXTURE_GROUP, TextureBinding, TextureDimension, UNIFORM_GROUP,
-    UniformBlock, UniformMember, ValueType, VertexAttribute, VertexInput,
+    SHADOW_SAMPLER_NAME, STORAGE_BUFFER_GROUP, SampleType, SamplerBinding, SamplerClass,
+    ScalarType, StageMask, StorageImageBinding, StoredNumbers, TEXTURE_GROUP, TextureBinding,
+    TextureDimension, UNIFORM_GROUP, UniformBlock, UniformMember, ValueType, VertexAttribute,
+    VertexInput,
 };
 pub use source::{PackError, PackOrigin, PackSource};
 pub use translate::{ProgramTranslation, StageTranslation};

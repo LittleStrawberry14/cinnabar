@@ -8159,6 +8159,7 @@ version = "0.1.20"
 dependencies = [
  "naga",
  "pp-rs",
+ "tempfile",
  "zip",
 ]
 

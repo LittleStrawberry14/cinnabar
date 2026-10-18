@@ -16,8 +16,16 @@ dispatch.
 The translation includes relative and absolute shader includes, macro
 preprocessing, legacy GLSL rewrites, active buffer directives, program enable
 rules and complete dimension program sets with root or wildcard defaults. `shaders.properties` supplies typed rules
-and parsed custom uniform expressions. A failed program keeps its diagnostics
-while other programs can still translate.
+and custom uniform expressions, which `CustomUniforms` evaluates each frame from
+host-supplied inputs. A failed program keeps its diagnostics while other
+programs can still translate.
+
+`ShaderPack::id_maps` reads `block.properties`, `item.properties` and
+`entity.properties` with Iris precedence; a pack without `block.properties` gets
+Iris's legacy numeric block ids. `discover_packs` lists the pack folders and zips
+in a directory. Each texture reads through the sampler Iris gives it: render
+targets clamp, depth textures take the nearest texel, and custom textures follow
+their `.mcmeta`.
 
 Try the command-line report with an original fixture pack:
 

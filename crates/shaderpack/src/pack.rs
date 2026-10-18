@@ -3,11 +3,14 @@
 use crate::buffers::{BufferDirectives, BufferFormat};
 use crate::dimensions::DimensionSelector;
 use crate::environment::Environment;
+use crate::ids::{BLOCK_FILE, ENTITY_FILE, ITEM_FILE, IdMaps};
 use crate::options::{OptionValues, PackOption, discover_options, option_defines};
 use crate::programs::{ProgramGroup, ProgramSource, enumerate_programs};
 use crate::properties::ShaderProperties;
 use crate::reflect::output_buffer;
+use crate::reflection::SamplerClass;
 use crate::source::{PackError, PackSource};
+use crate::transform::SamplerClasses;
 use crate::translate::{Context, ProgramTranslation, forcing, rule_holds, translate_program};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -116,6 +119,18 @@ impl ShaderPack {
     ) -> ShaderProperties {
         let text = self.source.text("shaders.properties").unwrap_or("");
         ShaderProperties::parse(text, &self.defines(environment, options))
+    }
+
+    /// `block.properties`, `item.properties` and `entity.properties` with their conditionals
+    /// evaluated like `shaders.properties`; see [`IdMaps::parse`] (a pack without
+    /// block.properties gets Iris's legacy block ids).
+    pub fn id_maps(&self, environment: &Environment, options: &OptionValues) -> IdMaps {
+        IdMaps::parse(
+            self.source.text(BLOCK_FILE),
+            self.source.text(ITEM_FILE),
+            self.source.text(ENTITY_FILE),
+            &self.defines(environment, options),
+        )
     }
 
     /// The programs loaded for `config.folder`; `dh_*` programs only with Distant Horizons.
@@ -238,12 +253,30 @@ impl ShaderPack {
                 (i.name.clone(), q)
             })
             .collect();
+        // Custom images clamp and filter linearly; custom textures follow their `.mcmeta`
+        // for samplers of their shape, a stage's own binding winning over `texture.noise`.
+        let mut sampler_classes: SamplerClasses = properties
+            .images
+            .iter()
+            .map(|i| ((i.sampler.clone(), None), SamplerClass::ClampLinear))
+            .collect();
+        for noise in [true, false] {
+            for t in &properties.custom_textures {
+                if t.applies_to(program.group) && (t.stage == "noise") == noise {
+                    sampler_classes.insert(
+                        (t.uniform().to_string(), Some(t.source.dimension())),
+                        t.sampler_class(&self.source),
+                    );
+                }
+            }
+        }
         let cx = Context {
             source: &self.source,
             options: &self.options,
             values: &values,
             defines: &pp_defines,
             image_formats: &image_formats,
+            sampler_classes: &sampler_classes,
         };
         translate_program(&cx, program, enabled, forced)
     }
