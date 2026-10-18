@@ -2,6 +2,26 @@ use super::*;
 use crate::args::ParseOutcome;
 use std::fs;
 
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_direct_connections_do_not_provision_a_core_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("native-session");
+    let parsed = run_args(&[
+        "client",
+        "--address",
+        "127.0.0.1:19132",
+        "--native-networking",
+        "raknet",
+    ]);
+    let _holder = bind_direct_session_directory(&parsed, directory.clone()).unwrap();
+    assert!(!directory.exists());
+    assert!(matches!(
+        parsed.session_endpoint(directory).unwrap(),
+        protocol::SessionEndpoint::Native(_)
+    ));
+}
+
 fn run_args(arguments: &[&str]) -> args::ClientArgs {
     match args::ClientArgs::parse_from(arguments.to_vec()) {
         Ok(ParseOutcome::Run(parsed)) => *parsed,

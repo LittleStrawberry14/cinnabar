@@ -1,3 +1,13 @@
+## Native direct networking (in progress)
+
+The optional `native-networking` feature adds signed-out direct connections through
+the Cinnabar networking libraries. The CLI selects RakNet or directed NetherNet LAN
+with `--native-networking`; the Go backend remains the default. Native connections
+feed the existing Rust spawn, resource-pack presentation and play owners directly.
+Account services, CDN/cache integration, hosting, browser transport and the broader
+network/device acceptance matrix remain incomplete. This does not close a parity
+gate or authorize removing the working Go backend.
+
 ## Custom block and item texture inheritance
 
 Custom terrain aliases resolve their selected filenames against server packs and the

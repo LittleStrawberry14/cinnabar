@@ -499,7 +499,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
 
     // Validate local carriers before starting a connection: an asset failure
     // must not launch the core or wait on a server the client cannot render.
-    if let Some(address) = args.address.as_deref() {
+    if let Some(address) = args
+        .address
+        .as_deref()
+        .filter(|_| args.native_transport.is_none())
+    {
         let child = spawn_core_for_address(
             &layout,
             &socket_dir,
@@ -514,7 +518,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             launcher_host::core_process::stop_core_then(&mut core_process, |_| ());
             return Err(error).with_context(|| format!("wait for Go core endpoint for {address}"));
         }
-    } else if connection_requested {
+    } else if connection_requested && args.native_transport.is_none() {
         preflight_bridge_endpoint(&socket_dir)?;
     }
 
@@ -545,7 +549,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
                 &collision_registries,
             ),
             session_generation: simulation_clock::identity::SessionGeneration::new(1),
-            socket_dir,
+            endpoint: args.session_endpoint(socket_dir)?,
             display_name: args.display_name.clone(),
             client_random_id: client_random_id.expect("connection requested"),
             client_blob_cache: client_blob_cache.cache(),
@@ -665,6 +669,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     .insert_resource(present_mode_runtime)
     .insert_resource(
         SessionController::new(core_process)
+            .with_native_transport(args.native_transport)
             .with_client_random_id(client_random_id)
             .with_address(args.address.as_deref()),
     )

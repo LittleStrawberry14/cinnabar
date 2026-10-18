@@ -21,10 +21,15 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls"]
 
 [[test]]
 name = "it"
 path = "tests/it/main.rs"
+
+[[example]]
+name = "native-join"
+required-features = ["native-networking"]
 
 [dependencies]
 protocol-ids = { path = "../protocol-ids" }
@@ -54,6 +59,11 @@ uuid = { workspace = true, features = ["js"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "46aee7a7508dfd3e1223909611213615388e1d8a", features = ["raknet", "login"], optional = true }
+p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
+rand = { version = "0.10", optional = true }
+nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "4dd6f58935ddc4777568be956c96183dec4bae4b", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]
 test-alloc = { path = "../test-alloc" }

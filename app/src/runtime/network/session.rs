@@ -20,7 +20,7 @@ pub struct NetworkConfig {
     /// Immutable world and collision inputs captured for this join.
     pub(crate) registry_base: super::session_registries::RegistryBase,
     pub session_generation: simulation_clock::identity::SessionGeneration,
-    pub socket_dir: PathBuf,
+    pub endpoint: protocol::SessionEndpoint,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -43,7 +43,7 @@ pub struct NetworkConfig {
 pub fn spawn_network(
     config: NetworkConfig,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
-    let socket_dir = config.socket_dir.clone();
+    let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
     let preparation = Preparation {
         registry_base: config.registry_base,
         session_generation: config.session_generation,
@@ -54,7 +54,7 @@ pub fn spawn_network(
     client_session::spawn_network(
         client_session::NetworkConfig {
             session_generation: config.session_generation,
-            socket_dir: config.socket_dir,
+            endpoint: config.endpoint,
             display_name: config.display_name,
             client_random_id: config.client_random_id,
             client_blob_cache: config.client_blob_cache,
@@ -75,7 +75,10 @@ pub fn spawn_network(
             fast_transfer_action_marker: Some(client_ui::diagnostic_markers::FAST_TRANSFER_ACTION),
         },
     )
-    .map(|inner| NetworkHandle::connected(inner, socket_dir))
+    .map(|inner| match socket_dir {
+        Some(directory) => NetworkHandle::connected(inner, directory),
+        None => NetworkHandle::native(inner),
+    })
 }
 
 /// The session's capture: [`client_session::markers::PACKET_CAPTURE`] decides when set

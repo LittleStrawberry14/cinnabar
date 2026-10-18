@@ -15,7 +15,8 @@ cinnabar — ",
 Usage: cinnabar [OPTIONS] [PACK.mcpack|PACK.mcaddon|PACK.zip]...
 
 Options:
-  --address <HOST:PORT>       Directly launch the Go core and join a server
+  --address <HOST:PORT>       Directly join a server (Go backend by default)
+  --native-networking <KIND>  Opt in to Rust networking: raknet or nethernet-lan
   --socket-dir <PATH>          Override the platform runtime socket directory
   --import-pack <PATH>        Import an optional global resource pack
   --assets <PATH>              Compiled vanilla asset blob
@@ -98,6 +99,7 @@ pub struct ClientArgs {
     /// Optional upstream address for the fast direct-connect path. Without it
     /// (and without an explicit socket directory) the client opens the menu.
     pub address: Option<String>,
+    pub native_transport: Option<protocol::NativeTransport>,
     pub socket_dir: PathBuf,
     pub socket_dir_explicit: bool,
     pub assets: Option<PathBuf>,
@@ -136,6 +138,7 @@ impl Default for ClientArgs {
     fn default() -> Self {
         Self {
             address: None,
+            native_transport: None,
             socket_dir: PathBuf::from(".local/run"),
             socket_dir_explicit: false,
             assets: None,
@@ -172,6 +175,12 @@ pub enum ParseOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ArgsError {
+    #[error(
+        "native networking requires --features native-networking, --address and no --socket-dir"
+    )]
+    NativeNetworkingUnavailable,
+    #[error("--native-networking must be raknet or nethernet-lan")]
+    InvalidNativeTransport,
     #[error(
         "acceptance and evidence options require the app's `acceptance` feature; rebuild without --no-default-features or enable --features acceptance"
     )]
@@ -278,6 +287,14 @@ impl ClientArgs {
                         return Err(ArgsError::MissingValue { flag: "--address" });
                     }
                     parsed.address = Some(value);
+                }
+                Some("--native-networking") => {
+                    let value = next_value(&mut arguments, "--native-networking")?;
+                    parsed.native_transport = Some(match value.to_str() {
+                        Some("raknet") => protocol::NativeTransport::RakNet,
+                        Some("nethernet-lan") => protocol::NativeTransport::NetherNetLan,
+                        _ => return Err(ArgsError::InvalidNativeTransport),
+                    });
                 }
                 Some("--socket-dir") => {
                     parsed.socket_dir_explicit = true;
@@ -431,6 +448,13 @@ impl ClientArgs {
         {
             return Err(ArgsError::MovementEvidenceRequiresAttributableRun);
         }
+        if parsed.native_transport.is_some()
+            && (!cfg!(feature = "native-networking")
+                || parsed.address.is_none()
+                || parsed.socket_dir_explicit)
+        {
+            return Err(ArgsError::NativeNetworkingUnavailable);
+        }
         parsed.validate_acceptance_support(cfg!(feature = "acceptance"))?;
         Ok(ParseOutcome::Run(Box::new(parsed)))
     }
@@ -441,6 +465,29 @@ impl ClientArgs {
             || self.socket_dir_explicit
             || self.acceptance_seconds.is_some()
             || self.metrics_out.is_some()
+    }
+
+    /// Selects a real connection backend without assigning a fictitious Go endpoint to native I/O.
+    pub(crate) fn session_endpoint(
+        &self,
+        directory: PathBuf,
+    ) -> Result<protocol::SessionEndpoint, ArgsError> {
+        if let Some(transport) = self.native_transport {
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            if !self.socket_dir_explicit
+                && let Some(address) = &self.address
+            {
+                return Ok(protocol::SessionEndpoint::Native(
+                    protocol::NativeConnectionTarget {
+                        address: address.clone(),
+                        transport,
+                    },
+                ));
+            }
+            let _ = transport;
+            return Err(ArgsError::NativeNetworkingUnavailable);
+        }
+        Ok(protocol::SessionEndpoint::Core(directory))
     }
 }
 
@@ -455,6 +502,31 @@ where
 mod tests {
     use super::{ArgsError, ClientArgs, HELP, ParseOutcome};
     use std::path::PathBuf;
+
+    #[test]
+    fn native_networking_rejects_ambiguous_or_missing_endpoints() {
+        for arguments in [
+            vec!["client", "--native-networking", "raknet"],
+            vec![
+                "client",
+                "--address",
+                "127.0.0.1:19132",
+                "--native-networking",
+                "raknet",
+                "--socket-dir",
+                "custom",
+            ],
+        ] {
+            assert!(matches!(
+                ClientArgs::parse_from(arguments),
+                Err(ArgsError::NativeNetworkingUnavailable)
+            ));
+        }
+        assert!(matches!(
+            ClientArgs::parse_from(["client", "--native-networking", "unknown"]),
+            Err(ArgsError::InvalidNativeTransport)
+        ));
+    }
 
     #[test]
     fn accepts_file_open_arguments_and_explicit_imports() {

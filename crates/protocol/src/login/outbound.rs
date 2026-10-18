@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
 
-use bridge::{BridgeError, FrameQueue, FrameWritten};
+use crate::session_transport::{PacketSender, PacketWritten};
 use bytes::Bytes;
 use simulation_clock::Moment;
 
@@ -15,7 +15,7 @@ use crate::{Packet, ProtocolError};
 
 /// The write half of a play session: frames whole batches without borrowing the session.
 pub struct PlayOutbound {
-    frames: FrameQueue,
+    frames: PacketSender,
     finish_loading: Vec<Packet>,
     tap: Option<Arc<dyn PacketTap>>,
     cache_status: SharedCacheStatus,
@@ -25,7 +25,7 @@ pub struct PlayOutbound {
 #[cfg(test)]
 mod tests;
 
-type AcceptFrame = Pin<Box<dyn Future<Output = Result<FrameWritten, BridgeError>> + Send>>;
+type AcceptFrame = Pin<Box<dyn Future<Output = Result<PacketWritten, ProtocolError>> + Send>>;
 
 /// An entire submitted batch, retained until its exact frame flushes across cancelled waits.
 struct PendingBatch {
@@ -35,7 +35,7 @@ struct PendingBatch {
     status_epoch: Option<u64>,
     frame: Option<Bytes>,
     accepting: Option<Mutex<AcceptFrame>>,
-    written: Option<FrameWritten>,
+    written: Option<PacketWritten>,
 }
 
 impl PendingBatch {
@@ -55,11 +55,11 @@ impl PendingBatch {
     /// Serializes epoch checks and queue acceptance, then observes the accepted write once.
     fn poll(
         &mut self,
-        frames: &FrameQueue,
+        frames: &PacketSender,
         status: &SharedCacheStatus,
         tap: Option<&dyn PacketTap>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), BridgeError>> {
+    ) -> Poll<Result<(), ProtocolError>> {
         if self.written.is_none() {
             let mut status = status.lock().expect("cache status lock");
             if !self.prepared {
@@ -79,7 +79,7 @@ impl PendingBatch {
                 self.frame = None;
             }
             if self.accepting.is_none() {
-                let Some(frame) = crate::session_transport::batch_frame(&self.packets) else {
+                let Some(frame) = crate::session_transport::batch_body(&self.packets) else {
                     return Poll::Ready(Ok(()));
                 };
                 self.frame = Some(frame.clone());
@@ -102,7 +102,7 @@ impl PendingBatch {
             self.written = Some(written);
             self.accepting = None;
             if let Some(tap) = tap {
-                crate::packet_tap::record_serverbound(
+                crate::packet_tap::record_serverbound_body(
                     tap,
                     self.frame.as_ref().expect("accepted frame"),
                 );
@@ -118,7 +118,7 @@ impl<R: bridge::FrameRead> PlaySession<R> {
     /// Detaches the write half; batches it sends share the session's own send FIFO and tap.
     pub fn outbound(&mut self) -> Result<PlayOutbound, ProtocolError> {
         Ok(PlayOutbound {
-            frames: self.transport.frame_queue(),
+            frames: self.transport.sender(),
             finish_loading: self.take_finish_loading_packets(),
             tap: self.transport.tap(),
             cache_status: self.cache_status.clone(),
@@ -150,7 +150,7 @@ impl PlayOutbound {
                     ready!(batch.poll(&self.frames, &self.cache_status, self.tap.as_deref(), cx));
                 self.pending.pop_front();
                 if let Err(error) = result {
-                    return Poll::Ready(Err(ProtocolError::Bridge(error.into())));
+                    return Poll::Ready(Err(error));
                 }
             }
             Poll::Ready(Ok(()))

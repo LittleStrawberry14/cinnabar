@@ -40,29 +40,36 @@ pub fn spawn_network<P: Send + 'static>(
                 let (packet_tap, packet_capture) =
                     packet_log::session_tap(config.packet_capture.as_ref());
                 let executor = NativeNetworkExecutor {
-                    socket_dir: config.socket_dir.clone(),
+                    socket_dir: config
+                        .endpoint
+                        .core_directory()
+                        .map(std::path::Path::to_path_buf),
                 };
                 run_session_runtime(
                     runtime,
                     channels.run(
                         move |cancelled| async move {
-                            LoginSequence::connect_session(
-                                &config.socket_dir,
-                                &config.display_name,
-                                config.client_random_id,
-                                Some(config.client_blob_cache.clone()),
-                                Some(config.player_skin),
-                                &config.login_settings,
-                                Some(packet_tap),
-                                move |handoff, game_data| {
-                                    let packs = unless_cancelled(&cancelled, || {
-                                        prepare_presentation(handoff, &game_data, &|| {
-                                            *cancelled.borrow()
-                                        })
+                            let prepare = move |handoff, game_data: protocol::GameData| {
+                                let packs = unless_cancelled(&cancelled, || {
+                                    prepare_presentation(handoff, &game_data, &|| {
+                                        *cancelled.borrow()
                                     })
-                                    .flatten();
-                                    (game_data, packs)
+                                })
+                                .flatten();
+                                (game_data, packs)
+                            };
+                            LoginSequence::connect_endpoint(
+                                &config.endpoint,
+                                protocol::SessionLogin {
+                                    display_name: &config.display_name,
+                                    client_random_id: config.client_random_id,
+                                    cache: Some(config.client_blob_cache.clone()),
+                                    skin: Some(config.player_skin),
+                                    settings: &config.login_settings,
+                                    tap: Some(packet_tap),
+                                    target: None,
                                 },
+                                prepare,
                             )
                             .await
                         },

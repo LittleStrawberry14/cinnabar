@@ -30,6 +30,36 @@ impl JoinPreparation for NativeJoinPreparation {
 }
 
 impl LoginSequence {
+    /// Selects the actual connection backend while retaining shared spawn and preparation.
+    pub async fn connect_endpoint<P: Send + 'static>(
+        endpoint: &crate::SessionEndpoint,
+        login: SessionLogin<'_>,
+        prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+    ) -> Result<(PlaySession, P), ProtocolError> {
+        match endpoint {
+            crate::SessionEndpoint::Core(directory) => {
+                let (reader, frames) = bridge::connect_session(directory)
+                    .await
+                    .map_err(ProtocolError::Bridge)?;
+                Self::connect_prepared(
+                    SessionIo {
+                        reader,
+                        frames,
+                        timers: bridge::tasks::Timers::tokio(),
+                    },
+                    login,
+                    &NativeJoinPreparation,
+                    prepare,
+                )
+                .await
+            }
+            #[cfg(feature = "native-networking")]
+            crate::SessionEndpoint::Native(target) => {
+                Self::connect_native(target, login, prepare).await
+            }
+        }
+    }
+
     /// Opens the native core endpoint, offloads startup work and continues its only login.
     /// Pack preparation overlaps server input; loading ends when the caller presents the world.
     #[expect(

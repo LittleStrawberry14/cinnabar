@@ -34,7 +34,7 @@ const NETWORK_PUMP_TERMINAL_MARKER: &str = "CINNABAR_NETWORK_PUMP_TERMINAL";
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
     pub session_generation: SessionGeneration,
-    pub socket_dir: std::path::PathBuf,
+    pub endpoint: protocol::SessionEndpoint,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -692,6 +692,11 @@ trait NetworkSession: execution::SessionOwner {
     /// Detaches the write half before the pump starts.
     fn outbound(&mut self) -> Result<Self::Outbound, Self::Error>;
 
+    /// Completes connection teardown before the network runtime stops.
+    fn close(&mut self) -> impl execution::SessionFuture<Output = ()> {
+        std::future::ready(())
+    }
+
     fn receive_world_event(
         &mut self,
         current_dimension: i32,
@@ -756,6 +761,14 @@ trait NetworkSession: execution::SessionOwner {
 impl<R: execution::SessionRead> NetworkSession for protocol::PlaySession<R> {
     type Error = protocol::ProtocolError;
     type Outbound = protocol::PlayOutbound;
+
+    fn close(&mut self) -> impl execution::SessionFuture<Output = ()> {
+        async move {
+            if let Err(error) = protocol::PlaySession::close(self).await {
+                tracing::debug!(%error, "connection teardown ended before graceful close");
+            }
+        }
+    }
 
     fn outbound(&mut self) -> Result<Self::Outbound, Self::Error> {
         protocol::PlaySession::outbound(self)

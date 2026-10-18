@@ -1,0 +1,251 @@
+//! Native direct joins using the shared Rust spawn and play sequence.
+
+mod connection;
+mod packs;
+mod transport;
+pub(crate) use connection::Connection;
+
+use super::{JoinPreparation, LoginSequence, NativeJoinPreparation, PlaySession, SessionLogin};
+use crate::codec::SessionFailure;
+use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
+use crate::{GameData, ProtocolError, ResourcePackHandoff};
+use crate::{NativeConnectionTarget, NativeTransport};
+use bedrock_net::login::{OfflineIdentity, encode_offline_request, finish_key_exchange};
+use bedrock_net::{CompressionAlgorithm, CompressionSettings};
+use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, wire};
+use serde_json::{json, value::RawValue};
+use std::{
+    io,
+    time::{Duration, SystemTime},
+};
+
+const JOIN_TIMEOUT: Duration = Duration::from_secs(120);
+
+impl LoginSequence {
+    /// Joins directly without a Go process. The timeout includes transport, Login,
+    /// resource-pack transfer and spawn; dropping the future cancels the connection.
+    pub async fn connect_native<P: Send + 'static>(
+        target: &NativeConnectionTarget,
+        login: SessionLogin<'_>,
+        prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+    ) -> Result<(PlaySession, P), ProtocolError> {
+        tokio::time::timeout(JOIN_TIMEOUT, connect(target, login, prepare))
+            .await
+            .map_err(|_| {
+                failure(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "native join timed out",
+                ))
+            })?
+    }
+}
+
+/// Negotiates one native connection before handing the same owner to play.
+async fn connect<P: Send + 'static>(
+    target: &NativeConnectionTarget,
+    login: SessionLogin<'_>,
+    prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+) -> Result<(PlaySession, P), ProtocolError> {
+    if login.target.is_some() {
+        return Err(failure(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "native join does not accept a core target override",
+        )));
+    }
+    let transport = transport::Transport::connect(target)
+        .await
+        .map_err(failure)?;
+    let mut connection = Connection::new(transport);
+    connection
+        .send(packets::RequestNetworkSettings {
+            client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
+        })
+        .await
+        .map_err(failure)?;
+    let settings = loop {
+        let packet = connection.next_packet().await.map_err(failure)?;
+        match *packet.data {
+            packets::Packet::NetworkSettings(settings) => break settings,
+            packets::Packet::Disconnect(disconnect) => return Err(disconnected(disconnect)),
+            _ => {
+                return Err(failure(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "expected NetworkSettings",
+                )));
+            }
+        }
+    };
+    let algorithm = CompressionAlgorithm::try_from(settings.compression_algorithm.to_raw())
+        .unwrap_or(CompressionAlgorithm::Deflate);
+    connection.enable_compression(CompressionSettings {
+        algorithm,
+        threshold: settings.compression_threshold.0,
+    });
+    let mut claims = super::client_data::login_client_data(
+        login.display_name,
+        login.client_random_id,
+        login.skin.as_ref(),
+        login.settings,
+    );
+    // Signed-out desktop identity is independent of Xbox title/device authentication.
+    claims["DeviceOS"] = json!(native_device_os());
+    claims["DeviceModel"] = json!("");
+    claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
+    claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
+    claims["ServerAddress"] = json!(target.address);
+    claims["Nonce"] = json!(connection.transport.nonce());
+    let claims = RawValue::from_string(
+        serde_json::to_string(&claims)
+            .map_err(io::Error::other)
+            .map_err(failure)?,
+    )
+    .map_err(io::Error::other)
+    .map_err(failure)?;
+    let identity = uuid::Uuid::new_v4().to_string();
+    let request = encode_offline_request(
+        connection.transport.key(),
+        &OfflineIdentity {
+            display_name: login.display_name,
+            identity: &identity,
+            xuid: "",
+            playfab_id: "",
+            playfab_title_id: "",
+        },
+        &claims,
+        SystemTime::now(),
+        connection.max_decoded_bytes(),
+    )
+    .map_err(io::Error::other)
+    .map_err(failure)?;
+    connection
+        .send(packets::Login {
+            client_network_version: wire::I32BE(crate::PROTOCOL_VERSION),
+            connection_request: request,
+        })
+        .await
+        .map_err(failure)?;
+    let mut handshake_seen = false;
+    let mut cache_sent = false;
+    let offer = loop {
+        let packet = connection.next_packet().await.map_err(failure)?;
+        match *packet.data {
+            packets::Packet::ServerToClientHandshake(handshake) if !handshake_seen => {
+                let token = handshake
+                    .handshake_web_token
+                    .to_str()
+                    .map_err(io::Error::other)
+                    .map_err(failure)?;
+                let ciphers = finish_key_exchange(
+                    connection.transport.key(),
+                    token,
+                    connection.max_decoded_bytes(),
+                )
+                .map_err(io::Error::other)
+                .map_err(failure)?;
+                if connection.transport.batch_encryption() {
+                    connection.enable_encryption(ciphers).map_err(failure)?;
+                }
+                connection
+                    .send(packets::ClientToServerHandshake {})
+                    .await
+                    .map_err(failure)?;
+                handshake_seen = true;
+            }
+            packets::Packet::PlayStatus(status)
+                if status.status == PlayStatusType::Loginsuccess =>
+            {
+                send_cache_status(&mut connection, login.cache.is_some(), &mut cache_sent).await?;
+            }
+            packets::Packet::ResourcePacksInfo(info) => {
+                send_cache_status(&mut connection, login.cache.is_some(), &mut cache_sent).await?;
+                break info;
+            }
+            packets::Packet::Disconnect(disconnect) => return Err(disconnected(disconnect)),
+            packets::Packet::PlayStatus(status) => {
+                return Err(failure(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("Login failed: {:?}", status.status),
+                )));
+            }
+            other => {
+                return Err(failure(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unexpected Login packet: {:?}", other.id()),
+                )));
+            }
+        }
+    };
+    let packs = packs::acquire(&mut connection, offer).await?;
+    let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
+    let preparation = NativeJoinPreparation;
+    let mut prepared_job = None;
+    let spawned = super::startup::await_spawn(
+        &mut transport,
+        login.settings.view_distance_chunks,
+        |start, items| {
+            prepared_job = Some(
+                preparation.submit(move || prepare(packs, GameData::from_wire(&start, &items))),
+            );
+        },
+    )
+    .await?;
+    let job = prepared_job.expect("spawn requires StartGame and item registry");
+    tokio::pin!(job);
+    let prepared = tokio::select! {
+        value = &mut job => value,
+        () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => job.await,
+    };
+    Ok((
+        PlaySession::new(
+            transport,
+            login.cache,
+            spawned.runtime_id,
+            spawned.terrain_before_spawn,
+        ),
+        prepared,
+    ))
+}
+
+/// Advertises the capability exactly once even when the offer precedes LoginSuccess.
+async fn send_cache_status(
+    connection: &mut Connection,
+    enabled: bool,
+    sent: &mut bool,
+) -> Result<(), ProtocolError> {
+    if !*sent {
+        connection
+            .send(packets::ClientCacheStatus {
+                is_cache_supported: enabled,
+            })
+            .await
+            .map_err(failure)?;
+        *sent = true;
+    }
+    Ok(())
+}
+
+/// Preserves the server's disconnect text through the existing startup error model.
+fn disconnected(packet: packets::Disconnect) -> ProtocolError {
+    let (message, filtered) = crate::disconnect::packet_texts(&packet);
+    crate::disconnect::join_disconnect("native Login", &packet.reason, &message, &filtered).into()
+}
+
+/// Attaches the native transport error without labelling it as malformed packet input.
+fn failure(error: io::Error) -> ProtocolError {
+    SessionFailure::NativeTransport(error).into()
+}
+
+/// Reports the actual host family for a signed-out connection, independently of OAuth titles.
+fn native_device_os() -> i32 {
+    if cfg!(target_os = "android") {
+        1
+    } else if cfg!(target_os = "ios") {
+        2
+    } else if cfg!(target_os = "macos") {
+        3
+    } else if cfg!(target_os = "windows") {
+        8
+    } else {
+        15
+    }
+}

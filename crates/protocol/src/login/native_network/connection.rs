@@ -1,0 +1,212 @@
+//! Compression, encryption and packet FIFO retained for the entire connection.
+
+use super::transport::Transport;
+use crate::{Packet, packet::GameHeader};
+use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
+use bedrock_net::{BatchCodec, BatchError, BatchLimits, CompressionSettings, DecodeOutcome};
+use bedrock_protocol_1_26_51::{packets, wire};
+use bytes::{Bytes, BytesMut};
+use std::{collections::VecDeque, io};
+
+pub(crate) struct Connection {
+    pub(super) transport: Transport,
+    codec: BatchCodec,
+    limits: BatchLimits,
+    pending: VecDeque<Bytes>,
+    ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
+}
+
+impl Connection {
+    /// Starts an uncompressed session and retains all later state on this same owner.
+    pub(super) fn new(transport: Transport) -> Self {
+        let limits = BatchLimits::default();
+        Self {
+            codec: BatchCodec::new(transport.header(), limits),
+            transport,
+            limits,
+            pending: VecDeque::new(),
+            ciphers: None,
+        }
+    }
+
+    /// The shared decoded-byte bound for Login and subsequent packets.
+    pub(super) fn max_decoded_bytes(&self) -> usize {
+        self.limits.max_decoded_bytes
+    }
+
+    /// Applies negotiated compression without replacing unread packets.
+    pub(super) fn enable_compression(&mut self, settings: CompressionSettings) {
+        self.codec.enable_compression(settings);
+    }
+
+    /// Installs both directional streams once, before the client handshake acknowledgment.
+    pub(super) fn enable_encryption(
+        &mut self,
+        ciphers: (BatchEncryptor, BatchDecryptor),
+    ) -> io::Result<()> {
+        if self.ciphers.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "repeated server key exchange",
+            ));
+        }
+        self.ciphers = Some(ciphers);
+        Ok(())
+    }
+
+    /// Encodes one generated packet through the ordinary batch send path.
+    pub(super) async fn send<P>(&mut self, packet: P) -> io::Result<()>
+    where
+        packets::Packet: From<P>,
+    {
+        let packet = Packet::new(packet);
+        let body = crate::session_transport::batch_body(&[packet]).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "native packet could not encode")
+        })?;
+        self.send_body(body).await
+    }
+
+    /// Refuses an oversized queue item before it can retain connection capacity.
+    pub(crate) fn check_body_size(body: &[u8]) -> io::Result<()> {
+        if body.len() > BatchLimits::default().max_decoded_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native outgoing batch exceeds decoded byte limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Advances the cipher only inside this owner's uninterrupted write operation.
+    pub(crate) async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
+        Self::check_body_size(&body)?;
+        let entries = wire::Frames::new(body, self.limits.max_packets)
+            .map(|frame| {
+                let frame = frame.map_err(io::Error::other)?;
+                let mut reader = wire::Reader::from_shared(frame.frame());
+                reader.read_var_u32().map_err(io::Error::other)?;
+                Ok(frame.frame().slice(reader.position()..))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
+            if let Some((encryptor, _)) = &mut self.ciphers {
+                let marker = self.transport.header().marker();
+                let body = if marker.is_some() {
+                    message.slice(1..)
+                } else {
+                    message
+                };
+                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
+                self.check_wire_size(&message)?;
+            }
+            self.transport.send(message).await?;
+        }
+        Ok(())
+    }
+
+    /// Reads a complete batch, retaining decoded siblings across every protocol transition.
+    async fn fill(&mut self) -> io::Result<()> {
+        while self.pending.is_empty() {
+            let mut message = self.transport.recv().await?;
+            self.check_wire_size(&message)?;
+            if let Some((_, decryptor)) = &mut self.ciphers {
+                let marker = self.transport.header().marker();
+                let body = if let Some(marker) = marker {
+                    let actual = *message
+                        .first()
+                        .ok_or_else(|| io::Error::other(BatchError::MissingBatchHeader))?;
+                    if actual != marker {
+                        return Err(io::Error::other(BatchError::InvalidBatchHeader(actual)));
+                    }
+                    message.slice(1..)
+                } else {
+                    message
+                };
+                message = envelope(marker, decryptor.decrypt(body).map_err(io::Error::other)?);
+            }
+            match self.codec.decode(message).map_err(io::Error::other)? {
+                DecodeOutcome::Packets {
+                    packets,
+                    skipped_empty_packets,
+                    ..
+                } => {
+                    if skipped_empty_packets != 0 {
+                        tracing::debug!(
+                            skipped_empty_packets,
+                            "skipped empty native batch entries"
+                        );
+                    }
+                    self.pending.extend(packets);
+                }
+                DecodeOutcome::Dropped(reason) => tracing::debug!(?reason, "dropped native batch"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Decodes one handshake packet while preserving every sibling from its batch.
+    pub(super) async fn next_packet(&mut self) -> io::Result<Packet> {
+        self.fill().await?;
+        let bytes = self.pending.pop_front().expect("fill supplies packets");
+        let mut reader = wire::Reader::from_shared(&bytes);
+        let header = wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
+        let id = packets::PacketId::from_raw(header.id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unknown native handshake packet",
+            )
+        })?;
+        let body = bytes.slice(reader.position()..);
+        let data = crate::codec::decode_body(id, &body).map_err(io::Error::other)?;
+        Ok(Packet::from_parts(
+            GameHeader {
+                id,
+                from_subclient: header.sender_subclient.into(),
+                to_subclient: header.target_subclient.into(),
+            },
+            data,
+        ))
+    }
+
+    /// Reframes the unread batch as ordinary Bedrock entries for lazy play decoding.
+    pub(crate) async fn recv_body(&mut self) -> io::Result<Bytes> {
+        self.fill().await?;
+        let mut body = Vec::new();
+        for packet in self.pending.drain(..) {
+            let mut writer = wire::Writer::with_limit(&mut body, self.limits.max_decoded_bytes);
+            writer
+                .write_len_var_u32(packet.len())
+                .map_err(io::Error::other)?;
+            body.extend_from_slice(&packet);
+        }
+        Ok(Bytes::from(body))
+    }
+
+    /// Ends the actual transport, without starting another connection.
+    pub(crate) async fn close(&mut self) -> io::Result<()> {
+        self.transport.close().await
+    }
+
+    /// Checks ciphertext input before decrypting or allocating decoded state.
+    fn check_wire_size(&self, message: &[u8]) -> io::Result<()> {
+        if message.len() > self.limits.max_encoded_bytes {
+            return Err(io::Error::other(BatchError::EncodedTooLarge {
+                actual: message.len(),
+                maximum: self.limits.max_encoded_bytes,
+            }));
+        }
+        Ok(())
+    }
+}
+
+/// Restores the cleartext marker around a directional cipher body when required.
+fn envelope(marker: Option<u8>, body: Bytes) -> Bytes {
+    if let Some(marker) = marker {
+        let mut message = BytesMut::with_capacity(body.len() + 1);
+        message.extend_from_slice(&[marker]);
+        message.extend_from_slice(&body);
+        message.freeze()
+    } else {
+        body
+    }
+}

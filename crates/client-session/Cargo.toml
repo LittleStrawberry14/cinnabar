@@ -7,6 +7,7 @@ publish = false
 
 [features]
 test-support = []
+native-networking = ["protocol/native-networking"]
 
 [dependencies]
 simulation-clock = { path = "../simulation-clock" }

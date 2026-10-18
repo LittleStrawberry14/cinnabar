@@ -83,6 +83,8 @@ dependency_free = true
 [[crates]]
 name = "protocol"
 path = "crates/protocol"
+# Native networking uses external cinnabar-mc/bedrock-net and nethernet libraries;
+# generated packet schemas and application startup remain owned by protocol.
 allowed_dependencies = ["simulation-clock", "block-transform", "bridge", "render-api", "test-time", "protocol-ids"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]

@@ -10,7 +10,7 @@ fn network_config_call_sites_share_the_process_blob_cache() {
     let first = NetworkConfig {
         registry_base: registry_base.clone(),
         session_generation: SessionGeneration::new(7),
-        socket_dir: std::path::PathBuf::from("first-core.sock"),
+        endpoint: protocol::SessionEndpoint::Core(std::path::PathBuf::from("first-core.sock")),
         display_name: "cache-owner".to_owned(),
         client_random_id: protocol::ClientRandomId::new(-7).unwrap(),
         client_blob_cache: owner.cache(),
@@ -28,7 +28,9 @@ fn network_config_call_sites_share_the_process_blob_cache() {
     let replacement = NetworkConfig {
         registry_base,
         session_generation: SessionGeneration::new(8),
-        socket_dir: std::path::PathBuf::from("replacement-core.sock"),
+        endpoint: protocol::SessionEndpoint::Core(std::path::PathBuf::from(
+            "replacement-core.sock",
+        )),
         display_name: "cache-owner".to_owned(),
         client_random_id: protocol::ClientRandomId::new(-7).unwrap(),
         client_blob_cache: owner.cache(),

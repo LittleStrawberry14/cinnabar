@@ -13,7 +13,11 @@ use crate::session_wire::{CoreMessage, SessionDisconnect, SessionTransfer};
 use crate::{Packet, ProtocolError, SessionError};
 use bridge::{BridgeError, FrameQueue, FramedReader};
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::StreamExt;
+mod io;
+pub(crate) use io::{PacketSender, PacketWritten};
+use io::{ReadItem, Reader};
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod native;
 
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
 /// so the local leg accepts batches far larger than a typical client's 16 MiB default.
@@ -54,12 +58,12 @@ pub(crate) enum Terminal {
 /// optional [`PacketTap`] sees each received packet once, as its batch is read and split (see
 /// [`crate::packet_tap`] for what that time measures), and each sent packet once.
 pub(crate) struct SessionTransport<R = FramedReader> {
-    reader: R,
+    reader: Reader<R>,
     timers: bridge::tasks::Timers,
-    frames: FrameQueue,
+    frames: PacketSender,
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
     received: VecDeque<RawPacket>, // packets split from a batch but not yet read
-    ahead: VecDeque<Option<Result<Bytes, BridgeError>>>, // reader items `read_ahead` took
+    ahead: VecDeque<Option<Result<ReadItem, SessionError>>>, // reader items `read_ahead` took
     ahead_bytes: usize,       // frame bytes held in `ahead`
     ended: bool,              // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
@@ -77,7 +81,7 @@ struct CurrentPacket {
     body: Bytes,
 }
 
-type FrameSend = Pin<Box<dyn Future<Output = Result<(), BridgeError>> + Send>>;
+type FrameSend = Pin<Box<dyn Future<Output = Result<(), ProtocolError>> + Send>>;
 
 /// A send retained across cancellation until its frame is flushed.
 struct InFlightSend {
@@ -86,7 +90,7 @@ struct InFlightSend {
 }
 
 impl InFlightSend {
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), BridgeError>> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ProtocolError>> {
         self.write
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -96,6 +100,18 @@ impl InFlightSend {
 }
 
 impl<R: bridge::FrameRead> SessionTransport<R> {
+    /// Closes the native connection while its runtime is alive; core I/O belongs to its host.
+    pub(crate) async fn close(&mut self) -> Result<(), ProtocolError> {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Reader::Native(reader) = &mut self.reader {
+            reader
+                .close()
+                .await
+                .map_err(|error| ProtocolError::from(SessionFailure::NativeTransport(error)))?;
+        }
+        Ok(())
+    }
+
     /// Continues a handed-off session; the `startup` packets, each with its header, come first.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn new(reader: R, frames: FrameQueue, startup: &[Bytes]) -> Self {
@@ -110,9 +126,9 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         timers: bridge::tasks::Timers,
     ) -> Self {
         Self {
-            reader,
+            reader: Reader::Core(reader),
             timers,
-            frames,
+            frames: PacketSender::Core(frames),
             startup: startup_batches(startup).into(),
             received: VecDeque::new(),
             ahead: VecDeque::new(),
@@ -149,7 +165,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
     }
 
     /// The FIFO this transport's own sends share with detached outbound batches.
-    pub(crate) fn frame_queue(&self) -> FrameQueue {
+    pub(crate) fn sender(&self) -> PacketSender {
         self.frames.clone()
     }
 
@@ -180,12 +196,22 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
                     }
                     next
                 }
-                None => self.reader.next().await,
+                None => poll_fn(|cx| self.reader.poll_next(cx)).await,
             };
             let frame = match next {
                 Some(Ok(frame)) => frame,
-                Some(Err(error)) => return Err(SessionFailure::Transport(error).into()),
+                Some(Err(error)) => return Err(error),
                 None => return Err(SessionFailure::ConnectionClosed.into()),
+            };
+            let frame = match frame {
+                ReadItem::Core(frame) => frame,
+                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                ReadItem::Native(body) => {
+                    self.split_frames += 1;
+                    let packets = self.split_batch(body, self.split_frames)?;
+                    self.received.extend(packets);
+                    continue;
+                }
             };
             if let Some(body) = crate::session_wire::batch_frame_body(&frame) {
                 self.split_frames += 1;
@@ -230,7 +256,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         if self.ahead_bytes >= max_bytes || self.ahead.back().is_some_and(ends_session) {
             return Poll::Ready(false);
         }
-        let next = ready!(Pin::new(&mut self.reader).poll_next(cx));
+        let next = ready!(self.reader.poll_next(cx));
         if let Some(Ok(frame)) = &next {
             self.ahead_bytes += frame.len();
         }
@@ -319,11 +345,11 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         if packets.is_empty() {
             return Ok(());
         }
-        let Some(frame) = batch_frame(packets) else {
+        let Some(frame) = batch_body(packets) else {
             return Ok(());
         };
         if let Some(tap) = &self.tap {
-            crate::packet_tap::record_serverbound(tap.as_ref(), &frame);
+            crate::packet_tap::record_serverbound_body(tap.as_ref(), &frame);
         }
         let frames = self.frames.clone();
         self.sending.push_back(InFlightSend {
@@ -334,12 +360,10 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
 
     /// Completes every send retained across cancellation, in order.
     pub(crate) async fn drain_send(&mut self) -> Result<(), ProtocolError> {
-        poll_fn(|cx| self.poll_drain_send(cx))
-            .await
-            .map_err(|error| SessionFailure::Transport(error).into())
+        poll_fn(|cx| self.poll_drain_send(cx)).await
     }
 
-    fn poll_drain_send(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), BridgeError>> {
+    fn poll_drain_send(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ProtocolError>> {
         while let Some(front) = self.sending.front_mut() {
             let result = ready!(front.poll(cx));
             self.sending.pop_front();
@@ -353,21 +377,31 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
 }
 
 /// Whether a reader item ends the session: a terminal message, a failure or the close.
-fn ends_session(next: &Option<Result<Bytes, BridgeError>>) -> bool {
-    !matches!(next, Some(Ok(frame)) if crate::session_wire::batch_frame_body(frame).is_some())
+fn ends_session(next: &Option<Result<ReadItem, SessionError>>) -> bool {
+    !matches!(next, Some(Ok(frame)) if frame.is_batch())
 }
 
 /// One Batch frame holding `packets`, each length-prefixed as a Bedrock batch carries it. A
 /// packet the codec refuses is logged and left out so the rest still go in order; `None` when
 /// none encodes.
+#[cfg(test)]
 pub(crate) fn batch_frame(packets: &[Packet]) -> Option<Bytes> {
-    let mut frame = vec![bridge::contract::KIND_BATCH];
+    let body = batch_body(packets)?;
+    let mut frame = BytesMut::with_capacity(body.len() + 1);
+    frame.put_u8(bridge::contract::KIND_BATCH);
+    frame.extend_from_slice(&body);
+    Some(frame.freeze())
+}
+
+/// Encodes a Bedrock batch body independently of either transport's envelope.
+pub(crate) fn batch_body(packets: &[Packet]) -> Option<Bytes> {
+    let mut frame = Vec::new();
     for packet in packets {
         if let Err(error) = crate::codec::encode_entry(packet, &mut frame) {
             tracing::warn!(packet = ?packet.kind(), %error, "skipping an outbound packet that failed to encode");
         }
     }
-    (frame.len() > 1).then(|| Bytes::from(frame))
+    (!frame.is_empty()).then(|| Bytes::from(frame))
 }
 
 /// Groups the startup packets, which may span many upstream batches, into batch bodies that each

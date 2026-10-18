@@ -56,7 +56,7 @@ pub trait NetworkExecutor: Clone {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Default)]
 pub(super) struct NativeNetworkExecutor {
-    pub(super) socket_dir: PathBuf,
+    pub(super) socket_dir: Option<PathBuf>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -75,7 +75,9 @@ impl NetworkExecutor for NativeNetworkExecutor {
     }
 
     async fn report_packs(&self, applied: bool) {
-        protocol::report_pack_application(&self.socket_dir, applied).await;
+        if let Some(directory) = &self.socket_dir {
+            protocol::report_pack_application(directory, applied).await;
+        }
     }
 }
 

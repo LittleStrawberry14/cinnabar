@@ -216,7 +216,13 @@ jobs:
           if affected cinnabar; then
             cargo clippy -p cinnabar --features enhanced,developer-control,tracy --locked -- -D warnings
             cargo clippy -p cinnabar --features reports --tests --locked -- -D warnings
+            cargo clippy -p cinnabar --features native-networking --all-targets --locked -- -D warnings
           fi
+      - name: Test native session queues
+        if: ${{ !cancelled() && (env.FULL == 'true' || contains(format(' {0} ', env.AFFECTED), ' protocol ') || contains(format(' {0} ', env.AFFECTED), ' cinnabar ')) }}
+        run: |
+          cargo test -p protocol --features native-networking --lib --locked -- session_transport
+          cargo test -p protocol --features native-networking --lib --locked -- login::outbound
       - name: Test developer control adapters
         if: ${{ !cancelled() && (env.FULL == 'true' || contains(format(' {0} ', env.AFFECTED), ' cinnabar ')) }}
         run: cargo test -p cinnabar --features developer-control --lib --locked -- developer_control

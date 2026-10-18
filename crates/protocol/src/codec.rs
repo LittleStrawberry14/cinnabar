@@ -120,6 +120,9 @@ pub(crate) enum SessionFailure {
     ServerTransfer(crate::ServerTransferEvent),
     #[error("session transport failed: {0}")]
     Transport(#[source] bridge::BridgeError),
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    #[error("native connection failed: {0}")]
+    NativeTransport(#[source] std::io::Error),
     #[error("connection closed")]
     ConnectionClosed,
 }
@@ -127,6 +130,10 @@ pub(crate) enum SessionFailure {
 impl SessionFailure {
     /// Whether this is a malformed-input failure, which play counts, rather than a closed link.
     pub(crate) const fn is_decode(&self) -> bool {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if matches!(self, Self::NativeTransport(_)) {
+            return false;
+        }
         !matches!(self, Self::Transport(_) | Self::ConnectionClosed)
     }
 

@@ -27,7 +27,7 @@ use {
     client_shell::menu::{LauncherCoreSlot, MenuRuntime},
 };
 
-use std::{path::PathBuf, time::Instant};
+use std::time::Instant;
 
 mod client_id;
 
@@ -58,6 +58,8 @@ pub(crate) struct SessionController {
     /// Automatic transfer-follow hops remaining in the current chain.
     transfer_hops_remaining: u32,
     connecting: bool,
+    #[cfg(feature = "native-networking")]
+    native_transport: Option<protocol::NativeTransport>,
     /// Polls the per-session core this join started for its server trust question.
     trust: Option<SessionTrust>,
     /// Server packs recent joins compiled; released once no join follows.
@@ -71,6 +73,36 @@ impl Default for SessionController {
 }
 
 impl SessionController {
+    /// Retains the direct backend for signed-out retries and server transfer follows.
+    pub(crate) fn with_native_transport(
+        self,
+        transport: Option<protocol::NativeTransport>,
+    ) -> Self {
+        #[cfg(feature = "native-networking")]
+        {
+            let mut controller = self;
+            controller.native_transport = transport;
+            controller
+        }
+        #[cfg(not(feature = "native-networking"))]
+        {
+            let _ = transport;
+            self
+        }
+    }
+
+    /// Account and hosted-world joins keep their existing authenticated owner.
+    fn native_direct_enabled(&self, authenticated: bool, local_world: bool) -> bool {
+        #[cfg(feature = "native-networking")]
+        {
+            self.native_transport.is_some() && !authenticated && !local_world
+        }
+        #[cfg(not(feature = "native-networking"))]
+        {
+            let _ = (authenticated, local_world);
+            false
+        }
+    }
     /// Adopts `core`, already started for a direct `--address` session.
     pub(crate) fn new(core: CoreProcessGuard) -> Self {
         Self {
@@ -85,6 +117,8 @@ impl SessionController {
             local_world: false,
             transfer_hops_remaining: MAX_TRANSFER_CHAIN_HOPS,
             connecting: false,
+            #[cfg(feature = "native-networking")]
+            native_transport: None,
             trust: None,
             kept_packs: crate::runtime::network::compiled_stacks(),
         }
@@ -176,6 +210,13 @@ impl SessionController {
         auth_cache: Option<&std::path::Path>,
         generation: u64,
     ) -> Result<JoinStage, String> {
+        #[cfg(feature = "native-networking")]
+        if let Some(transport) = self.native_transport.filter(|_| auth_cache.is_none()) {
+            return Ok(JoinStage::Native(protocol::NativeConnectionTarget {
+                address: address.to_owned(),
+                transport,
+            }));
+        }
         // Namespaced by process id like the `--address` path: a bare
         // generation counter restarts at the same value every launch, so a
         // previous run's directory would be reused for this session.
@@ -347,14 +388,22 @@ fn attempt_connect(
             format!("remote:{}", address.trim().to_lowercase())
         },
     );
-    let launcher = session.launcher.as_deref().and_then(|slot| {
-        slot.begin_join(
-            &address,
-            local_world,
-            auth_cache.is_some(),
-            menu.is_launcher(),
-        )
-    });
+    let launcher = session
+        .launcher
+        .as_deref()
+        .filter(|_| {
+            !session
+                .controller
+                .native_direct_enabled(auth_cache.is_some(), local_world)
+        })
+        .and_then(|slot| {
+            slot.begin_join(
+                &address,
+                local_world,
+                auth_cache.is_some(),
+                menu.is_launcher(),
+            )
+        });
     let controller = &mut *session.controller;
     if let Err(message) = controller.prepare_client_random_id(menu.layout()) {
         controller.fail_join(menu, message);
@@ -433,7 +482,7 @@ fn poll_join(
             }
         }
         JoinPoll::Ready {
-            socket_dir,
+            endpoint,
             directory,
         } => {
             let owned_core = directory.is_some();
@@ -446,7 +495,7 @@ fn poll_join(
                 menu,
                 controller.generation,
                 cache,
-                socket_dir,
+                endpoint,
                 login_settings,
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
@@ -503,7 +552,7 @@ fn start_network(
     menu: &MenuRuntime,
     session_generation: u64,
     cache: &BlobCache,
-    socket_dir: PathBuf,
+    endpoint: protocol::SessionEndpoint,
     login_settings: protocol::LoginSettings,
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
@@ -513,7 +562,7 @@ fn start_network(
     let replacement = crate::runtime::network::session::spawn_network(NetworkConfig {
         registry_base,
         session_generation: simulation_clock::identity::SessionGeneration::new(session_generation),
-        socket_dir,
+        endpoint,
         display_name: menu.display_name().to_owned(),
         client_random_id,
         client_blob_cache: cache.cache(),

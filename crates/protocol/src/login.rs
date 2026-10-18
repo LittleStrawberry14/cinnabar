@@ -31,6 +31,8 @@ mod startup;
 #[cfg(not(target_arch = "wasm32"))]
 pub use session_join::NativeJoinPreparation;
 pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod native_network;
 mod unused_packets;
 mod web_handoff;
 use boundary::boundary_wakeup;
@@ -93,6 +95,12 @@ impl WorldIngress {
 }
 
 impl<R: bridge::FrameRead> PlaySession<R> {
+    /// Drains accepted native writes and closes the peer before the host stops its runtime.
+    /// Core sessions retain their host-owned endpoint lifecycle.
+    pub async fn close(&mut self) -> Result<(), ProtocolError> {
+        self.transport.close().await
+    }
+
     /// Buffers raw core frames while the world consumer is full. Decoding resumes in wire
     /// order when the caller receives again. Reading stops at the shared byte bound or the
     /// session's terminal message; cancelling this wait retains every complete frame read.

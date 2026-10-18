@@ -19,6 +19,8 @@ mod inventory;
 mod item;
 mod item_capacity;
 mod login;
+mod session_endpoint;
+pub use session_endpoint::{NativeConnectionTarget, NativeTransport, SessionEndpoint};
 mod movement;
 mod nbt_tree;
 mod packet;
