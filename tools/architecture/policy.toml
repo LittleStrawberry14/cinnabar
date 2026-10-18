@@ -2054,3 +2054,8 @@ test_support_features = ["test-support"]
 path = "app/src/runtime/network/item_icons/tints.rs"
 literal = "grass_carried"
 reason = "Terrain-atlas carried-grass colour source; this selects authored inventory tint metadata, not a block identity."
+
+[[identifier_literal_exceptions]]
+path = "crates/launcher-host/src/native_account/hosted_world/approval.rs"
+literal = "active"
+reason = "Xbox MPSD member JSON property; this is a service field name rather than a game identifier."
