@@ -134,13 +134,34 @@ impl Playing {
         upstream::current(&self.lease, deadline)?;
         let connected = upstream::connect(&self.lease, request.target, deadline).await?;
         self.socket = Some(Socket::Connecting(connected));
+        self.negotiate(
+            reader,
+            frames,
+            claims,
+            request.client_cache,
+            authentication,
+            deadline,
+        )
+        .await
+    }
+
+    /// Negotiates the actual retained preconnected owner; it performs no replacement dial or admission.
+    async fn negotiate(
+        &mut self,
+        mut reader: impl FrameRead,
+        frames: FrameQueue,
+        claims: RawClientData,
+        client_cache: bool,
+        authentication: Option<protocol::NativeAuthentication>,
+        deadline: Instant,
+    ) -> io::Result<()> {
         upstream::current(&self.lease, deadline)?;
         let Some(Socket::Connecting(socket)) = self.socket.as_mut() else {
             unreachable!("actual preconnected owner")
         };
         let negotiated = tokio::time::timeout_at(
             deadline.into(),
-            socket.negotiate(claims, request.client_cache, authentication),
+            socket.negotiate(claims, client_cache, authentication),
         )
         .await;
         if let Err(error) = negotiated
@@ -337,3 +358,6 @@ fn current(lease: &PlayLease, deadline: Option<Instant>) -> io::Result<()> {
         None => lease.current(),
     }
 }
+
+#[cfg(test)]
+mod tests;
