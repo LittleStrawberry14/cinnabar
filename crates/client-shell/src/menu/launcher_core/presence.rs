@@ -31,6 +31,14 @@ impl LauncherCoreSlot {
         if self.retirement_blocked {
             return false;
         }
+        if self
+            .presence_lifetime
+            .as_ref()
+            .is_some_and(|life| life.retirement_requested())
+            && !self.retire_presence()
+        {
+            return false;
+        }
         let Some(retiring) = &self.retiring else {
             return true;
         };
@@ -46,6 +54,30 @@ impl LauncherCoreSlot {
             bevy::log::warn!("account core exit is unconfirmed; replacement remains blocked");
         }
         !self.retirement_blocked
+    }
+
+    /// Finishes the original publisher before stopping its core or changing selected credentials.
+    /// A failed removal or lost worker permanently holds this slot; it never resets authority.
+    pub(super) fn retire_presence(&mut self) -> bool {
+        use launcher_host::launcher_account::TitlePresenceRetirement;
+        let Some(lifetime) = &self.presence_lifetime else {
+            return true;
+        };
+        lifetime.retire();
+        match lifetime.retirement() {
+            None => false,
+            Some(TitlePresenceRetirement::Complete) => {
+                self.presence_lifetime = None;
+                true
+            }
+            Some(TitlePresenceRetirement::Unconfirmed) => {
+                self.retirement_blocked = true;
+                bevy::log::warn!(
+                    "native title presence cleanup unconfirmed; account replacement remains blocked"
+                );
+                false
+            }
+        }
     }
 
     /// Runs the existing stop reaper, allowing a credential mutation only after confirmed exit.

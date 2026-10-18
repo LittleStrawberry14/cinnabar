@@ -9,6 +9,7 @@ mod messaging;
 mod metadata;
 mod operation;
 mod prepare;
+pub(crate) mod presence;
 mod provider;
 mod realms;
 mod restore;

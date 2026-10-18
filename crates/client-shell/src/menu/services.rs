@@ -15,6 +15,12 @@ impl MenuRuntime {
         mut local_worlds: Option<&mut crate::local_worlds::LocalWorlds>,
     ) {
         if let Some(mut slot) = launcher {
+            #[cfg(feature = "native-networking")]
+            slot.set_title_presence_owner(if self.native_sign_in {
+                launcher_host::launcher_core::TitlePresenceOwner::Native
+            } else {
+                launcher_host::launcher_core::TitlePresenceOwner::Core
+            });
             // Remote direct sessions have a separate game core. Local worlds use the
             // account core, so sign-in must not restart it during local play.
             let idle = launcher_core::account_core_idle(

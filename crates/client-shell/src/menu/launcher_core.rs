@@ -54,6 +54,7 @@ pub struct LauncherCoreSlot {
     retirement_blocked: bool,
     last_retirement: Option<CoreStopOutcome>,
     title_presence_owner: TitlePresenceOwner,
+    presence_lifetime: Option<launcher_host::launcher_account::TitlePresenceLifetime>,
     /// Paces restarts of a core that exits on its own.
     backoff: RestartBackoff,
     /// When the current core was spawned, by the `now` that spawned it.
@@ -104,6 +105,7 @@ impl LauncherCoreSlot {
                 }
             }
             self.retire(commands, menu, worlds.as_deref_mut());
+            return;
         }
         if self.core.is_none() && std::mem::take(&mut menu.feeds.profile_refresh_requested) {
             self.failed = None;
@@ -117,6 +119,9 @@ impl LauncherCoreSlot {
                 .as_ref()
                 .is_none_or(|p| p.cleanup_complete())
         {
+            if !self.retire_presence() {
+                return;
+            }
             let job = menu.account_operation_job();
             if let Some(old) = self.core.take() {
                 commands.remove_resource::<LauncherAccount>();
@@ -147,6 +152,9 @@ impl LauncherCoreSlot {
                 .as_ref()
                 .is_some_and(|core| core.auth_cache != auth_cache);
             if path_changed && self.core.is_some() && menu.accounts.pending_ready {
+                if !self.retire_presence() {
+                    return;
+                }
                 let old = self.core.take().expect("account core");
                 commands.remove_resource::<LauncherAccount>();
                 menu.close_realm_membership();
@@ -169,6 +177,9 @@ impl LauncherCoreSlot {
                 && restart_due
             {
                 if self.core.is_some() {
+                    if !self.retire_presence() {
+                        return;
+                    }
                     let old = self.core.take().expect("account core");
                     self.detach_clients(commands, menu, worlds.as_deref_mut());
                     self.begin_retirement(old, || {});
@@ -202,12 +213,30 @@ impl LauncherCoreSlot {
             && bridge_endpoint_exists(&core.socket_dir)
         {
             core.attached = true;
-            commands.insert_resource(LauncherAccount(
+            #[cfg(feature = "native-networking")]
+            let account = if core.title_presence_owner == TitlePresenceOwner::Native {
+                let native = core
+                    .auth_cache
+                    .clone()
+                    .map(|path| menu.native_account_for(path));
+                launcher_host::launcher_account::LauncherAccount::with_native_presence(
+                    core.socket_dir.clone(),
+                    menu.layout.launcher_artwork_dir(),
+                    native,
+                )
+            } else {
                 launcher_host::launcher_account::LauncherAccount::new(
                     core.socket_dir.clone(),
                     menu.layout.launcher_artwork_dir(),
-                ),
-            ));
+                )
+            };
+            #[cfg(not(feature = "native-networking"))]
+            let account = launcher_host::launcher_account::LauncherAccount::new(
+                core.socket_dir.clone(),
+                menu.layout.launcher_artwork_dir(),
+            );
+            self.presence_lifetime = Some(account.title_presence_lifetime());
+            commands.insert_resource(LauncherAccount(account));
             if let Some(worlds) = worlds
                 && let Err(error) = worlds.attach(core.socket_dir.clone(), &menu.layout)
             {
@@ -222,6 +251,9 @@ impl LauncherCoreSlot {
         menu: &mut MenuRuntime,
         worlds: Option<&mut LocalWorlds>,
     ) {
+        if let Some(lifetime) = &self.presence_lifetime {
+            lifetime.retire();
+        }
         if let Some(old) = self.core.take() {
             drop(old);
             self.last_retirement = Some(CoreStopOutcome::ExitedAfterGracefulClose);

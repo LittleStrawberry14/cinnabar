@@ -193,6 +193,8 @@ const (
 	CinnabarAPIPingIntervalMS = 30000
 	// CinnabarAPIReconnectMaxMS: Fallback reconnect backoff cap.
 	CinnabarAPIReconnectMaxMS = 300000
+	// PresenceTitleID: Android authentication title used to derive the title presence service configuration.
+	PresenceTitleID = 1739947436
 	// PresenceGameModeSurvival: Xbox presence game mode for survival.
 	PresenceGameModeSurvival = 0
 	// PresenceGameModeCreative: Xbox presence game mode for creative.
