@@ -32,19 +32,24 @@ fn native_saved_account_failure_and_timeout_return_to_the_menu() {
     assert!(menu.take_join_intent().unwrap().auth_cache.is_none());
 }
 
-/// A verified native direct join does not depend on an unrelated Go account core becoming ready.
+/// Verified native direct and Realm joins do not wait for an unrelated Go account core.
 #[test]
-fn verified_native_direct_join_does_not_wait_for_the_account_core() {
-    let mut menu = MenuRuntime::new(true, 2, "Synthetic".into()).with_native_sign_in(true);
-    menu.auth_process = Some(native_state(AuthState::Authenticated));
-    menu.auth_attempted = true;
-    menu.feeds.account_active_id = Some("123".into());
-    menu.account_core = Some(super::super::launcher_core::AccountCore::default());
-    menu.request_connect("synthetic.example:19132".into());
-    menu.intents.join_sign_in_deadline =
-        Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
-    let intent = menu
-        .take_join_intent()
-        .expect("native readiness does not use the Go core");
-    assert_eq!(intent.auth_cache, Some(menu.layout.auth_cache()));
+fn verified_native_join_does_not_wait_for_the_account_core() {
+    for target in [
+        "synthetic.example:19132".into(),
+        format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
+    ] {
+        let mut menu = MenuRuntime::new(true, 2, "Synthetic".into()).with_native_sign_in(true);
+        menu.auth_process = Some(native_state(AuthState::Authenticated));
+        menu.auth_attempted = true;
+        menu.feeds.account_active_id = Some("123".into());
+        menu.account_core = Some(super::super::launcher_core::AccountCore::default());
+        menu.request_connect(target);
+        menu.intents.join_sign_in_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
+        let intent = menu
+            .take_join_intent()
+            .expect("native readiness does not use the Go core");
+        assert_eq!(intent.auth_cache, Some(menu.layout.auth_cache()));
+    }
 }

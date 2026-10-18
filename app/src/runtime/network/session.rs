@@ -46,16 +46,30 @@ pub fn spawn_network(
     config: NetworkConfig,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
     let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
+    #[cfg(feature = "native-networking")]
+    if matches!(&config.endpoint, protocol::SessionEndpoint::Native(target)
+        if launcher_host::native_account::is_realm_target(&target.address))
+        && config.native_account.is_none()
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "joining a Realm requires a verified native account",
+        ));
+    }
     let player_skin = config.player_skin.to_client_skin();
     #[cfg(feature = "native-networking")]
-    let native_authentication = if let Some(account) = config.native_account {
+    let native_preparation = if let Some(account) = config.native_account {
         if !matches!(&config.endpoint, protocol::SessionEndpoint::Native(target) if target.transport == protocol::NativeTransport::RakNet)
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "authenticated native joins currently require direct RakNet",
+                "authenticated native joins currently require RakNet",
             ));
         }
+        let protocol::SessionEndpoint::Native(target) = &config.endpoint else {
+            unreachable!("checked native endpoint")
+        };
+        let target = target.clone();
         let skin = player_skin.clone();
         let settings = config.login_settings.clone();
         let display_name = config.display_name.clone();
@@ -67,9 +81,10 @@ pub fn spawn_network(
                 Some(&skin),
                 &settings,
             );
-            account.prepare(claims, client_random_id).await
-        })
-            as client_session::NativeAuthenticationPreparation)
+            account
+                .prepare_connection(target, claims, client_random_id)
+                .await
+        }) as client_session::NativeConnectionPreparation)
     } else {
         None
     };
@@ -85,7 +100,7 @@ pub fn spawn_network(
             session_generation: config.session_generation,
             endpoint: config.endpoint,
             #[cfg(feature = "native-networking")]
-            native_authentication,
+            native_preparation,
             display_name: config.display_name,
             client_random_id: config.client_random_id,
             client_blob_cache: config.client_blob_cache,

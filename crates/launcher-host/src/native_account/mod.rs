@@ -1,6 +1,10 @@
 //! Selected native account ownership and connection preparation on the caller's async runtime.
 
 mod metadata;
+mod realms;
+mod realms_worker;
+pub use realms::{RealmListing, is_realm_target};
+pub use realms_worker::RealmsWorker;
 
 use bedrock_services::{
     minecraft,
@@ -119,47 +123,21 @@ impl NativeAccount {
     /// Serializes one acquisition, adopting a different process's current OAuth revision before HTTP.
     async fn prepare_inner(
         self: Arc<Self>,
-        mut claims: Value,
+        claims: Value,
         random_id: protocol::ClientRandomId,
     ) -> io::Result<protocol::NativeAuthentication> {
         let mut operation = Arc::clone(&self).acquire_verified().await?;
-        if matches!(
-            operation.cached.as_ref().expect("account owner").owner,
-            Owner::Xbox(_)
-        ) {
-            let identity = operation
-                .cached
-                .as_ref()
-                .expect("account owner")
-                .identity
-                .as_ref()
-                .expect("verified identity");
-            let version = u32::try_from(protocol::PROTOCOL_VERSION)
-                .map_err(|_| io::Error::other("invalid application protocol version"))?;
-            let config = minecraft::Config::desktop(
-                protocol::GAME_VERSION,
-                version,
-                metadata::service_device_id(&identity.xuid)?,
-            );
-            operation.persist()?;
-            let Cached {
-                generation,
-                binding,
-                owner,
-                identity,
-            } = operation.cached.take().expect("account owner");
-            let Owner::Xbox(account) = owner else {
-                unreachable!("checked Xbox owner")
-            };
-            let services = minecraft::Minecraft::new(*account, config).map_err(service_error)?;
-            operation.cached = Some(Cached {
-                generation,
-                binding,
-                owner: Owner::Minecraft(Box::new(services)),
-                identity,
-            });
-            operation.published = false;
-        }
+        operation.promote()?;
+        self.prepare_owned(operation, claims, random_id).await
+    }
+
+    /// Mints the final connection key without releasing or replacing the acquired service owner.
+    async fn prepare_owned(
+        &self,
+        mut operation: Operation,
+        mut claims: Value,
+        random_id: protocol::ClientRandomId,
+    ) -> io::Result<protocol::NativeAuthentication> {
         let fresh = serde_json::to_vec(&metadata::DeviceProfile::fresh())
             .map_err(|_| io::Error::other("serialize native device profile"))?;
         let profile = loop {
@@ -433,6 +411,48 @@ impl Operation {
             gamertag: gamertag.to_owned(),
             current_credential: true,
         });
+        Ok(())
+    }
+
+    /// Creates Minecraft services once, retaining proof, credentials and Session-Id for borrowed service calls.
+    fn promote(&mut self) -> io::Result<()> {
+        if matches!(
+            self.cached.as_ref().expect("account owner").owner,
+            Owner::Xbox(_)
+        ) {
+            let identity = self
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity");
+            let version = u32::try_from(protocol::PROTOCOL_VERSION)
+                .map_err(|_| io::Error::other("invalid application protocol version"))?;
+            let config = minecraft::Config::desktop(
+                protocol::GAME_VERSION,
+                version,
+                metadata::service_device_id(&identity.xuid)?,
+            );
+            self.persist()?;
+            let Cached {
+                generation,
+                binding,
+                owner,
+                identity,
+            } = self.cached.take().expect("account owner");
+            let Owner::Xbox(account) = owner else {
+                unreachable!("checked Xbox owner")
+            };
+            let services = minecraft::Minecraft::new(*account, config).map_err(service_error)?;
+            self.cached = Some(Cached {
+                generation,
+                binding,
+                owner: Owner::Minecraft(Box::new(services)),
+                identity,
+            });
+            self.published = false;
+        }
         Ok(())
     }
 

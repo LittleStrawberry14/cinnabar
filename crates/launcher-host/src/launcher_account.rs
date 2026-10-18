@@ -23,6 +23,7 @@ use launcher::menu::view::{
     ServerDetails, ServerTrustPrompt,
 };
 use launcher::menu::{
+    CATALOG_REFRESH_INTERVAL,
     auth::AuthState,
     view::{MenuFriendCard, MenuRealmCard, MenuServerCard},
 };
@@ -49,8 +50,6 @@ mod profile_polling_tests;
 const EVENT_INTERVAL: Duration = Duration::from_secs(1);
 /// How often events refresh while a join is under way, so its progress bar moves smoothly.
 const JOIN_EVENT_INTERVAL: Duration = Duration::from_millis(250);
-/// How often the catalog lists refresh (they can take tens of seconds).
-const CATALOG_INTERVAL: Duration = Duration::from_secs(30);
 /// How often the screen feeds are read; the core answers from its catalog cache
 /// and refreshes upstream on its own schedule, so this only picks up fresh data.
 const FEED_INTERVAL: Duration = Duration::from_secs(30);
@@ -84,6 +83,8 @@ struct Snapshot {
     realms: Option<Vec<Realm>>,
     /// Prevents a catalog request started before acceptance from removing the new membership.
     realm_catalog_revision: u64,
+    /// Native mode owns this feed; friends and other account services remain enabled.
+    native_realms: bool,
     friends: Option<Vec<Friend>>,
     /// Delivered once per fetch.
     featured: Option<Vec<FeaturedServer>>,
@@ -217,6 +218,17 @@ impl LauncherAccount {
         }
     }
 
+    /// Retires Go Realms results and polling when the native menu owns discovery.
+    pub fn set_native_realms(&self, native: bool) {
+        self.with(|snapshot| {
+            if snapshot.native_realms != native {
+                snapshot.native_realms = native;
+                snapshot.realm_catalog_revision = snapshot.realm_catalog_revision.wrapping_add(1);
+                snapshot.realms = None;
+            }
+        });
+    }
+
     /// Publishes the newest committed world activity for the control worker.
     pub fn set_xbox_presence(&self, state: bridge::XboxPresenceState) {
         publish(&self.snapshot, |snapshot| snapshot.xbox_presence = state);
@@ -332,7 +344,7 @@ fn wait_catalog(stop: &Receiver<()>, changes: &Receiver<()>) -> bool {
     crossbeam_channel::select! {
         recv(stop) -> _ => false,
         recv(changes) -> result => result.is_ok(),
-        default(CATALOG_INTERVAL) => true,
+        default(CATALOG_REFRESH_INTERVAL) => true,
     }
 }
 

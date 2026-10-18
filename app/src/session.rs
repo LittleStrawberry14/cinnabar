@@ -95,13 +95,12 @@ impl SessionController {
         }
     }
 
-    /// Local worlds and service-resolved destinations retain their existing provisioning owner.
+    /// Local worlds and friend destinations retain their existing provisioning owner.
     fn native_direct_enabled(&self, address: &str, local_world: bool) -> bool {
         #[cfg(feature = "native-networking")]
         {
             self.native_transport.is_some()
                 && !local_world
-                && !address.starts_with(bridge::contract::REALM_TARGET_PREFIX)
                 && !address.starts_with(bridge::contract::FRIEND_TARGET_PREFIX)
         }
         #[cfg(not(feature = "native-networking"))]
@@ -224,8 +223,17 @@ impl SessionController {
             .native_transport
             .filter(|_| self.native_direct_enabled(address, self.local_world))
         {
+            let realm = launcher_host::native_account::is_realm_target(address);
+            if realm && auth_cache.is_none() {
+                return Err("Joining a Realm requires a verified native account.".into());
+            }
+            let transport = if realm {
+                protocol::NativeTransport::RakNet
+            } else {
+                transport
+            };
             if auth_cache.is_some() && transport != protocol::NativeTransport::RakNet {
-                return Err("Authenticated native joins currently require direct RakNet.".into());
+                return Err("Authenticated native joins currently require RakNet.".into());
             }
             return Ok(JoinStage::Native(protocol::NativeConnectionTarget {
                 address: address.to_owned(),

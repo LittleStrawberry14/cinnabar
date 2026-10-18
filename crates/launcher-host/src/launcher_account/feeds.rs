@@ -174,15 +174,18 @@ pub(super) async fn catalog_round(
     shared: &Mutex<Snapshot>,
     generation: u64,
 ) {
-    let revision = shared
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .realm_catalog_revision;
+    let (revision, native_realms) = {
+        let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+        (snapshot.realm_catalog_revision, snapshot.native_realms)
+    };
     tokio::join!(
         async {
+            if native_realms {
+                return;
+            }
             if let Ok(realms) = source.realms().await {
                 publish_account(shared, generation, |snapshot| {
-                    if snapshot.realm_catalog_revision == revision {
+                    if !snapshot.native_realms && snapshot.realm_catalog_revision == revision {
                         snapshot.realms = Some(realms);
                     }
                 });
@@ -399,5 +402,28 @@ mod tests {
         assert!(wait_changes(&stop, &changes, super::super::FEED_INTERVAL));
         drop(alive);
         assert!(!wait_changes(&stop, &changes, super::super::FEED_INTERVAL));
+    }
+    /// Opt-in native ownership retires an in-flight Go list and suppresses later requests while friends continue.
+    #[test]
+    fn native_realms_retire_go_results_without_disabling_friends() {
+        let feeds = GatedFeeds::default();
+        let shared = Mutex::new(Snapshot::default());
+        let mut before = pin!(catalog_round(&feeds, &shared, 0));
+        assert!(poll(before.as_mut()).is_pending());
+        assert_eq!(feeds.started.load(Ordering::SeqCst), 2);
+        shared.lock().unwrap().native_realms = true;
+        feeds.realms.notify_one();
+        feeds.friends.notify_one();
+        assert!(poll(before.as_mut()).is_ready());
+        assert_eq!(published(&shared), [false, false, false, true]);
+        let mut after = pin!(catalog_round(&feeds, &shared, 0));
+        assert!(poll(after.as_mut()).is_pending());
+        assert_eq!(
+            feeds.started.load(Ordering::SeqCst),
+            3,
+            "native mode requested another Go Realms list"
+        );
+        feeds.friends.notify_one();
+        assert!(poll(after.as_mut()).is_ready());
     }
 }

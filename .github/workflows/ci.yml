@@ -218,12 +218,14 @@ jobs:
             cargo clippy -p cinnabar --features reports --tests --locked -- -D warnings
             cargo clippy -p cinnabar --features native-networking --all-targets --locked -- -D warnings
           fi
-      - name: Test native connection state
+      - name: Test native connection and account state
         if: ${{ !cancelled() && (env.FULL == 'true' || contains(format(' {0} ', env.AFFECTED), ' protocol ') || contains(format(' {0} ', env.AFFECTED), ' cinnabar ')) }}
         run: |
           cargo test -p protocol --features native-networking --lib --locked -- session_transport
           cargo test -p protocol --features native-networking --lib --locked -- login::outbound
           cargo test -p protocol --features native-networking --lib --locked -- login::native_network
+          cargo test -p launcher-host --features native-networking --lib --locked -- native
+          cargo test -p client-shell --features native-networking --lib --locked -- native
       - name: Test developer control adapters
         if: ${{ !cancelled() && (env.FULL == 'true' || contains(format(' {0} ', env.AFFECTED), ' cinnabar ')) }}
         run: cargo test -p cinnabar --features developer-control --lib --locked -- developer_control

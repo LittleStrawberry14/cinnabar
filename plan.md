@@ -21,13 +21,24 @@ profile metadata under its selected generation lease. Cancellation cannot promot
 an unverified identity or erase a newer pending attempt. A failed or expired native
 saved-account check stops the requested join with an authentication error; it does
 not downgrade the join to signed-out identity. Explicit signed-out joins remain
-available. Direct native joins do not await an unrelated Go account-core readiness check.
+available. Native direct and Realm joins do not await an unrelated Go account-core
+readiness check.
 
-Hosted Xbox profile creation, persistent derived-token reuse, service-resolved joins,
-signed NetherNet signaling, hosting, browser transport and the broader account,
-network/device and performance acceptance matrix remain incomplete. Native sign-in
-HTTP/UI acceptance remains open. No parity gate closes and the working Go backend
-remains required during validation.
+Native Realms discovery projects the existing menu cards from a selected-account
+worker. It fences old account/credential revisions and Go Realms replies, while
+leaving unrelated Go feeds available. A click cancels listing before connection
+acquisition; Realm resolution and final key mint retain the same native Minecraft,
+proof and Session-Id owner. Service pending responses retry within the existing
+resolution bound, and the resolved endpoint moves with the authentication handoff.
+Default/RakNet addresses preserve IPv6 text; advertised authenticated NetherNet and
+unknown protocols fail explicitly. Realm-code resolution previews without accepting
+membership. The existing invitation acceptance controller remains Go-owned.
+
+Hosted Xbox profile creation, persistent derived-token reuse, friend and remaining
+service joins, signed NetherNet signaling, hosting, browser transport and the broader
+account, network/device and performance acceptance matrix remain incomplete. Native
+sign-in and Realms HTTP/UI acceptance remain open. No parity gate closes and the
+working Go backend remains required during validation.
 
 ## Custom block and item texture inheritance
 

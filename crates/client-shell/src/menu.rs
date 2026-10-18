@@ -29,6 +29,8 @@ pub use join_requests::open_join_requests_from_key;
 pub mod launcher_account;
 mod launcher_core;
 mod minecraft_import;
+#[cfg(feature = "native-networking")]
+mod native_realms;
 mod navigation;
 mod presence_targets;
 mod reconnect;
@@ -146,6 +148,8 @@ pub struct MenuRuntime {
     catalog_art: Option<launcher_host::catalog_art::CatalogArt>,
     auth_process: Option<AuthSupervisor>,
     native_sign_in: bool,
+    #[cfg(feature = "native-networking")]
+    native_realms: native_realms::Controller,
     auth_attempted: bool,
     auth_restart_requested: bool,
     /// The account core a held join may still use; `None` when it cannot start for the join.
@@ -593,6 +597,8 @@ impl MenuRuntime {
                 self.focused = 0;
             }
             MenuAction::RefreshCatalog => {
+                #[cfg(feature = "native-networking")]
+                self.native_realms.refresh();
                 self.stop_catalog();
                 self.catalog_started = false;
                 self.catalog_message = None;

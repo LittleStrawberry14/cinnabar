@@ -36,7 +36,7 @@ pub struct NetworkConfig {
     pub endpoint: protocol::SessionEndpoint,
     /// One application-owned acquisition future, polled on this session's runtime and cancelled with it.
     #[cfg(feature = "native-networking")]
-    pub native_authentication: Option<NativeAuthenticationPreparation>,
+    pub native_preparation: Option<NativeConnectionPreparation>,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -50,12 +50,19 @@ pub struct NetworkConfig {
     pub packet_capture: Option<packet_log::PacketCaptureRequest>,
 }
 
-/// A one-shot application preparation that moves its connection proof into Login.
+/// One application-owned preparation that resolves its endpoint and moves the connection proof into Login.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub type NativeAuthenticationPreparation = std::pin::Pin<
+pub type NativeConnectionPreparation = std::pin::Pin<
     Box<
-        dyn std::future::Future<Output = Result<protocol::NativeAuthentication, std::io::Error>>
-            + Send,
+        dyn std::future::Future<
+                Output = Result<
+                    (
+                        protocol::NativeConnectionTarget,
+                        protocol::NativeAuthentication,
+                    ),
+                    std::io::Error,
+                >,
+            > + Send,
     >,
 >;
 
