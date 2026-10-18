@@ -55,6 +55,7 @@ fn cancelling_after_oauth_rotation_persists_before_releasing_the_lease() {
         provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
+        checkpoint_revision: lease.checkpoint_revision(),
         owner: Owner::Xbox(Box::new(sdk)),
         identity: None,
     });
@@ -137,6 +138,7 @@ fn unverified_rotation_does_not_overwrite_a_selected_saved_account() {
             provider: None,
             generation: lease.generation().into(),
             binding: lease.binding(),
+            checkpoint_revision: lease.checkpoint_revision(),
             owner: Owner::Xbox(Box::new(sdk)),
             identity: None,
         });
@@ -229,6 +231,7 @@ fn oversized_access_does_not_poison_go_fallback_or_lose_the_rotated_refresh() {
         provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
+        checkpoint_revision: lease.checkpoint_revision(),
         owner: Owner::Xbox(Box::new(sdk)),
         identity: None,
     });
@@ -275,6 +278,7 @@ fn changed_xuid_cannot_reuse_a_service_session_without_a_selected_account() {
         provider: None,
         generation: lease.generation().into(),
         binding: lease.binding(),
+        checkpoint_revision: lease.checkpoint_revision(),
         owner: Owner::Minecraft(Box::new(services)),
         identity: Some(AccountIdentity {
             xuid: "123".into(),
@@ -320,4 +324,102 @@ fn changed_xuid_cannot_reuse_a_service_session_without_a_selected_account() {
     let lease = account.store.try_native_lease().unwrap();
     assert_eq!(lease.refresh_token(), "current-b-refresh");
     assert!(lease.checkpoint().unwrap().is_some());
+}
+
+/// A live process cannot republish its older cache after another lease persisted an eviction.
+#[test]
+fn stale_checkpoint_owner_cannot_undo_another_processes_rejection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-oauth.json");
+    seed(&path, "one-generation");
+    let account = Arc::new(NativeAccount::new(
+        AccountStore::new(path),
+        directory.path().join("device.json"),
+        None,
+    ));
+    let sdk = MicrosoftAuth::new(authentication_policy())
+        .unwrap()
+        .into_account(
+            Credentials::from_tokens(
+                authentication_policy().client_id,
+                "before-access".into(),
+                "before-refresh".into(),
+                UNIX_EPOCH + Duration::from_secs(4_000_000_000),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut lease = account.store.try_native_lease().unwrap();
+    lease
+        .publish_active_checkpoint(sdk.checkpoint().unwrap().as_bytes())
+        .unwrap();
+    let stale_binding = lease.binding();
+    let stale_checkpoint_revision = lease.checkpoint_revision();
+    drop(lease);
+    account
+        .store
+        .try_native_lease()
+        .unwrap()
+        .publish_active_checkpoint(b"new-checkpoint-with-refused-issuance-removed")
+        .unwrap();
+
+    let mut operation = account.begin().unwrap();
+    operation.cached = Some(Cached {
+        generation: "one-generation".into(),
+        binding: stale_binding,
+        checkpoint_revision: stale_checkpoint_revision,
+        owner: Owner::Xbox(Box::new(sdk)),
+        identity: None,
+    });
+    operation.lease = Some(account.store.try_native_lease().unwrap());
+    assert_eq!(
+        operation.persist().unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    drop(operation);
+    assert!(account.state.lock().unwrap().cached.is_none());
+    let lease = account.store.try_native_lease().unwrap();
+    assert_eq!(lease.refresh_token(), "before-refresh");
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        b"new-checkpoint-with-refused-issuance-removed"
+    );
+}
+
+/// A checkpoint cannot roll back protected OAuth, and conservative fallback retains its proof key.
+#[test]
+fn restore_keeps_the_proof_but_adopts_only_the_current_protected_refresh() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-oauth.json");
+    seed(&path, "one-generation");
+    let store = AccountStore::new(path);
+    let mut lease = store.try_native_lease().unwrap();
+    lease
+        .publish_oauth("current-access", "current-refresh", "2099-01-01T00:00:00Z")
+        .unwrap();
+    let mut original = MicrosoftAuth::new(authentication_policy())
+        .unwrap()
+        .into_account(
+            Credentials::from_tokens(
+                authentication_policy().client_id,
+                "old-access".into(),
+                "old-refresh".into(),
+                UNIX_EPOCH + Duration::from_secs(4_000_000_000),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    lease
+        .publish_active_checkpoint(original.checkpoint().unwrap().as_bytes())
+        .unwrap();
+    let restored = restore::restore_account(&lease, &authentication_policy()).unwrap();
+    assert_eq!(restored.credentials().access_token(), "");
+    assert_eq!(restored.credentials().refresh_token(), "current-refresh");
+    original
+        .replace_credentials(import_credentials(&lease, &authentication_policy()).unwrap())
+        .unwrap();
+    assert_eq!(
+        restored.checkpoint().unwrap().as_bytes(),
+        original.checkpoint().unwrap().as_bytes()
+    );
 }

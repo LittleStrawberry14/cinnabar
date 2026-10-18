@@ -20,11 +20,16 @@ impl NativeAccount {
                 &identity.gamertag,
             )?;
             operation.persist()?;
-            operation
+            let profile = operation
                 .lease
                 .as_mut()
                 .expect("acquired lease")
-                .remember_verified_profile(&profile)
+                .remember_verified_profile(&profile)?;
+            let lease = operation.lease.as_ref().expect("acquired lease");
+            let cached = operation.cached.as_mut().expect("account owner");
+            cached.binding = lease.binding();
+            cached.checkpoint_revision = lease.checkpoint_revision();
+            Ok(profile)
         })
         .await
         .map_err(|_| {
@@ -85,26 +90,23 @@ impl NativeAccount {
             // A new explicit join may use the new sign-in, but no credential from the retired owner survives.
             operation.cached = None;
         }
-        if operation.cached.is_none() {
-            let auth = MicrosoftAuth::new(policy.clone()).map_err(service_error)?;
-            let mut account = match lease.checkpoint()? {
-                Some(bytes) => auth
-                    .restore_account(xbox::Checkpoint::from_bytes(bytes).map_err(service_error)?)
-                    .map_err(service_error)?,
-                None => auth
-                    .into_account(import_credentials(lease, &policy)?)
-                    .map_err(service_error)?,
-            };
-            // A checkpoint can precede an OAuth publication. Never refresh its older credential.
-            account
-                .replace_credentials(import_credentials(lease, &policy)?)
-                .map_err(service_error)?;
+        if operation
+            .cached
+            .as_ref()
+            .is_none_or(|cached| cached.checkpoint_revision != lease.checkpoint_revision())
+        {
+            let mut identity = operation.cached.take().and_then(|cached| cached.identity);
+            if let Some(identity) = &mut identity {
+                identity.current_credential = false;
+            }
+            let account = restore::restore_account(lease, &policy)?;
             operation.cached = Some(Cached {
                 provider: None,
                 generation: lease.generation().to_owned(),
                 binding: lease.binding(),
+                checkpoint_revision: lease.checkpoint_revision(),
                 owner: Owner::Xbox(Box::new(account)),
-                identity: None,
+                identity,
             });
         } else if let Some(cached) = operation.cached.as_mut()
             && cached.binding != lease.binding()
@@ -140,6 +142,7 @@ impl NativeAccount {
             .as_ref()
             .is_none_or(|identity| !identity.current_credential)
         {
+            operation.rearm()?;
             let authorization = operation
                 .cached
                 .as_mut()

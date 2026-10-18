@@ -150,6 +150,7 @@ impl Operation {
             let Cached {
                 generation,
                 binding,
+                checkpoint_revision,
                 owner,
                 identity,
                 provider,
@@ -161,6 +162,7 @@ impl Operation {
             self.cached = Some(Cached {
                 generation,
                 binding,
+                checkpoint_revision,
                 owner: Owner::Minecraft(Box::new(services)),
                 identity,
                 provider,

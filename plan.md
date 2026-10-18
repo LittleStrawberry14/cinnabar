@@ -29,6 +29,14 @@ not downgrade the join to signed-out identity. Explicit signed-out joins remain
 available. Native direct and Realm joins do not await an unrelated Go account-core
 readiness check.
 
+Native protected checkpoints now bind the selected account, exact OAuth record and
+opaque SDK snapshot revision. Credential dispatch suppresses persisted cache reuse
+until final publication, including the saved-account backup; proof and authoritative
+refresh survive cancellation or failed writes. A changed checkpoint rebuilds the SDK
+owner and revalidates its XUID. Restored optional state still requires the SDK's fresh
+NSAL policy/time admission. Final SDK revision binding and executable validation of
+this application integration remain pending; broader derived-service reuse stays open.
+
 Native Realms and friend-world discovery project the existing menu cards from one
 selected-account worker. It fences old account/credential revisions and Go catalog
 replies, while leaving unrelated Go feeds available. A click cancels listing before connection

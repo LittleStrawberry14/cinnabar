@@ -9,6 +9,7 @@ mod operation;
 mod prepare;
 mod provider;
 mod realms;
+mod restore;
 pub use catalog::{CatalogCards, CatalogListing};
 pub use catalog_worker::CatalogWorker;
 pub use realms::is_realm_target;
@@ -54,6 +55,7 @@ struct State {
 struct Cached {
     generation: String,
     binding: [u8; 32],
+    checkpoint_revision: [u8; 32],
     owner: Owner,
     identity: Option<AccountIdentity>,
     provider: Option<provider::Provider>,
@@ -91,6 +93,7 @@ struct Operation {
     lease: Option<NativeLease>,
     published: bool,
     rejected: bool,
+    suppressed: bool,
 }
 
 impl NativeAccount {
@@ -123,6 +126,7 @@ impl NativeAccount {
             lease: None,
             published: false,
             rejected: false,
+            suppressed: false,
         })
     }
 }
