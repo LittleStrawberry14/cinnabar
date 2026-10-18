@@ -8,10 +8,9 @@ publish = false
 autotests = false
 
 [package.metadata.cinnabar]
-platform-specific = ["windows"]
+platform-specific = ["windows", "macos"]
 reads = [
     "core/go.mod",
-    "crates/protocol/data/builtin-packs.json",
     "assets/bedrock-target.json",
     "assets/block-data-sources.json",
     "crates/protocol-ids/data/protocol-ids.json",

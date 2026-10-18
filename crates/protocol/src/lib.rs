@@ -50,9 +50,8 @@ pub use experience::{
 };
 
 pub use credits::{ShowCreditsEvent, credits_finished_packet};
-pub use emote::emote_packet;
-
 pub use dimension::{LoadingScreenPhase, dimension_change_done_packet, loading_screen_packet};
+pub use emote::emote_packet;
 
 pub use actor::{
     ACTOR_DATA_ID_FLAGS_THIRD, ActorAttribute, ActorAttributeModifier, ActorAttributesUpdateEvent,
