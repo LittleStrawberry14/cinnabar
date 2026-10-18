@@ -2,8 +2,7 @@
 
 use super::{account::Account, bearer::Bearer};
 use bridge::{Account as Observation, AuthState, contract::*, relay_control::Capability};
-use protocol::{ClientRandomId, NativeDeviceProfile};
-use serde_json::Value;
+use protocol::{NativeDeviceProfile, RawClientData};
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -208,11 +207,11 @@ impl Session {
     /// Applies the same in-memory device profile to a signed-out gateway request.
     pub(super) fn guest_claims(
         &self,
-        claims: &mut Value,
-        random_id: ClientRandomId,
+        claims: &mut RawClientData,
+        random_id: i64,
         name: &str,
     ) -> io::Result<()> {
-        self.guest.apply(claims, random_id, name)
+        self.guest.apply_relay(claims, random_id, name)
     }
 }
 

@@ -1,6 +1,7 @@
 //! Bounded provider acquisition shared by actual native account owners.
 
 use super::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
+use crate::RawClientData;
 use p384::ecdsa::SigningKey;
 use provider_http::{Client, StatusCode};
 use serde::Deserialize;
@@ -81,6 +82,39 @@ impl NativeProvider {
         client_data: &RawValue,
         xuid: &str,
     ) -> io::Result<NativeAuthentication> {
+        self.acquire_verifier(&credential).await?;
+        NativeAuthentication::new(
+            key,
+            credential,
+            client_data,
+            self.verifier.as_ref().ok_or_else(failed)?,
+            xuid,
+            Instant::now(),
+        )
+    }
+
+    /// Reuses the same provider cache and original credential while preserving relay metadata values.
+    /// The application owns full metadata validation before calling this credential qualifier.
+    pub async fn authentication_relay(
+        &mut self,
+        key: SigningKey,
+        credential: NativeCredential,
+        client_data: RawClientData,
+        xuid: &str,
+    ) -> io::Result<NativeAuthentication> {
+        self.acquire_verifier(&credential).await?;
+        NativeAuthentication::new_relay(
+            key,
+            credential,
+            client_data,
+            self.verifier.as_ref().ok_or_else(failed)?,
+            xuid,
+            Instant::now(),
+        )
+    }
+
+    /// Keeps the existing refresh decision, original credential check and HTTP owner in one place.
+    async fn acquire_verifier(&mut self, credential: &NativeCredential) -> io::Result<()> {
         credential.ensure_current(Instant::now())?;
         let unknown = match &self.verifier {
             Some(verifier) => !verifier.recognizes(credential.token())?,
@@ -95,14 +129,7 @@ impl NativeProvider {
         {
             self.refresh().await?;
         }
-        NativeAuthentication::new(
-            key,
-            credential,
-            client_data,
-            self.verifier.as_ref().ok_or_else(failed)?,
-            xuid,
-            Instant::now(),
-        )
+        Ok(())
     }
 
     /// Acquires configuration once and atomically replaces the last successful bounded key set.

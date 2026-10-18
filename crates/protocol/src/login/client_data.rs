@@ -5,6 +5,18 @@
 mod native_profile;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use native_profile::NativeDeviceProfile;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod raw;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use raw::RawClientData;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod claims;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) use claims::NativeClaims;
+
+/// Canonical identity field owned by the actual profile/provider overlay, not a downstream alias.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+const DISPLAY_NAME: &str = "ThirdPartyName";
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bedrock_protocol_1_26_51::enums::InputMode;

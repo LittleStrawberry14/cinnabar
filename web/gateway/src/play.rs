@@ -10,7 +10,7 @@ use bridge::{FrameQueue, FrameRead, contract::*};
 use bytes::Bytes;
 use futures::StreamExt;
 use protocol::{
-    ClientRandomId, NativeRelayConnecting, NativeRelayConnection, NativeRelayRetired,
+    NativeRelayConnecting, NativeRelayConnection, NativeRelayRetired, RawClientData,
     session_wire::{self, CoreMessage},
 };
 use std::{collections::VecDeque, io, sync::Arc, time::Instant};
@@ -100,22 +100,21 @@ impl Playing {
             .ok_or_else(closed)?
             .map_err(invalid)?;
         upstream::current(&self.lease, deadline)?;
-        let request = session_wire::decode_connect(&frame).map_err(invalid)?;
+        let request = session_wire::decode_native_connect(&frame).map_err(invalid)?;
         if request.protocol != protocol::PROTOCOL_VERSION
-            || request.client_data["GameVersion"].as_str() != Some(protocol::GAME_VERSION)
+            || request.client_data.game_version()?.as_deref() != Some(protocol::GAME_VERSION)
         {
             return Err(invalid(()));
         }
-        let random = request.client_data["ClientRandomId"]
-            .as_i64()
-            .and_then(ClientRandomId::new)
+        let random = request
+            .client_data
+            .random_id()?
             .ok_or_else(|| invalid(()))?;
         let mut claims = request.client_data;
-        let name = claims["ThirdPartyName"]
-            .as_str()
+        let name = claims
+            .display_name()?
             .filter(|name| !name.is_empty())
-            .ok_or_else(|| invalid(()))?
-            .to_owned();
+            .ok_or_else(|| invalid(()))?;
         self.lease
             .progress(progress(bridge::ConnectStage::Connecting))?;
         let (claims, authentication) = if let Some(account) = &mut self.lease.account {
@@ -125,7 +124,7 @@ impl Playing {
                 () = self.lease.cancel.cancelled() => return Err(closed()),
                 result = &mut preparing => result?,
             };
-            (serde_json::Value::Null, Some(authentication))
+            (RawClientData::default(), Some(authentication))
         } else {
             self.lease
                 .session

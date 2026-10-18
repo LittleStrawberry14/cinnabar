@@ -8,10 +8,9 @@ use bedrock_services::{
 use bridge::{Account as Observation, AuthState, contract::*};
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use protocol::{
-    ClientRandomId, NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
+    NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider, RawClientData,
 };
 use rand::rngs::SysRng;
-use serde_json::Value;
 use std::{
     io,
     time::{Instant, SystemTime},
@@ -110,13 +109,14 @@ impl Account {
     /// Mints on this same SDK account under the caller's original play admission deadline.
     pub(super) async fn prepare(
         &mut self,
-        mut claims: Value,
-        random_id: ClientRandomId,
+        mut claims: RawClientData,
+        random_id: i64,
         deadline: Instant,
     ) -> io::Result<NativeAuthentication> {
         tokio::time::timeout_at(deadline.into(), async {
             current(deadline)?;
-            self.profile.apply(&mut claims, random_id, &self.gamertag)?;
+            self.profile
+                .apply_relay(&mut claims, random_id, &self.gamertag)?;
             let key = SigningKey::try_generate_from_rng(&mut SysRng).map_err(failed)?;
             let token = self
                 .services
@@ -141,12 +141,11 @@ impl Account {
             if !same {
                 self.provider = Some(NativeProvider::new(issuer, minecraft::USER_AGENT)?);
             }
-            let raw = serde_json::value::to_raw_value(&claims).map_err(failed)?;
             let authentication = self
                 .provider
                 .as_mut()
                 .expect("selected provider")
-                .authentication(key, credential, &raw, &self.xuid)
+                .authentication_relay(key, credential, claims, &self.xuid)
                 .await?;
             current(deadline)?;
             Ok(authentication)

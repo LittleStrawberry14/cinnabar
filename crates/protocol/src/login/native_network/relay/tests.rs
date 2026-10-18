@@ -137,7 +137,14 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
             let random = crate::ClientRandomId::new(1).unwrap();
             let claims =
                 crate::login_client_data("Fixture", random, None, &crate::LoginSettings::default());
-            joining.negotiate(claims, false, None).await.unwrap();
+            joining
+                .negotiate(
+                    crate::RawClientData::from_value(&claims).unwrap(),
+                    false,
+                    None,
+                )
+                .await
+                .unwrap();
             let (mut connected, handoff) = joining
                 .try_finish()
                 .unwrap_or_else(|_| panic!("actual raw StartGame completed the handoff"));

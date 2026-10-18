@@ -1,5 +1,6 @@
 //! Pure device metadata shared by protected desktop and ephemeral gateway account owners.
 
+use super::{DISPLAY_NAME, RawClientData};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -71,16 +72,49 @@ impl NativeDeviceProfile {
                 "native client data must be a JSON object",
             ));
         }
-        claims["DeviceOS"] = json!(self.os);
-        claims["DeviceModel"] = json!(self.model);
-        claims["DeviceId"] = json!(self.id);
-        claims["DefaultInputMode"] = json!(TOUCH_INPUT_MODE);
-        if claims["PlatformType"].as_u64().unwrap_or_default() == 0 {
-            claims["PlatformType"] = json!(MOBILE_PLATFORM);
+        let platform_default = claims["PlatformType"].as_u64().unwrap_or_default() == 0;
+        for (name, value) in self.overlays(random_id.get(), gamertag, platform_default) {
+            claims[name] = value;
         }
-        claims["ThirdPartyName"] = json!(gamertag);
-        claims["SelfSignedId"] = json!(self_signed_id(random_id, &self.id));
         Ok(())
+    }
+
+    /// Applies the same owned device values while retaining raw relay metadata and full wire IDs.
+    /// The application must validate the original name/skin/title data before credential work.
+    pub fn apply_relay(
+        &self,
+        claims: &mut RawClientData,
+        random_id: i64,
+        gamertag: &str,
+    ) -> io::Result<()> {
+        let platform_default = claims
+            .read::<Option<i64>>("PlatformType")?
+            .flatten()
+            .unwrap_or_default()
+            == 0;
+        for (name, value) in self.overlays(random_id, gamertag, platform_default) {
+            claims.insert(name, value)?;
+        }
+        Ok(())
+    }
+
+    /// The sole device/derived identity overlay definition for both real claim representations.
+    fn overlays(
+        &self,
+        random_id: i64,
+        gamertag: &str,
+        platform_default: bool,
+    ) -> impl Iterator<Item = (&'static str, Value)> {
+        [
+            ("DeviceOS", json!(self.os)),
+            ("DeviceModel", json!(self.model)),
+            ("DeviceId", json!(self.id)),
+            ("DefaultInputMode", json!(TOUCH_INPUT_MODE)),
+            (DISPLAY_NAME, json!(gamertag)),
+            ("SelfSignedId", json!(self_signed_id(random_id, &self.id))),
+        ]
+        .into_iter()
+        .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
     }
 }
 
@@ -99,9 +133,9 @@ impl NativeDeviceProfile {
 
 /// Preserves the signed login-ID bit pattern and per-word UUID byte order.
 /// Adapted from Gophertunnel's MIT-licensed self-signed ID derivation; see THIRD_PARTY_NOTICES.md.
-fn self_signed_id(random_id: crate::ClientRandomId, device: &str) -> uuid::Uuid {
+fn self_signed_id(random_id: i64, device: &str) -> uuid::Uuid {
     let mut hash = Md5::new();
-    hash.update(random_id.get().to_le_bytes());
+    hash.update(random_id.to_le_bytes());
     hash.update(device.as_bytes());
     let mut bytes: [u8; 16] = hash.finalize().into();
     bytes[..8].reverse();
@@ -126,11 +160,7 @@ mod tests {
             (-1, "3e6f158c-edd9-3059-b123-396df53ce814"),
             (i64::MIN, "5edb9ba0-4706-3dd7-a52b-24e7790f4d98"),
         ] {
-            assert_eq!(
-                self_signed_id(crate::ClientRandomId::new(id).unwrap(), "audit-device-id")
-                    .to_string(),
-                expected
-            );
+            assert_eq!(self_signed_id(id, "audit-device-id").to_string(), expected);
         }
         let profile = NativeDeviceProfile::fresh();
         let random_id = crate::ClientRandomId::new(-7).unwrap();
@@ -147,7 +177,7 @@ mod tests {
         assert_eq!(claims["LanguageCode"], settings.language_code);
         assert_eq!(claims["SkinImageWidth"], 64);
         assert_eq!(claims["PlatformType"], MOBILE_PLATFORM);
-        let repeated = self_signed_id(random_id, &profile.id).to_string();
+        let repeated = self_signed_id(random_id.get(), &profile.id).to_string();
         assert_eq!(claims["SelfSignedId"], repeated);
         assert_eq!(
             NativeDeviceProfile::service_device_id("123")

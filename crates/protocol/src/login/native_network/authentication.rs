@@ -7,8 +7,9 @@ mod verifier;
 pub(super) use messaging::MessagingAdmission;
 pub use verifier::NativeTokenVerifier;
 
+use crate::login::client_data::{NativeClaims, RawClientData};
 use p384::ecdsa::SigningKey;
-use serde_json::{Map, Value, value::RawValue};
+use serde_json::value::RawValue;
 use std::{
     io,
     sync::Arc,
@@ -78,7 +79,7 @@ impl NativeCredential {
 pub struct NativeAuthentication {
     pub(super) key: SigningKey,
     pub(super) token: Zeroizing<String>,
-    pub(super) claims: Map<String, Value>,
+    pub(super) claims: NativeClaims,
     pub(super) expires: Instant,
     pub(super) identity: crate::session_wire::SessionIdentity,
     clock: ServiceClock,
@@ -115,15 +116,40 @@ impl NativeAuthentication {
                 "native account credential or client data exceeds its contract",
             ));
         }
-        let Value::Object(mut claims) = serde_json::from_str(client_data.get()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "invalid native client data")
-        })?
-        else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "native client data must be a JSON object",
-            ));
-        };
+        let claims = NativeClaims::canonical(client_data)?;
+        Self::qualify(key, credential, claims, verifier, selected_xuid, now)
+    }
+
+    /// Qualifies the same original proof/credential while retaining untrusted relay value lexemes.
+    /// This checks credential authority, not full title metadata; the caller must validate that data.
+    pub fn new_relay(
+        key: SigningKey,
+        credential: NativeCredential,
+        client_data: RawClientData,
+        verifier: &NativeTokenVerifier,
+        selected_xuid: &str,
+        now: Instant,
+    ) -> io::Result<Self> {
+        credential.ensure_current(now)?;
+        Self::qualify(
+            key,
+            credential,
+            NativeClaims::Relay(client_data),
+            verifier,
+            selected_xuid,
+            now,
+        )
+    }
+
+    /// Verifies once and installs canonical signed identity for both concrete claim representations.
+    fn qualify(
+        key: SigningKey,
+        credential: NativeCredential,
+        mut claims: NativeClaims,
+        verifier: &NativeTokenVerifier,
+        selected_xuid: &str,
+        now: Instant,
+    ) -> io::Result<Self> {
         let service_now = credential.now(now)?;
         let identity = verifier.verify(
             &credential.token,
@@ -145,15 +171,11 @@ impl NativeAuthentication {
             )
             .ok_or_else(expired)?;
         ensure_current(expires, now)?;
-        claims.insert(
-            "ThirdPartyName".into(),
-            Value::String(
-                identity
-                    .display_name()
-                    .expect("qualified identity has name")
-                    .into(),
-            ),
-        );
+        claims.set_display_name(
+            identity
+                .display_name()
+                .expect("qualified identity has name"),
+        )?;
         Ok(Self {
             key,
             token: credential.token,
@@ -220,7 +242,7 @@ impl NativeAuthentication {
 pub(super) struct AuthenticationHandoff {
     pub(super) key: Arc<SigningKey>,
     pub(super) token: Zeroizing<String>,
-    pub(super) claims: Map<String, Value>,
+    pub(super) claims: NativeClaims,
     pub(super) expires: Instant,
     pub(super) identity: crate::session_wire::SessionIdentity,
     pub(super) messaging: Option<MessagingAdmission>,

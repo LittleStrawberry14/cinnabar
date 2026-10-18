@@ -3,6 +3,7 @@
 use super::{
     Connection, NativeAuthentication, PacketConnection, failure, negotiated, packs, transport,
 };
+use crate::RawClientData;
 use crate::{
     ProtocolError,
     session_wire::{
@@ -16,7 +17,6 @@ use bedrock_protocol_1_26_51::{
     wire,
 };
 use bytes::Bytes;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::io;
 
@@ -88,7 +88,7 @@ impl NativeRelayConnecting {
     /// identity comes only from the qualified credential's original provider projection.
     pub async fn negotiate(
         &mut self,
-        claims: Value,
+        claims: RawClientData,
         client_cache: bool,
         authentication: Option<NativeAuthentication>,
     ) -> Result<(), ProtocolError> {
@@ -111,7 +111,7 @@ impl NativeRelayConnecting {
     /// Keeps all intermediate protocol work on the same borrowed transport and original queues.
     async fn negotiate_inner(
         &mut self,
-        claims: Value,
+        claims: RawClientData,
         client_cache: bool,
         authentication: Option<NativeAuthentication>,
     ) -> Result<(), ProtocolError> {

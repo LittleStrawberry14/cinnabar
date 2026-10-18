@@ -194,7 +194,7 @@ pub use login::{
 pub use login::{
     NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
     NativeRelayConnecting, NativeRelayConnection, NativeRelayHandoff, NativeRelayRetired,
-    NativeTokenVerifier,
+    NativeTokenVerifier, RawClientData,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,

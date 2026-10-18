@@ -4,6 +4,7 @@ use super::{
     Connection, NativeAuthentication, apply_key_exchange, authentication, failure,
     handshake_failure, packs, transport,
 };
+use crate::login::client_data::{NativeClaims, RawClientData};
 use crate::session_wire::SessionIdentity;
 use crate::{NativeConnectionTarget, ProtocolError, SessionLogin};
 use bedrock_client::handshake::{
@@ -13,8 +14,7 @@ use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
-use serde_json::Value;
-use serde_json::{json, value::RawValue};
+use serde_json::{Value, json};
 use std::time::Instant;
 use std::{io, sync::Arc, time::SystemTime};
 use zeroize::Zeroizing;
@@ -65,7 +65,7 @@ pub(super) async fn negotiate(
 /// Retains one original proof, credential deadline and provider-authenticated player projection.
 pub(super) struct Credentials {
     key: Arc<SigningKey>,
-    authentication: Option<(Zeroizing<String>, serde_json::Map<String, Value>, Instant)>,
+    authentication: Option<(Zeroizing<String>, NativeClaims, Instant)>,
     pub(super) messaging: Option<authentication::MessagingAdmission>,
     identity: Option<SessionIdentity>,
 }
@@ -110,7 +110,10 @@ impl Credentials {
 /// Keeps desktop metadata construction in its original phase while accepting the gateway's owned claims.
 pub(super) enum LoginData<'a> {
     Desktop(&'a SessionLogin<'a>),
-    Relay { claims: Value, client_cache: bool },
+    Relay {
+        claims: RawClientData,
+        client_cache: bool,
+    },
 }
 
 impl LoginData<'_> {
@@ -174,7 +177,7 @@ pub(super) async fn negotiate_connected(
         }
     };
     let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
-        (serde_json::Value::Object(claims), Some((token, expires)))
+        (claims, Some((token, expires)))
     } else {
         let claims = match input {
             LoginData::Desktop(login) => {
@@ -189,39 +192,28 @@ pub(super) async fn negotiate_connected(
                 claims["DeviceModel"] = json!("");
                 claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
                 claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
-                claims
+                let Value::Object(claims) = claims else {
+                    unreachable!("local claim builder returns an object")
+                };
+                NativeClaims::Canonical(claims)
             }
-            LoginData::Relay { claims, .. } => claims,
+            LoginData::Relay { claims, .. } => NativeClaims::Relay(claims),
         };
         (claims, None)
     };
-    if !claims.is_object() {
-        return Err(failure(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "native client data must be a JSON object",
-        )));
-    }
     let identity = match identity {
         Some(identity) => identity,
         None => SessionIdentity {
             // The existing typed OfflineIdentity owner retains its original metadata rejection.
-            display_name: claims["ThirdPartyName"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
+            display_name: claims.display_name().map_err(failure)?,
             xuid: String::new(),
             uuid: uuid::Uuid::new_v4().to_string(),
         },
     };
-    claims["ServerAddress"] = json!(address);
-    claims["Nonce"] = json!(connection.transport.nonce());
-    let claims = RawValue::from_string(
-        serde_json::to_string(&claims)
-            .map_err(io::Error::other)
-            .map_err(failure)?,
-    )
-    .map_err(io::Error::other)
-    .map_err(failure)?;
+    claims
+        .set_transport(address, connection.transport.nonce())
+        .map_err(failure)?;
+    let claims = claims.into_raw().map_err(failure)?;
     let deadline = token.as_ref().map(|(_, expires)| *expires);
     let (handshake, packet) = if let Some((token, expires)) = token {
         authentication::ensure_current(expires, std::time::Instant::now())
