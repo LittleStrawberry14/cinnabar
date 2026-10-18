@@ -199,10 +199,14 @@ async fn default_urls() {
             &*receive(&mut peer, &codec).await[0].data,
             packets::Packet::RequestChunkRadius(_)
         ));
-        assert!(matches!(
-            &*receive(&mut peer, &codec).await[0].data,
-            packets::Packet::SetLocalPlayerAsInitialized(_)
-        ));
+        let initialized = receive(&mut peer, &codec).await;
+        assert_eq!(
+            initialized
+                .iter()
+                .filter(|packet| matches!(&*packet.data, packets::Packet::SetLocalPlayerAsInitialized(value) if value.player_id.0 == 42))
+                .count(),
+            1
+        );
         peer.session.closed().await;
     };
     let client = async {
