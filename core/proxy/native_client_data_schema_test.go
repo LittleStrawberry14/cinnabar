@@ -265,31 +265,62 @@ func nativeClientDataSchemaSource(t *testing.T, packagePath string) nativeSchema
 // nativeClientDataSchemaImportModule selects the active replacement containing the reflected package.
 func nativeClientDataSchemaImportModule(t *testing.T, packagePath string) string {
 	t.Helper()
-	module, err := os.ReadFile("../go.mod")
-	if err != nil {
-		t.Fatal(err)
-	}
 	selected := ""
-	for _, line := range strings.Split(string(module), "\n") {
-		line, _, _ = strings.Cut(line, "//")
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "replace" {
+	for _, pin := range nativeClientDataSchemaPins(t) {
+		if !strings.HasPrefix(packagePath, pin.importModule+"/") {
 			continue
 		}
-		if !strings.HasPrefix(packagePath, fields[1]+"/") {
-			continue
-		}
-		if len(fields) != 5 || fields[2] != "=>" {
-			t.Fatal("native client-data source needs a versioned module replacement in the supported pin form")
-		}
-		if len(fields[1]) > len(selected) {
-			selected = fields[1]
+		if len(pin.importModule) > len(selected) {
+			selected = pin.importModule
 		}
 	}
 	if selected == "" {
 		t.Fatal("the reflected native client-data package has no identified core replacement")
 	}
 	return selected
+}
+
+// nativeClientDataSchemaPins reads versioned replacements in inline or block form only.
+func nativeClientDataSchemaPins(t *testing.T) []nativeSchemaSource {
+	t.Helper()
+	module, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pins []nativeSchemaSource
+	block := false
+	for index, line := range strings.Split(string(module), "\n") {
+		line, _, _ = strings.Cut(line, "//")
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if block {
+			if len(fields) == 1 && fields[0] == ")" {
+				block = false
+				continue
+			}
+		} else {
+			if fields[0] != "replace" {
+				continue
+			}
+			fields = fields[1:]
+			if len(fields) == 1 && fields[0] == "(" {
+				block = true
+				continue
+			}
+		}
+		if len(fields) != 4 || fields[1] != "=>" || strings.ContainsAny(strings.Join(fields, ""), "\"`()") {
+			t.Fatalf("unsupported versioned module replacement on core/go.mod line %d", index+1)
+		}
+		pins = append(pins, nativeSchemaSource{
+			importModule: fields[0], module: fields[2], version: fields[3],
+		})
+	}
+	if block {
+		t.Fatal("unterminated replacement block in core/go.mod")
+	}
+	return pins
 }
 
 // nativeClientDataSchemaListedModule reads metadata under this test's Go toolchain without changing pins.
@@ -325,17 +356,15 @@ func nativeClientDataSchemaListedModule(t *testing.T, importModule string) *debu
 // nativeClientDataSchemaPin rejects a build from a different replacement or an unrecognized pin form.
 func nativeClientDataSchemaPin(t *testing.T, source nativeSchemaSource) {
 	t.Helper()
-	module, err := os.ReadFile("../go.mod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wanted := strings.Join([]string{"replace", source.importModule, "=>", source.module, source.version}, " ")
 	matches := 0
-	for _, line := range strings.Split(string(module), "\n") {
-		line, _, _ = strings.Cut(line, "//")
-		if strings.Join(strings.Fields(line), " ") == wanted {
-			matches++
+	for _, pin := range nativeClientDataSchemaPins(t) {
+		if pin.importModule != source.importModule {
+			continue
 		}
+		if pin.module != source.module || pin.version != source.version {
+			t.Fatal("compiled native client-data replacement differs from the core go.mod pin")
+		}
+		matches++
 	}
 	if matches != 1 {
 		t.Fatal("compiled native client-data replacement does not match the unique core go.mod pin")
@@ -344,7 +373,7 @@ func nativeClientDataSchemaPin(t *testing.T, source nativeSchemaSource) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wanted = strings.Join([]string{source.module, source.version, source.sum}, " ")
+	wanted := strings.Join([]string{source.module, source.version, source.sum}, " ")
 	matches = 0
 	for _, line := range strings.Split(string(sums), "\n") {
 		if strings.Join(strings.Fields(line), " ") == wanted {
