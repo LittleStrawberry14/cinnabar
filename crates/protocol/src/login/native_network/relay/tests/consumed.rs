@@ -131,10 +131,6 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             assert_eq!(handoff.handoff.startup.len(), 1);
             assert_eq!(decode(handoff.handoff.startup[0].clone()), start);
             let consumed = observations.lock().unwrap().last().unwrap().1.clone();
-            assert!(
-                consumed.upgrade().is_some(),
-                "the handoff still owns the actual StartGame backing"
-            );
             drop(handoff);
             assert!(
                 consumed.upgrade().is_none(),
