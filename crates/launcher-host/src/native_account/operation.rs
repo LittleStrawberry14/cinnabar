@@ -37,7 +37,7 @@ impl Operation {
         }
         let cached = self
             .cached
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| io::Error::other("native account owner unavailable"))?;
         if cached
             .identity
@@ -49,10 +49,35 @@ impl Operation {
                 "native account identity is not verified",
             ));
         }
-        match &mut cached.owner {
+        if !matches!(cached.owner, Owner::Minecraft(_)) {
+            return Err(io::Error::other("native Minecraft owner is not prepared"));
+        }
+        self.rearm()?;
+        match &mut self.cached.as_mut().expect("checked account owner").owner {
             Owner::Minecraft(services) => Ok(services),
             Owner::Xbox(_) => Err(io::Error::other("native Minecraft owner is not prepared")),
         }
+    }
+
+    /// Suppresses optional persisted reuse immediately before a credential-bearing dispatch.
+    pub(super) fn rearm(&mut self) -> io::Result<()> {
+        let (Some(cached), Some(lease)) = (self.cached.as_mut(), self.lease.as_mut()) else {
+            return Err(io::Error::other("native account owner unavailable"));
+        };
+        if cached.generation != lease.generation() || cached.binding != lease.binding() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native account revision changed",
+            ));
+        }
+        if !self.suppressed {
+            lease.suppress_checkpoint()?;
+            self.suppressed = true;
+        }
+        cached.binding = lease.binding();
+        cached.checkpoint_revision = lease.checkpoint_revision();
+        self.published = false;
+        Ok(())
     }
 
     /// Writes the newest refresh before success and updates the cached file revision.
@@ -100,12 +125,17 @@ impl Operation {
                 lease.publish_verified_identity(&identity.xuid, checkpoint.as_bytes())
             {
                 lease.publish_active_checkpoint(checkpoint.as_bytes())?;
+                cached.binding = lease.binding();
+                cached.checkpoint_revision = lease.checkpoint_revision();
                 return Err(error);
             }
         } else {
             lease.publish_active_checkpoint(checkpoint.as_bytes())?;
         }
+        cached.binding = lease.binding();
+        cached.checkpoint_revision = lease.checkpoint_revision();
         self.published = true;
+        self.suppressed = false;
         publication_error.map_or(Ok(()), Err)
     }
 }

@@ -5,8 +5,11 @@ use serde::Deserializer;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-const PREFIX: &[u8] = b"CNAC\x01";
 pub(super) const MAX_GENERATION_BYTES: usize = 128;
+
+mod checkpoint;
+use checkpoint::Stored;
+pub(super) use checkpoint::{checkpoint_bytes, rebind_checkpoint};
 
 /// One selected sign-in, held against Go refresh and account-store replacement.
 /// This owner has no Debug/Clone; callers must acquire nonblocking and bound their wait.
@@ -16,7 +19,8 @@ pub struct NativeLease {
     _cache_locks: (File, File),
     oauth: OAuth,
     selected_id: Option<String>,
-    binding: [u8; 32],
+    oauth_binding: [u8; 32],
+    checkpoint: Stored,
 }
 
 #[derive(Deserialize)]
@@ -78,13 +82,21 @@ impl AccountStore {
         )?);
         let oauth = parse_oauth(&bytes)?;
         let selected_id = self.index()?.active;
+        let oauth_binding = Sha256::digest(&bytes).into();
+        let checkpoint = Stored::read(
+            self,
+            &oauth.cinnabar_sign_in_generation,
+            selected_id.as_deref(),
+            &oauth_binding,
+        )?;
         Ok(NativeLease {
             store: self.clone(),
             _store_lock: store_lock,
             _cache_locks: cache_locks,
             oauth,
             selected_id,
-            binding: Sha256::digest(&bytes).into(),
+            oauth_binding,
+            checkpoint,
         })
     }
 }
@@ -113,45 +125,58 @@ impl NativeLease {
         &self.oauth.refresh_token
     }
 
-    /// Identifies the exact OAuth record read under the cross-process lease.
+    /// Borrows saved access material only for comparing a suspended SDK checkpoint.
+    pub fn access_token(&self) -> &str {
+        &self.oauth._access_token
+    }
+
+    /// Borrows the saved absolute OAuth expiry; an absent or malformed value requires refresh.
+    pub fn oauth_expiry(&self) -> Option<&str> {
+        self.oauth._expiry.as_deref()
+    }
+
+    /// Identifies the selected account's exact OAuth and checkpoint revision under this lease.
     pub fn binding(&self) -> [u8; 32] {
-        self.binding
+        let mut hash = Sha256::new();
+        hash.update(self.oauth_binding);
+        hash.update(self.checkpoint.revision());
+        hash.update(self.selected_id.as_deref().unwrap_or_default().as_bytes());
+        hash.finalize().into()
+    }
+
+    /// Identifies the actual protected snapshot independently of an OAuth-only rotation.
+    pub fn checkpoint_revision(&self) -> [u8; 32] {
+        self.checkpoint.revision()
     }
 
     /// Reads a checkpoint only for this sign-in generation; SDK policy validation remains separate.
     /// A different OAuth revision is safe only after the SDK adopts this lease's current credentials.
     pub fn checkpoint(&self) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
-        if self.selected_id.is_some()
-            && let Some(checkpoint) = self.read_checkpoint(self.selected_id())?
-        {
-            return Ok(Some(checkpoint));
-        }
-        self.read_checkpoint(None)
+        Ok(self
+            .checkpoint
+            .payload()
+            .map(|bytes| Zeroizing::new(bytes.to_vec())))
     }
 
-    /// Reads a slot only when its envelope belongs to this active sign-in generation.
-    fn read_checkpoint(&self, identity: Option<&str>) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
-        let Some(bytes) = read_optional(&checkpoint_path(&self.store, identity))? else {
-            return Ok(None);
-        };
-        let bytes = Zeroizing::new(bytes);
-        let mut remaining = bytes.as_slice();
-        if take(&mut remaining, PREFIX.len())? != PREFIX {
-            return Ok(None);
+    /// Permits optional cache admission only for an unsuppressed exact OAuth/account envelope.
+    /// The SDK must still validate policy/proof and obtain its own fresh NSAL response.
+    pub fn checkpoint_cache_allowed(&self) -> bool {
+        self.checkpoint.cache_allowed()
+    }
+
+    /// Suppresses persisted reuse before dispatching a request that can refuse cached entries.
+    /// Opaque proof/refresh bytes survive; failure leaves dispatch to the caller unstarted.
+    pub fn suppress_checkpoint(&mut self) -> io::Result<()> {
+        if let Some(checkpoint) = self.checkpoint()? {
+            self.write_checkpoint(&checkpoint, false)?;
+            if let Some(id) = self.selected_id() {
+                write_private(
+                    &checkpoint_path(&self.store, Some(id)),
+                    self.checkpoint.envelope(),
+                )?;
+            }
         }
-        let length = u16::from_le_bytes(
-            take(&mut remaining, 2)?
-                .try_into()
-                .map_err(|_| invalid("invalid native checkpoint"))?,
-        );
-        if take(&mut remaining, usize::from(length))? != self.generation().as_bytes() {
-            return Ok(None);
-        }
-        // The caller must replace old credentials before using the restored SDK owner.
-        if remaining.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(Zeroizing::new(remaining.to_vec())))
+        Ok(())
     }
 
     /// Rejects removal, replacement or account switching before returning any prepared credential.
@@ -162,7 +187,7 @@ impl NativeLease {
         )?);
         let binding: [u8; 32] = Sha256::digest(&current).into();
         if parse_oauth(&current)?.cinnabar_sign_in_generation != self.generation()
-            || binding != self.binding
+            || binding != self.oauth_binding
             || self.store.index()?.active != self.selected_id
         {
             return Err(io::Error::new(
@@ -199,13 +224,27 @@ impl NativeLease {
                 serde_json::Value::String(token_type.to_owned()),
             );
         }
-        self.binding = Sha256::digest(&oauth).into();
+        let binding = Sha256::digest(&oauth).into();
+        if binding != self.oauth_binding {
+            self.checkpoint.disallow_cache();
+        }
+        self.oauth_binding = binding;
         Ok(())
     }
 
     /// Saves a checkpoint and credential copy only after the caller verifies the selected XUID.
     /// A mismatched identity changes neither the saved credential nor its proof slot.
-    pub fn publish_verified_identity(&self, xuid: &str, checkpoint: &[u8]) -> io::Result<()> {
+    pub fn publish_verified_identity(&mut self, xuid: &str, checkpoint: &[u8]) -> io::Result<()> {
+        self.publish_identity_checkpoint(xuid, checkpoint, true)
+    }
+
+    /// Updates the authoritative slot before its saved backup, retaining explicit cache suppression.
+    fn publish_identity_checkpoint(
+        &mut self,
+        xuid: &str,
+        checkpoint: &[u8],
+        cache_allowed: bool,
+    ) -> io::Result<()> {
         self.recheck()?;
         checked_id(xuid)?;
         if self.selected_id().is_some_and(|selected| selected != xuid) {
@@ -214,13 +253,16 @@ impl NativeLease {
                 "native account identity does not match the selection",
             ));
         }
-        if let Some(id) = &self.selected_id {
+        if let Some(id) = self.selected_id.clone() {
             self.store
-                .write_credentials(id, &read_credentials(&self.store.active_cache)?)?;
-            self.write_checkpoint(Some(id), checkpoint)?;
-            remove_optional(&checkpoint_path(&self.store, None))?;
+                .write_credentials(&id, &read_credentials(&self.store.active_cache)?)?;
+            self.write_checkpoint(checkpoint, cache_allowed)?;
+            write_private(
+                &checkpoint_path(&self.store, Some(&id)),
+                self.checkpoint.envelope(),
+            )?;
         } else {
-            self.write_checkpoint(None, checkpoint)?;
+            self.write_checkpoint(checkpoint, cache_allowed)?;
         }
         Ok(())
     }
@@ -247,23 +289,40 @@ impl NativeLease {
         index.active = Some(profile.id.clone());
         index.profiles.insert(profile.id.clone(), profile.clone());
         self.store.write_index(&index)?;
+        let checkpoint = self.checkpoint()?;
+        let cache_allowed = self.checkpoint.cache_allowed();
         self.selected_id = Some(profile.id.clone());
-        if let Some(checkpoint) = self.read_checkpoint(None)? {
-            self.publish_verified_identity(&profile.id, &checkpoint)?;
+        if let Some(checkpoint) = checkpoint {
+            self.publish_identity_checkpoint(&profile.id, &checkpoint, cache_allowed)?;
         }
         Ok(profile)
     }
 
     /// Retains active proof ownership while identity is unknown, without touching a saved account.
-    pub fn publish_active_checkpoint(&self, checkpoint: &[u8]) -> io::Result<()> {
+    pub fn publish_active_checkpoint(&mut self, checkpoint: &[u8]) -> io::Result<()> {
         self.recheck()?;
-        self.write_checkpoint(None, checkpoint)
+        self.write_checkpoint(checkpoint, true)
     }
 
-    /// Writes a generation-bound proof to the explicitly chosen private slot.
-    fn write_checkpoint(&self, identity: Option<&str>, checkpoint: &[u8]) -> io::Result<()> {
-        let bytes = checkpoint_bytes(self.generation(), checkpoint)?;
-        write_private(&checkpoint_path(&self.store, identity), &bytes)?;
+    /// Writes the authoritative active snapshot before it can become a saved backup.
+    fn write_checkpoint(&mut self, checkpoint: &[u8], cache_allowed: bool) -> io::Result<()> {
+        self.recheck()?;
+        let bytes = checkpoint_bytes(
+            self.generation(),
+            self.selected_id(),
+            &self.oauth_binding,
+            checkpoint,
+            cache_allowed,
+        )?;
+        let stored = Stored::decode(
+            bytes,
+            self.generation(),
+            self.selected_id(),
+            &self.oauth_binding,
+        )?
+        .ok_or_else(|| invalid("native checkpoint binding changed"))?;
+        write_private(&checkpoint_path(&self.store, None), stored.envelope())?;
+        self.checkpoint = stored;
         Ok(())
     }
 
@@ -326,30 +385,6 @@ pub(super) fn oauth_bytes(
         ));
     }
     Ok(oauth)
-}
-
-/// Encodes the shared generation fence for active, pending and saved proof owners.
-pub(super) fn checkpoint_bytes(
-    generation: &str,
-    checkpoint: &[u8],
-) -> io::Result<Zeroizing<Vec<u8>>> {
-    if checkpoint
-        .len()
-        .saturating_add(PREFIX.len() + 2 + generation.len())
-        > MAX_FILE_BYTES as usize
-    {
-        return Err(invalid("invalid native checkpoint size"));
-    }
-    let length =
-        u16::try_from(generation.len()).map_err(|_| invalid("invalid sign-in generation"))?;
-    let mut bytes = Zeroizing::new(Vec::with_capacity(
-        PREFIX.len() + 2 + generation.len() + checkpoint.len(),
-    ));
-    bytes.extend_from_slice(PREFIX);
-    bytes.extend_from_slice(&length.to_le_bytes());
-    bytes.extend_from_slice(generation.as_bytes());
-    bytes.extend_from_slice(checkpoint);
-    Ok(bytes)
 }
 
 /// Validates the authoritative OAuth generation without echoing credential JSON on failure.

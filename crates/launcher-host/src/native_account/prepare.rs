@@ -114,6 +114,7 @@ impl Operation {
             let Cached {
                 generation,
                 binding,
+                checkpoint_revision,
                 owner,
                 identity,
             } = self.cached.take().expect("account owner");
@@ -124,6 +125,7 @@ impl Operation {
             self.cached = Some(Cached {
                 generation,
                 binding,
+                checkpoint_revision,
                 owner: Owner::Minecraft(Box::new(services)),
                 identity,
             });

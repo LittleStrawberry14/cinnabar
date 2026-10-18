@@ -75,7 +75,6 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
     native
         .publish_verified_identity("123", b"synthetic-proof-owner")
         .unwrap();
-    assert!(!checkpoint_path(&fixture.store, None).exists());
     let oauth: serde_json::Value =
         serde_json::from_slice(&read_private(&fixture.store.active_cache).unwrap()).unwrap();
     assert_eq!(oauth["refresh_token"], "rotated-refresh");
@@ -227,5 +226,81 @@ fn active_checkpoint_replacement_survives_reopening_a_selected_account() {
     assert_eq!(
         lease.checkpoint().unwrap().unwrap().as_slice(),
         b"refused-issuance-removed"
+    );
+}
+
+/// A crash before final publication must leave both account slots unable to reuse refused entries.
+#[test]
+fn suppressed_checkpoint_preserves_proof_after_account_switch_and_oauth_change() {
+    let fixture = Fixture::new();
+    fixture.sign_in("selected");
+    fixture
+        .store
+        .remember_current("123", "Saved", None)
+        .unwrap();
+    let mut lease = fixture.store.try_native_lease().unwrap();
+    lease
+        .publish_verified_identity("123", b"opaque-proof-and-cache")
+        .unwrap();
+    lease.suppress_checkpoint().unwrap();
+    let suppressed = lease.binding();
+    drop(lease);
+
+    // Switching away replaces the active slot's account; only the saved backup can restore A.
+    fixture.sign_in("other");
+    fixture
+        .store
+        .remember_current("456", "Other", None)
+        .unwrap();
+    fixture
+        .store
+        .try_native_lease()
+        .unwrap()
+        .publish_verified_identity("456", b"other-account-proof")
+        .unwrap();
+    fixture.store.activate("123").unwrap();
+    let mut lease = fixture.store.try_native_lease().unwrap();
+    assert_eq!(lease.binding(), suppressed);
+    assert!(!lease.checkpoint_cache_allowed());
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        b"opaque-proof-and-cache"
+    );
+    lease
+        .publish_oauth("new-access", "current-refresh", "2099-01-01T00:00:00Z")
+        .unwrap();
+    assert!(!lease.checkpoint_cache_allowed());
+    drop(lease);
+    let lease = fixture.store.try_native_lease().unwrap();
+    assert_eq!(lease.refresh_token(), "current-refresh");
+    assert!(!lease.checkpoint_cache_allowed());
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        b"opaque-proof-and-cache"
+    );
+}
+
+/// Generation-only records migrate without treating their optional SDK bytes as admitted cache.
+#[test]
+fn legacy_checkpoint_retains_proof_but_requires_conservative_cache_restore() {
+    let fixture = Fixture::new();
+    fixture.sign_in("legacy");
+    let mut bytes = b"CNAC\x01".to_vec();
+    bytes.extend_from_slice(&u16::try_from(b"legacy".len()).unwrap().to_le_bytes());
+    bytes.extend_from_slice(b"legacy");
+    bytes.extend_from_slice(b"original-proof");
+    private_directory(&fixture.store.directory).unwrap();
+    write_private(&checkpoint_path(&fixture.store, None), &bytes).unwrap();
+    let mut lease = fixture.store.try_native_lease().unwrap();
+    assert!(!lease.checkpoint_cache_allowed());
+    let original = lease.checkpoint().unwrap().unwrap();
+    assert_eq!(original.as_slice(), b"original-proof");
+    lease.publish_active_checkpoint(&original).unwrap();
+    drop(lease);
+    let lease = fixture.store.try_native_lease().unwrap();
+    assert!(lease.checkpoint_cache_allowed());
+    assert_eq!(
+        lease.checkpoint().unwrap().unwrap().as_slice(),
+        original.as_slice()
     );
 }

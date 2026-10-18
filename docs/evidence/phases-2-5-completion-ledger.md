@@ -10,6 +10,16 @@ The Go backend remains the default. Account services, CDN/cache integration,
 hosting, browser transport and broad network/device acceptance remain incomplete.
 This closes no parity or Go-removal gate.
 
+## Native protected checkpoint revisions (in progress)
+
+The native account store binds opaque checkpoints to the selected account and
+exact OAuth record. Cross-process snapshot changes retire stale SDK caches;
+credential dispatch suppresses active and saved cache reuse until final protected
+publication. Generation-only records retain proof with conservative refresh.
+The SDK continues to require fresh policy/time admission. Final SDK pinning,
+executable validation, live-account restart acceptance and broader derived-service
+persistence remain incomplete; this closes no parity or account-release gate.
+
 ## Browser host composition
 
 The browser host uses verified memory carriers, the shared game frame and HUD, injected

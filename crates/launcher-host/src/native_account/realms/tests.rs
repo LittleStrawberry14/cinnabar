@@ -90,6 +90,7 @@ fn listing_revision_fence_and_service_promotion_retain_one_account_owner() {
     operation.cached = Some(Cached {
         generation: lease.generation().into(),
         binding: lease.binding(),
+        checkpoint_revision: lease.checkpoint_revision(),
         owner: Owner::Xbox(Box::new(sdk)),
         identity: Some(AccountIdentity {
             xuid: "123".into(),

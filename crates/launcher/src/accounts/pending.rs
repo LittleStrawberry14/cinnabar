@@ -122,7 +122,17 @@ impl PendingSignIn {
         let _active = cache_try_leases(&self.store.active_cache)?;
         let _pending = cache_try_leases(&self.store.pending_cache())?;
         self.recheck()?;
-        let proof = super::native::checkpoint_bytes(&self.attempt.generation, checkpoint)?;
+        let oauth = Zeroizing::new(read_private_bounded(
+            &self.store.pending_cache(),
+            MAX_OAUTH_CACHE_BYTES as u64,
+        )?);
+        let proof = super::native::checkpoint_bytes(
+            &self.attempt.generation,
+            self.attempt.expected_identity.as_deref(),
+            &Sha256::digest(oauth.as_slice()).into(),
+            checkpoint,
+            true,
+        )?;
         write_private(&self.store.directory.join(CHECKPOINT_FILE), &proof)
     }
 
@@ -159,7 +169,13 @@ impl PendingSignIn {
         if value.cinnabar_sign_in_generation != self.attempt.generation {
             return Err(stale());
         }
-        let proof = Zeroizing::new(read_private(&self.store.directory.join(CHECKPOINT_FILE))?);
+        let proof = super::native::rebind_checkpoint(
+            Zeroizing::new(read_private(&self.store.directory.join(CHECKPOINT_FILE))?),
+            &self.attempt.generation,
+            self.attempt.expected_identity.as_deref(),
+            &profile.id,
+            &Sha256::digest(credentials.oauth.as_bytes()).into(),
+        )?;
         let mut index = self.store.index()?;
         let previous = index.profiles.get(&profile.id);
         self.store.save_picture(&mut profile, previous)?;
