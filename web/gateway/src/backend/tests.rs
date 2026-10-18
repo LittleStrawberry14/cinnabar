@@ -248,3 +248,85 @@ async fn origin_subprotocol_and_play_are_checked_before_upgrade() {
         fixture.finish().await;
     }).await.unwrap();
 }
+
+/// Completing the actual service future must not retire a still-owned accepted control socket.
+#[tokio::test]
+async fn completed_service_driver_retains_sessions_until_connections_retire() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let registry = Registry::new();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let peer = stream.peer_addr().unwrap();
+        let permit = registry.admit(peer.ip(), Instant::now()).unwrap();
+        let admitted = Admitted {
+            stream,
+            _permit: permit,
+        };
+        let serving = Arc::clone(&registry);
+        let mut connections = FuturesUnordered::<Work>::new();
+        connections.push(Box::pin(async move {
+            control::run(&serving, peer.ip(), admitted).await
+        }));
+        let mut services = Box::pin(registry.drive());
+        assert!(futures::poll!(services.as_mut()).is_pending());
+        let mut client = Framed::new(
+            client,
+            bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES),
+        );
+        {
+            let hello = async {
+                client
+                    .send(Bytes::from(
+                        serde_json::to_vec(&Hello {
+                            version: RELAY_VERSION,
+                            channel: RELAY_CHANNEL_CONTROL.into(),
+                            channels: vec![
+                                RELAY_CHANNEL_CONTROL.into(),
+                                RELAY_CHANNEL_PLAY.into(),
+                            ],
+                            resume: String::new(),
+                            generation: 0,
+                            join: 0,
+                        })
+                        .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                let response = client.next().await.unwrap().unwrap();
+                assert!(matches!(
+                    serde_json::from_slice::<Event>(&response).unwrap(),
+                    Event::Welcome { .. }
+                ));
+            };
+            tokio::pin!(hello);
+            tokio::select! {
+                () = &mut hello => {},
+                result = connections.next() => panic!("the actual control owner retired: {result:?}"),
+                result = services.as_mut() => panic!("the actual registry driver retired: {result:?}"),
+            }
+        }
+        assert_eq!(registry.test_counts(), (1, 1));
+        assert_eq!(connections.len(), 1);
+        let cancellation = registry.cancelled.cancelled();
+        tokio::pin!(cancellation);
+        assert!(futures::poll!(cancellation.as_mut()).is_pending());
+        registry.cancelled.cancel();
+        services.as_mut().await.unwrap();
+        let before_connection_retirement = registry.test_counts();
+        assert_eq!(connections.len(), 1);
+        drop(connections);
+        drop(services);
+        drop(client);
+        assert_eq!(registry.test_counts(), (0, 0));
+        assert_eq!(
+            before_connection_retirement,
+            (1, 1),
+            "service completion must retain sessions until actual sockets retire"
+        );
+    })
+    .await
+    .unwrap();
+}
