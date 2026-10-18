@@ -84,7 +84,7 @@ fn profile_loading_ends_on_control_failure_while_home_is_stalled() {
 
 #[test]
 fn profile_loading_restarts_for_new_account_and_rejects_old_reply() {
-    let (wake, requests) = bounded(1);
+    let (wake, requests) = profile_worker::channel();
     let shared = Mutex::new(Snapshot {
         profile_wake: Some(wake),
         profile: Some(Ok(Profile::default())),
@@ -100,7 +100,10 @@ fn profile_loading_restarts_for_new_account_and_rejects_old_reply() {
             reason: None,
         })
     });
-    assert!(requests.try_recv().is_ok(), "new account must wake Profile");
+    assert!(
+        requests.has_changed().unwrap(),
+        "new account must wake Profile"
+    );
     publish_account(&shared, old_generation, |snapshot| {
         snapshot.profile = Some(Ok(Profile::default()));
     });

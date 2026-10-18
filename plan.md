@@ -78,10 +78,11 @@ friend/follower counts on the existing profile worker. Reads reuse the leased
 SDK owner, preserve unavailable counts and pass through the existing artwork
 cache, then recheck the selected generation and verified Xbox identity before
 publication. Independent facets release the account lease between requests.
-Active profile cancellation on account replacement is incomplete. Native persona
-artwork, featured screenshots, statistics and achievements remain unavailable until
-their service owners are implemented. Source review, owning execution and live
-profile acceptance are open; the Go profile remains the default.
+Account replacement or worker retirement cancels active presentation work; refresh
+wakes coalesce without restarting an accepted read. Native persona artwork,
+featured screenshots, statistics and achievements remain unavailable until their
+service owners are implemented. Source review, owning execution and live profile
+acceptance are open; the Go profile remains the default.
 
 Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,

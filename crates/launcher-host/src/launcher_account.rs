@@ -75,7 +75,7 @@ struct Snapshot {
     /// Wakes Home independently when its account identity changes.
     home_wake: Option<Sender<()>>,
     /// Wakes Profile independently when its account identity changes.
-    profile_wake: Option<Sender<()>>,
+    profile_wake: Option<tokio::sync::watch::Sender<profile_worker::Wake>>,
     /// Selects one presentation source for this account's existing profile worker.
     profile_source: profile_worker::Source,
     xbox_presence: bridge::XboxPresenceState,
@@ -133,7 +133,7 @@ impl Snapshot {
             let _ = wake.try_send(());
         }
         if let Some(wake) = &self.profile_wake {
-            let _ = wake.try_send(());
+            profile_worker::refresh(wake);
         }
         if let Some(wake) = &self.feed_wake {
             let _ = wake.try_send(());
@@ -160,7 +160,7 @@ impl Snapshot {
 pub struct LauncherAccount {
     snapshot: Arc<Mutex<Snapshot>>,
     sign_out: Sender<()>,
-    profile_refresh: Sender<()>,
+    profile_refresh: tokio::sync::watch::Sender<profile_worker::Wake>,
     message_reports: Sender<MessageEvent>,
     invites: Sender<invites::Request>,
     realm_membership: tokio::sync::mpsc::UnboundedSender<realm_membership::Request>,
@@ -173,6 +173,7 @@ pub struct LauncherAccount {
 
 impl Drop for LauncherAccount {
     fn drop(&mut self) {
+        profile_worker::stop(&self.profile_refresh);
         self.presence_lifetime.retire();
     }
 }
@@ -210,7 +211,7 @@ impl LauncherAccount {
         let (catalog_wake, catalog_changes) = bounded(1);
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
-        let (profile_refresh, profile_requests) = bounded(1);
+        let (profile_refresh, profile_requests) = profile_worker::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             catalog_wake: Some(catalog_wake),
             feed_wake: Some(feed_wake.clone()),
@@ -246,9 +247,7 @@ impl LauncherAccount {
         thread::spawn(move || feeds::poll_home(&dir, &art, wake, &shared, &until, &home_changes));
         let _ = shared_players::start(socket_dir.clone(), Arc::clone(&snapshot), stop.clone());
         let (shared, dir) = (Arc::clone(&snapshot), socket_dir.clone());
-        thread::spawn(move || {
-            profile_worker::poll(&dir, &artwork, &shared, &stop, &profile_requests)
-        });
+        thread::spawn(move || profile_worker::poll(&dir, &artwork, &shared, profile_requests));
         Self {
             snapshot,
             sign_out,
@@ -797,10 +796,7 @@ impl AccountControl for LauncherAccount {
 
     /// Wakes only Profile when opened or retried, without replaying Home impressions.
     fn refresh_profile(&mut self) {
-        if matches!(
-            self.profile_refresh.try_send(()),
-            Err(crossbeam_channel::TrySendError::Disconnected(_))
-        ) {
+        if !profile_worker::refresh(&self.profile_refresh) {
             self.with(|snapshot| snapshot.profile = Some(Err(())));
             profile_worker::log_unavailable("worker_unavailable");
         }
