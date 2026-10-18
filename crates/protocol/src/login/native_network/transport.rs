@@ -10,7 +10,6 @@ use bedrock_net::{
 };
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
-use p384::ecdsa::SigningKey;
 use std::{io, net::SocketAddr, time::Instant};
 
 const LAN_CONNECTION_TYPE: u8 = 4;
@@ -18,11 +17,9 @@ const LAN_CONNECTION_TYPE: u8 = 4;
 pub(super) enum Transport {
     RakNet {
         connection: RakNetConnection,
-        key: SigningKey,
     },
     NetherNetLan {
         connection: NetherClient,
-        key: SigningKey,
         nonce: String,
         inbox: Inbox,
     },
@@ -30,10 +27,7 @@ pub(super) enum Transport {
 
 impl Transport {
     /// Resolves the requested endpoint and establishes its explicitly selected transport.
-    pub(super) async fn connect(
-        target: &NativeConnectionTarget,
-        key: SigningKey,
-    ) -> io::Result<Self> {
+    pub(super) async fn connect(target: &NativeConnectionTarget) -> io::Result<Self> {
         let address = tokio::net::lookup_host(&target.address)
             .await?
             .next()
@@ -54,7 +48,6 @@ impl Transport {
                 connection: RakNetConnection::connect(address, RakNetOptions::default())
                     .await
                     .map_err(io::Error::other)?,
-                key,
             }),
             NativeTransport::NetherNetLan => {
                 if !address.is_ipv4() {
@@ -119,18 +112,10 @@ impl Transport {
                 .map_err(io::Error::other)?;
                 Ok(Self::NetherNetLan {
                     connection,
-                    key,
                     nonce: data.session_id,
                     inbox: Inbox::default(),
                 })
             }
-        }
-    }
-
-    /// Borrows this connection's application proof key.
-    pub(super) fn key(&self) -> &SigningKey {
-        match self {
-            Self::RakNet { key, .. } | Self::NetherNetLan { key, .. } => key,
         }
     }
 

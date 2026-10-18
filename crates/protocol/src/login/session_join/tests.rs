@@ -626,7 +626,7 @@ async fn invalid_spawn_prerequisites_are_recorded_as_failed() {
             core,
         );
         assert!(matches!(result, Err(ProtocolError::Session(ref error))
-            if matches!(error.0, SessionFailure::UnexpectedStartup(_))));
+            if matches!(error.0, SessionFailure::ClientSpawn(_))));
         assert!(
             tap.events().iter().any(|event| matches!(event,
                 TapEvent::Reject(_, id, PacketOutcome::Failed, rejected)

@@ -109,8 +109,8 @@ pub(crate) enum SessionFailure {
     BatchTooLarge { actual: usize, max: usize },
     #[error("batch contains more than {max} packets")]
     TooManyPackets { max: usize },
-    #[error("unexpected startup packet: {0}")]
-    UnexpectedStartup(String),
+    #[error("invalid client startup: {0}")]
+    ClientSpawn(#[source] bedrock_client::spawn::SpawnError),
     /// A Disconnect ended the join; the texts are the server's own, unbounded.
     #[error("server disconnected during {stage}: {reason}")]
     ServerDisconnect {
@@ -145,9 +145,7 @@ impl SessionFailure {
     pub(crate) const fn is_packet_failure(&self) -> bool {
         matches!(
             self,
-            Self::PacketDecode { .. }
-                | Self::PacketTrailingBytes { .. }
-                | Self::UnexpectedStartup(_)
+            Self::PacketDecode { .. } | Self::PacketTrailingBytes { .. } | Self::ClientSpawn(_)
         )
     }
 }

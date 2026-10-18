@@ -13,7 +13,12 @@ fn session() -> (TestSession, DuplexStream, impl Future<Output = ()>) {
         bridge::tasks::prepare_connection(tokio::io::empty(), write, bridge::MAX_FRAME_LEN);
     let transport = crate::session_transport::SessionTransport::new(reader, frames, &[]);
     (
-        PlaySession::new(transport, Some(crate::ClientBlobCache::default()), 1, false),
+        PlaySession::new(
+            transport,
+            Some(crate::ClientBlobCache::default()),
+            crate::login::startup::ready_fixture(1),
+            false,
+        ),
         peer,
         writer,
     )

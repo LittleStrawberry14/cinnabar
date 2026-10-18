@@ -153,7 +153,12 @@ mod tests {
         write_frame(&mut peer, &transfer).await;
         drop(peer);
         let transport = SessionTransport::new(reader, frames, &[]);
-        let mut session = PlaySession::new(transport, None, 1, false);
+        let mut session = PlaySession::new(
+            transport,
+            None,
+            crate::login::startup::ready_fixture(1),
+            false,
+        );
 
         session.drain_to_boundary().await;
 

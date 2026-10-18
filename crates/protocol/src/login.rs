@@ -1,3 +1,4 @@
+use bedrock_client::spawn::SpawnNegotiation;
 use std::collections::VecDeque;
 
 use bedrock_protocol_1_26_51::packets::{self, PacketId};
@@ -59,7 +60,7 @@ pub struct LoginSequence;
 /// An authenticated, spawned Bedrock session.
 pub struct PlaySession<R = bridge::FramedReader> {
     transport: SessionTransport<R>,
-    pending_initialization: Option<u64>, // the runtime ID until loading completes
+    pending_initialization: Option<SpawnNegotiation>,
     terrain_before_spawn: bool,
     decode_errors: u64,
     world_skips: u64,
@@ -128,12 +129,12 @@ impl<R: bridge::FrameRead> PlaySession<R> {
     fn new(
         transport: SessionTransport<R>,
         cache: Option<ClientBlobCache>,
-        runtime_id: u64,
+        initialization: SpawnNegotiation,
         terrain_before_spawn: bool,
     ) -> Self {
         Self {
             transport,
-            pending_initialization: Some(runtime_id),
+            pending_initialization: Some(initialization),
             terrain_before_spawn,
             decode_errors: 0,
             world_skips: 0,

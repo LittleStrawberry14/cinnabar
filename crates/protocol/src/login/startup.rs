@@ -6,11 +6,8 @@
 
 use std::time::Duration;
 
-use bedrock_protocol_1_26_51::enums::PlayStatusType;
-use bedrock_protocol_1_26_51::packets::{
-    self, Disconnect, ItemRegistry, PacketId, SetLocalPlayerAsInitialized, StartGame,
-};
-use bedrock_protocol_1_26_51::types::ActorRuntimeID;
+use bedrock_client::spawn::{SpawnError, SpawnNegotiation, SpawnReady, SpawnUpdate};
+use bedrock_protocol_1_26_51::packets::{self, Disconnect, ItemRegistry, PacketId, StartGame};
 
 use crate::codec::SessionFailure;
 use crate::disconnect::{delivered_texts, disconnect_reason, join_disconnect, packet_texts};
@@ -21,15 +18,10 @@ use crate::{LoadingScreenPhase, Packet, ProtocolError, ServerTransferEvent, Sess
 /// Bounds the bytes deferred to play while the spawn prerequisites arrive.
 pub(super) const MAX_DEFERRED_PACKET_BYTES: usize = 16 * 1024 * 1024;
 /// The fallback view radius when the caller supplies no saved preference.
+#[cfg(test)]
 pub(super) const DEFAULT_CHUNK_RADIUS: u8 = 16;
 /// The stage a join-time Disconnect names once the session has been handed over.
 const STAGE: &str = "StartGame";
-
-/// What the spawn sequence leaves for play.
-pub(super) struct Spawned {
-    pub(super) runtime_id: u64,
-    pub(super) terrain_before_spawn: bool, // a publisher update or chunk preceded PlayerSpawn
-}
 
 /// Packets held back for play while the client spawns, each detached from its batch.
 #[derive(Default)]
@@ -68,143 +60,115 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
     transport: &mut SessionTransport<R>,
     view_distance_chunks: u8,
     on_startup: impl FnOnce(StartGame, ItemRegistry),
-) -> Result<Spawned, ProtocolError> {
+) -> Result<(SpawnNegotiation, SpawnReady), ProtocolError> {
     let mut on_startup = Some(on_startup);
-    let mut runtime_id: Option<u64> = None;
-    let mut start_game: Option<StartGame> = None;
-    let mut item_registry: Option<ItemRegistry> = None;
-    let mut registry_seen = false;
-    let mut sent_chunk_radius = false;
-    let mut received_chunk_radius = false;
-    let mut received_player_spawn = false;
-    let mut terrain_before_spawn = false;
+    let request = crate::request_chunk_radius_packet(
+        view_distance_chunks,
+        render_api::MAX_VIEW_RADIUS_CHUNKS as u8,
+    );
+    let packets::Packet::RequestChunkRadius(request) = *request.data else {
+        unreachable!("view-distance helper returns RequestChunkRadius")
+    };
+    let mut negotiation = SpawnNegotiation::new(request).map_err(spawn_failure)?;
     let mut deferred = DeferredPackets::default();
     loop {
         let raw = recv_startup(transport).await?;
-        match raw.id {
-            PacketId::StartGame => {
-                let packets::Packet::StartGame(start) = *raw.decode()?.data else {
-                    unreachable!("packet ID and decoded variant must agree")
-                };
-                let received = start.runtime_id.0;
-                match runtime_id {
-                    Some(first) if first != received => {
-                        return Err(SessionFailure::UnexpectedStartup(format!(
-                            "conflicting StartGame runtime entity ID: first {first}, then {received}"
-                        ))
-                        .into());
-                    }
-                    Some(_) => {}
-                    None => {
-                        runtime_id = Some(received);
-                        start_game = Some(*start);
-                    }
-                }
-            }
-            PacketId::ItemRegistry => {
-                let packets::Packet::ItemRegistry(registry) = *raw.decode()?.data else {
-                    unreachable!("packet ID and decoded variant must agree")
-                };
-                // The native registry initializes once: a later empty or custom-only table must
-                // not replace the first.
-                if registry_seen {
-                    continue;
-                }
-                registry_seen = true;
-                item_registry = Some(registry);
-            }
-            PacketId::PlayStatus => {
-                let packets::Packet::PlayStatus(status) = *raw.decode()?.data else {
-                    unreachable!("packet ID and decoded variant must agree")
-                };
-                if status.status == PlayStatusType::Playerspawn {
-                    received_player_spawn = true;
-                }
-            }
-            PacketId::ChunkRadiusUpdated => {
-                let packets::Packet::ChunkRadiusUpdated(update) = *raw.clone().decode()?.data
-                else {
-                    unreachable!("packet ID and decoded variant must agree")
-                };
-                if update.chunk_radius.0 < 1 {
-                    return Err(SessionFailure::UnexpectedStartup(format!(
-                        "invalid updated chunk radius {}",
-                        update.chunk_radius.0
-                    ))
-                    .into());
-                }
-                deferred.push(raw)?;
-                received_chunk_radius = true;
-            }
+        let update = match raw.id {
             PacketId::Disconnect => {
                 let packets::Packet::Disconnect(disconnect) = *raw.decode()?.data else {
                     unreachable!("packet ID and decoded variant must agree")
                 };
                 return Err(packet_disconnect(&disconnect).into());
             }
-            packet_id => {
-                terrain_before_spawn |= matches!(
-                    packet_id,
-                    PacketId::NetworkChunkPublisherUpdate
-                        | PacketId::LevelChunk
-                        | PacketId::SubChunk
-                );
-                deferred.push(raw)?;
+            PacketId::StartGame
+            | PacketId::ItemRegistry
+            | PacketId::PlayStatus
+            | PacketId::ChunkRadiusUpdated => {
+                let update = negotiation
+                    .receive(*raw.clone().decode()?.data)
+                    .map_err(spawn_failure)?;
+                if update.deferred.is_some() {
+                    deferred.push(raw)?;
+                }
+                update
             }
-        }
-
+            _ => {
+                negotiation
+                    .receive_deferred(raw.id)
+                    .map_err(spawn_failure)?;
+                deferred.push(raw)?;
+                SpawnUpdate::default()
+            }
+        };
         transport.accept_current();
-        if start_game.is_some()
-            && item_registry.is_some()
-            && let Some(on_startup) = on_startup.take()
-        {
-            on_startup(
-                start_game.take().expect("checked above"),
-                item_registry.take().expect("checked above"),
+        if let Some(startup) = update.startup {
+            on_startup
+                .take()
+                .expect("the pure owner supplies first definitions once")(
+                *startup.start_game,
+                startup.item_registry,
             );
         }
-        if !sent_chunk_radius && runtime_id.is_some() {
-            if let Err(error) = transport.send(&loading_started(view_distance_chunks)).await {
+        if let Some(request) = update.request_radius {
+            let packets = [
+                Packet::new(request),
+                crate::loading_screen_packet(LoadingScreenPhase::Start, None),
+            ];
+            if let Err(error) = transport.send(&packets).await {
                 return Err(
                     startup_write_failure(transport, error, super::WRITE_FAILURE_DRAIN).await,
                 );
             }
-            sent_chunk_radius = true;
         }
-        if sent_chunk_radius
-            && received_chunk_radius
-            && received_player_spawn
-            && on_startup.is_none()
-        {
-            break;
+        if let Some(ready) = update.ready {
+            transport.prepend(deferred.into_packets());
+            return Ok((negotiation, ready));
         }
     }
-    transport.prepend(deferred.into_packets());
-    Ok(Spawned {
-        runtime_id: runtime_id.expect("the radius request follows StartGame"),
-        terrain_before_spawn,
-    })
 }
 
-/// The radius request and loading-start the client sends once StartGame arrives.
-fn loading_started(view_distance_chunks: u8) -> [Packet; 2] {
-    [
-        crate::request_chunk_radius_packet(
-            view_distance_chunks,
-            render_api::MAX_VIEW_RADIUS_CHUNKS as u8,
-        ),
-        crate::loading_screen_packet(LoadingScreenPhase::Start, None),
-    ]
-}
-
-/// The loading-end and initialization packets that complete spawn for `runtime_id`.
-pub(super) fn loading_finished(runtime_id: u64) -> Vec<Packet> {
+/// Adds application loading policy to the ready core's one-shot initialization response.
+/// The private play constructor receives this owner only after startup readiness.
+pub(super) fn loading_finished(mut negotiation: SpawnNegotiation) -> Vec<Packet> {
+    let initialized = negotiation
+        .finish_loading()
+        .expect("play retains a ready spawn owner until presentation completes");
     vec![
         crate::loading_screen_packet(LoadingScreenPhase::End, None),
-        Packet::new(SetLocalPlayerAsInitialized {
-            player_id: ActorRuntimeID(runtime_id),
-        }),
+        Packet::new(initialized),
     ]
+}
+
+/// Retains the reusable typed cause and packet-rejection classification at the I/O edge.
+fn spawn_failure(error: SpawnError) -> ProtocolError {
+    SessionFailure::ClientSpawn(error).into()
+}
+
+/// Supplies a real ready core for play-only fixtures without running an I/O join.
+#[cfg(test)]
+pub(super) fn ready_fixture(runtime_id: u64) -> SpawnNegotiation {
+    let radius = i32::from(DEFAULT_CHUNK_RADIUS);
+    let mut negotiation = SpawnNegotiation::new(packets::RequestChunkRadius {
+        chunk_radius: bedrock_protocol_1_26_51::wire::ZigZag32(radius),
+        max_chunk_radius: bedrock_protocol_1_26_51::wire::U8(DEFAULT_CHUNK_RADIUS),
+    })
+    .unwrap();
+    for packet in [
+        packets::Packet::StartGame(Box::new(StartGame {
+            runtime_id: bedrock_protocol_1_26_51::types::ActorRuntimeID(runtime_id),
+            ..Default::default()
+        })),
+        packets::Packet::ItemRegistry(ItemRegistry::default()),
+        packets::Packet::ChunkRadiusUpdated(packets::ChunkRadiusUpdated {
+            chunk_radius: bedrock_protocol_1_26_51::wire::ZigZag32(radius),
+        }),
+        packets::Packet::PlayStatus(packets::PlayStatus {
+            status: bedrock_protocol_1_26_51::enums::PlayStatusType::Playerspawn,
+        }),
+    ] {
+        negotiation.receive(packet).unwrap();
+    }
+    negotiation
 }
 
 /// Returns the next startup packet. A usable transfer, from the core or in a batch, ends the join;
