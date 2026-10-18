@@ -3,6 +3,7 @@
 mod minecraft_import;
 mod mods;
 mod out_of_game;
+mod profile;
 mod updates;
 
 use std::sync::Arc;
@@ -55,6 +56,42 @@ const TALL_SIZE: [u32; 2] = [1280, 900];
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
 
 pub const STATES: &[State] = &[
+    State {
+        name: "profile-overview-fallback",
+        size: TALL_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: profile::overview,
+    },
+    State {
+        name: "profile-overview-fallback-narrow",
+        size: [360, TALL_SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: profile::overview,
+    },
+    State {
+        name: "profile-stats-fallback",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: profile::statistics,
+    },
+    State {
+        name: "profile-stats-fallback-narrow",
+        size: [360, SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: profile::statistics,
+    },
+    State {
+        name: "profile-partial-fallback",
+        size: TALL_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || profile::partial(launcher::menu::ProfileTab::Overview),
+    },
+    State {
+        name: "profile-partial-stats-fallback",
+        size: [360, SIZE[1]],
+        gui_scale: GUI_SCALE,
+        fixture: || profile::partial(launcher::menu::ProfileTab::Stats),
+    },
     State {
         name: "home-mod-update-before",
         size: SIZE,
