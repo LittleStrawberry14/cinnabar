@@ -17,8 +17,8 @@ fn fixture_stack(payload: &[u8]) -> Arc<resource_pack::ValidatedPackStack> {
     archive.start_file("unused.bin", options).unwrap();
     archive.write_all(payload).unwrap();
     let stack =
-        resource_pack::validate_handoff(protocol::ResourcePackHandoff::from_archives(vec![
-            protocol::ResourcePackArchive::unencrypted(
+        resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::from_archives(vec![
+            resource_pack::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
                 String::new(),
@@ -95,7 +95,7 @@ fn join_stack(paths: &std::ffi::OsStr) -> Arc<resource_pack::ValidatedPackStack>
                 .map(|part| part.as_u64().unwrap().to_string())
                 .collect::<Vec<_>>()
                 .join(".");
-            protocol::ResourcePackArchive::unencrypted(
+            resource_pack::ResourcePackArchive::unencrypted(
                 header["uuid"].as_str().unwrap().parse().unwrap(),
                 version,
                 String::new(),
@@ -103,8 +103,9 @@ fn join_stack(paths: &std::ffi::OsStr) -> Arc<resource_pack::ValidatedPackStack>
             )
         })
         .collect();
-    let stack =
-        resource_pack::validate_handoff(protocol::ResourcePackHandoff::from_archives(archives));
+    let stack = resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::from_archives(
+        archives,
+    ));
     assert!(stack.rejections().is_empty(), "{:?}", stack.rejections());
     stack
 }

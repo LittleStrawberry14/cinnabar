@@ -58,3 +58,23 @@ fn malformed_syntax_is_rejected_and_comments_separate_tokens() {
     let error = parse_jsonc::<Value>(b"{/* first\nsecond */\n\"a\":}\n").unwrap_err();
     assert_eq!(error.line(), 3);
 }
+
+#[test]
+fn manifest_leniency_accepts_hash_comments_and_only_the_first_value() {
+    use super::parse_jsonc_lenient;
+    let bytes = br##"# header
+    {"name":"x#//y", "values":[1,2,],} trailing "unfinished /*"##;
+    let value: Value = parse_jsonc_lenient(bytes).unwrap();
+    assert_eq!(value, json!({"name":"x#//y", "values":[1,2]}));
+    assert!(parse_jsonc::<Value>(bytes).is_err());
+    assert_eq!(
+        parse_jsonc_lenient::<Value>(b"{} /* unfinished").unwrap(),
+        json!({})
+    );
+    for bytes in [
+        br#"{"a": /* unfinished"#.as_slice(),
+        br#"{"a":tr/* gap */ue}"#,
+    ] {
+        assert!(parse_jsonc_lenient::<Value>(bytes).is_err());
+    }
+}

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use protocol::{ResourcePackArchive, ResourcePackHandoff};
 use resource_pack::{PackAdmission, ValidatedPackStack};
+use resource_pack::{ResourcePackArchive, ResourcePackHandoff};
 
 use super::{CompileEnvironment, CompiledStacks, compile_reusing};
 use crate::runtime::network::resource_packs::{

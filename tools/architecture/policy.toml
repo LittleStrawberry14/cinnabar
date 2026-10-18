@@ -89,7 +89,7 @@ name = "protocol"
 path = "crates/protocol"
 # Native networking uses external cinnabar-mc/bedrock-net and nethernet libraries;
 # generated packet schemas and application startup remain owned by protocol.
-allowed_dependencies = ["simulation-clock", "block-transform", "bridge", "render-api", "test-time", "protocol-ids"]
+allowed_dependencies = ["simulation-clock", "block-transform", "bridge", "render-api", "test-time", "protocol-ids", "resource-pack"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]
 
@@ -102,7 +102,7 @@ forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 [[crates]]
 name = "resource-pack"
 path = "crates/resource-pack"
-allowed_dependencies = ["pack-json", "protocol"]
+allowed_dependencies = ["pack-json"]
 forbidden_dependencies = ["asset-compiler", "assets", "bevy", "wgpu"]
 test_support_features = ["test-support"]
 

@@ -15,7 +15,7 @@ fn sheet_png(cell: u32, opaque_cell: u32) -> Vec<u8> {
     bytes.into_inner()
 }
 
-fn archive(id: u8, files: &[(&str, Vec<u8>)]) -> protocol::ResourcePackArchive {
+fn archive(id: u8, files: &[(&str, Vec<u8>)]) -> resource_pack::ResourcePackArchive {
     let id = format!("00000000-0000-0000-0000-{id:012}");
     let manifest = format!(
         r#"{{"format_version":2,"header":{{"uuid":"{id}","version":[1,0,0]}},"modules":[{{"type":"resources"}}]}}"#
@@ -29,7 +29,7 @@ fn archive(id: u8, files: &[(&str, Vec<u8>)]) -> protocol::ResourcePackArchive {
             .unwrap();
         writer.write_all(&bytes).unwrap();
     }
-    protocol::ResourcePackArchive::unencrypted(
+    resource_pack::ResourcePackArchive::unencrypted(
         id.parse().unwrap(),
         "1.0.0".into(),
         String::new(),
@@ -37,9 +37,9 @@ fn archive(id: u8, files: &[(&str, Vec<u8>)]) -> protocol::ResourcePackArchive {
     )
 }
 
-fn view(archives: Vec<protocol::ResourcePackArchive>) -> LayeredPackView {
+fn view(archives: Vec<resource_pack::ResourcePackArchive>) -> LayeredPackView {
     LayeredPackView::new(resource_pack::validate_handoff(
-        protocol::ResourcePackHandoff::from_archives(archives),
+        resource_pack::ResourcePackHandoff::from_archives(archives),
     ))
 }
 

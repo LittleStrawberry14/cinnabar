@@ -7,12 +7,13 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "handoff")]
-use protocol::ResourcePackHandoff;
 use thiserror::Error;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cache;
 mod crypto;
 mod dependencies;
+mod handoff;
 mod import;
 mod library;
 mod manifest;
@@ -20,11 +21,12 @@ mod merge;
 mod pack;
 mod parser;
 pub mod subpacks;
-#[cfg(all(feature = "handoff", any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod view;
 
 pub use dependencies::{PackDependencies, PackDependency};
+pub use handoff::{ResourcePackArchive, ResourcePackContentKey, ResourcePackHandoff};
 pub use import::{
     GlobalSelectionEntry, PACK_IMPORT_EXTENSIONS, ParsedGlobalSelection, PreparedImport,
     is_pack_import_path, merge_global_selection, parse_global_selection, prepare_import,
@@ -34,7 +36,7 @@ pub use library::{
 };
 pub use merge::{MAX_MERGED_ENTRIES, MAX_WINNING_BYTES, MAX_WINNING_FILES};
 pub use pack::{PackRejection, ValidatedPack, ValidatedPackStack};
-pub use parser::validate_archive_bytes;
+pub use parser::{validate_archive_bytes, verify_archive_identity};
 pub use view::LayeredPackView;
 
 /// Maximum compressed source bytes decoded for one pack texture.
@@ -45,6 +47,8 @@ pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_STACK_ARCHIVE_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 pub const MAX_PATH_BYTES: usize = 512;
+/// Maximum UTF-8 bytes retained for an advertised pack version.
+pub const MAX_PACK_VERSION_BYTES: usize = 256;
 pub const MAX_ENTRIES_PER_PACK: usize = 32_768;
 pub const MAX_ENTRIES_PER_STACK: usize = 65_536;
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -115,14 +119,12 @@ pub enum PackAdmission {
 }
 
 /// Admits a highest-priority-first server handoff into lowest-priority-first layers.
-#[cfg(feature = "handoff")]
 #[must_use]
 pub fn validate_handoff(handoff: ResourcePackHandoff) -> Arc<ValidatedPackStack> {
     Arc::new(parser::validate_stack(handoff.into_archives(), None))
 }
 
 /// Admits server packs using the device's physical RAM for automatic subpack selection.
-#[cfg(feature = "handoff")]
 #[must_use]
 pub fn validate_handoff_for_device(
     handoff: ResourcePackHandoff,
@@ -134,5 +136,5 @@ pub fn validate_handoff_for_device(
     ))
 }
 
-#[cfg(all(test, feature = "handoff"))]
+#[cfg(test)]
 mod handoff_tests;

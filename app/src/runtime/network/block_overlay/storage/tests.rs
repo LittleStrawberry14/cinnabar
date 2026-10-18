@@ -21,8 +21,8 @@ fn view(files: &[(&str, &[u8])]) -> LayeredPackView {
         writer.write_all(bytes).unwrap();
     }
     LayeredPackView::new(resource_pack::validate_handoff(
-        protocol::ResourcePackHandoff::from_archives(vec![
-            protocol::ResourcePackArchive::unencrypted(
+        resource_pack::ResourcePackHandoff::from_archives(vec![
+            resource_pack::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
                 String::new(),

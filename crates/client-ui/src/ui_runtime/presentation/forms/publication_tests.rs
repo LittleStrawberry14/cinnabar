@@ -105,11 +105,12 @@ fn fixture_pack(paths: &str) -> ServerUiPack {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(".");
-            protocol::ResourcePackArchive::unencrypted(id, version, String::new(), bytes)
+            resource_pack::ResourcePackArchive::unencrypted(id, version, String::new(), bytes)
         })
         .collect();
-    let stack =
-        resource_pack::validate_handoff(protocol::ResourcePackHandoff::from_archives(archives));
+    let stack = resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::from_archives(
+        archives,
+    ));
     assert!(stack.rejections().is_empty());
     let view = resource_pack::LayeredPackView::new(stack);
     let ui_layers = view

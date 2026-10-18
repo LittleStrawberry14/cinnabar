@@ -68,7 +68,7 @@ impl PackPreparation {
 
 /// Reads StartGame pack facts and validates the one-shot login handoff.
 pub fn prepare_session_packs(
-    handoff: protocol::ResourcePackHandoff,
+    handoff: resource_pack::ResourcePackHandoff,
     game_data: &protocol::GameData,
     physical_memory_bytes: u64,
 ) -> PackPreparation {
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn required_pack_rejection_stays_between_subscriber_compile_and_completion() {
         for required in [false, true] {
-            let archive = protocol::ResourcePackArchive::unencrypted(
+            let archive = resource_pack::ResourcePackArchive::unencrypted(
                 "11111111-2222-3333-4444-555555555555".parse().unwrap(),
                 "1.2.3".into(),
                 String::new(),
@@ -283,7 +283,7 @@ mod tests {
             let preparation = PackPreparation {
                 inputs: Arc::default(),
                 admission: PackAdmission::Validated(resource_pack::validate_handoff(
-                    protocol::ResourcePackHandoff::from_archives(vec![archive]),
+                    resource_pack::ResourcePackHandoff::from_archives(vec![archive]),
                 )),
                 required,
             };
@@ -312,7 +312,7 @@ mod tests {
     // session must not also keep the copy this login validated.
     #[test]
     fn preparing_a_session_releases_the_archives_it_validated() {
-        let archive = protocol::ResourcePackArchive::unencrypted(
+        let archive = resource_pack::ResourcePackArchive::unencrypted(
             "11111111-2222-3333-4444-555555555555".parse().unwrap(),
             "1.2.3".into(),
             String::new(),
@@ -321,7 +321,7 @@ mod tests {
         let game_data = protocol::GameData::default();
         let mut validated = None;
         let preparation = prepare_session_packs(
-            protocol::ResourcePackHandoff::from_archives(vec![archive]),
+            resource_pack::ResourcePackHandoff::from_archives(vec![archive]),
             &game_data,
             u64::MAX,
         );

@@ -28,8 +28,8 @@ pub(super) fn stack(files: &[(&str, &[u8])]) -> Arc<ValidatedPackStack> {
             .unwrap();
         zip.write_all(bytes).unwrap();
     }
-    resource_pack::validate_handoff(protocol::ResourcePackHandoff::from_archives(vec![
-        protocol::ResourcePackArchive::unencrypted(
+    resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::from_archives(vec![
+        resource_pack::ResourcePackArchive::unencrypted(
             id.parse().unwrap(),
             "1.0.0".into(),
             String::new(),

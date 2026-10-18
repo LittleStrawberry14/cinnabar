@@ -466,16 +466,20 @@ fn unusable_contents_index_is_not_treated_as_plaintext() {
 }
 
 #[test]
-fn rejects_malformed_jsonc_and_multiple_json_values() {
-    for body in [
-        br#"{"format_version":2 /* unterminated"#.as_slice(),
-        br#"{} {}"#.as_slice(),
-    ] {
-        let archive = zip_files(&[("manifest.json", body)]);
-        assert_eq!(
-            validate_fixture(archive, "").unwrap_err(),
-            AdmissionError::MalformedManifest
-        );
+fn rejects_incomplete_manifest_jsonc() {
+    let archive = zip_files(&[("manifest.json", br#"{"format_version":2 /* unterminated"#)]);
+    assert_eq!(
+        validate_fixture(archive, "").unwrap_err(),
+        AdmissionError::MalformedManifest
+    );
+}
+
+#[test]
+fn manifest_uses_first_jsonc_value() {
+    for tail in [" {}", " /* unfinished trailing comment"] {
+        let body = format!("{}{tail}", manifest(""));
+        let archive = zip_files(&[("manifest.json", body.as_bytes())]);
+        validate_fixture(archive, "").expect("complete first manifest value");
     }
 }
 

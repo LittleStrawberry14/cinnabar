@@ -67,12 +67,12 @@ mod tests {
                 writer.start_file(path, zip::write::SimpleFileOptions::default()).unwrap();
                 writer.write_all(bytes).unwrap();
             }
-            protocol::ResourcePackArchive::unencrypted(
+            resource_pack::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(), "1.0.0".into(), String::new(), writer.finish().unwrap().into_inner(),
             )
         }).collect();
         LayeredPackView::new(resource_pack::validate_handoff(
-            protocol::ResourcePackHandoff::from_archives(archives),
+            resource_pack::ResourcePackHandoff::from_archives(archives),
         ))
     }
 

@@ -5,7 +5,7 @@ use futures::StreamExt;
 use protocol::session_wire::{
     ConnectRequest, CoreMessage, HandoffPackReceiver, decode_core_message, encode_connect,
 };
-use protocol::{ResourcePackArchive, ResourcePackHandoff};
+use resource_pack::{ResourcePackArchive, ResourcePackHandoff};
 use std::{
     future::pending,
     io::{self, Write},

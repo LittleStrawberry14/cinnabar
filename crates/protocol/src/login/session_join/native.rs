@@ -3,8 +3,9 @@
 use super::{JoinPreparation, SessionIo, SessionLogin};
 use crate::{
     ClientBlobCache, ClientRandomId, ClientSkin, GameData, LoginSequence, LoginSettings,
-    PlaySession, ProtocolError, ResourcePackHandoff, packet_tap::PacketTap,
+    PlaySession, ProtocolError, packet_tap::PacketTap,
 };
+use resource_pack::ResourcePackHandoff;
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
 /// Preserves native startup offloading and panic propagation on the Tokio runtime.
