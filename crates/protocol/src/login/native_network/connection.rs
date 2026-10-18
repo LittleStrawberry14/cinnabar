@@ -333,6 +333,11 @@ impl Connection {
         }
     }
 
+    /// Releases an already consumed packet after its separate handoff owner has been committed.
+    pub(super) fn finish_current(&mut self) {
+        self.current = None;
+    }
+
     /// Borrows a decoded terminal only when the last actual packet carried it.
     pub(super) fn current_terminal(&self) -> io::Result<Option<crate::session_wire::CoreMessage>> {
         self.current
@@ -450,17 +455,25 @@ impl PacketConnection for Connection {
         self.send_body_until(body, None).await
     }
 
-    /// Reframes the unread batch as ordinary Bedrock entries for lazy play decoding.
+    /// Reframes a bounded prefix while retaining every remaining packet on the same FIFO.
     async fn recv_body(&mut self) -> io::Result<Bytes> {
         self.fill().await?;
         let mut body = Vec::new();
-        for packet in self.pending.drain(..) {
-            let mut writer = wire::Writer::with_limit(&mut body, self.limits.max_decoded_bytes);
-            writer
-                .write_len_var_u32(packet.len())
-                .map_err(io::Error::other)?;
-            body.extend_from_slice(&packet);
+        let mut accepted = 0;
+        for packet in self.pending.iter().take(self.limits.max_packets) {
+            let checkpoint = body.len();
+            let remaining = self.limits.max_decoded_bytes.saturating_sub(checkpoint);
+            let result = wire::Writer::with_limit(&mut body, remaining).write_byte_slice(packet);
+            if let Err(error) = result {
+                body.truncate(checkpoint);
+                if accepted == 0 {
+                    return Err(io::Error::other(error));
+                }
+                break;
+            }
+            accepted += 1;
         }
+        self.pending.drain(..accepted).for_each(drop);
         Ok(Bytes::from(body))
     }
 
