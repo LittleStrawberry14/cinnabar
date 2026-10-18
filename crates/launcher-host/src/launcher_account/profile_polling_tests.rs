@@ -186,27 +186,37 @@ fn retired_account_cancels_pending_profile_before_loading_replacement() {
         }
     });
     let mut account = LauncherAccount::new(directory.path().into(), directory.path().join("art"));
-    test_time::wait_until(Duration::from_secs(2), || admitted.load(Ordering::Acquire));
-    replacement.store(true, Ordering::Release);
-    account.with(|snapshot| {
-        snapshot.set_account(Account {
-            state: CoreAuth::SignedIn,
-            gamertag: Some("Replacement".into()),
-            verification_uri: None,
-            user_code: None,
-            reason: None,
-        })
-    });
     // Always close the fixture on failure; an old sixty-second RPC must not escape this test.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_time::wait_until(Duration::from_secs(2), || {
-            account.profile().is_some_and(|profile| {
-                profile.loaded
-                    && !profile.unavailable
-                    && profile.gamertag == "Replacement"
-                    && released.load(Ordering::Acquire)
+        test_time::eventually_within(
+            Duration::from_secs(2),
+            "first profile RPC admission",
+            || admitted.load(Ordering::Acquire),
+        );
+        replacement.store(true, Ordering::Release);
+        account.with(|snapshot| {
+            snapshot.set_account(Account {
+                state: CoreAuth::SignedIn,
+                gamertag: Some("Replacement".into()),
+                verification_uri: None,
+                user_code: None,
+                reason: None,
             })
         });
+        let mut fresh = false;
+        test_time::eventually_within(
+            Duration::from_secs(2),
+            "retired profile socket EOF and replacement profile",
+            || {
+                fresh |= account.profile().is_some_and(|profile| {
+                    profile.loaded
+                        && !profile.unavailable
+                        && profile.gamertag == "Replacement"
+                        && profile.xuid == "456"
+                });
+                fresh && released.load(Ordering::Acquire)
+            },
+        );
     }));
     drop(account);
     done.store(true, Ordering::Release);
