@@ -25,7 +25,7 @@ pub(super) enum Transport {
         nonce: String,
         inbox: Inbox,
     },
-    Messaging(MessagingTransport),
+    Messaging(Box<MessagingTransport>),
 }
 
 impl Transport {
@@ -37,6 +37,7 @@ impl Transport {
         if target.transport == NativeTransport::NetherNetMessaging {
             return MessagingTransport::connect(target, messaging)
                 .await
+                .map(Box::new)
                 .map(Self::Messaging);
         }
         if messaging.is_some() {
