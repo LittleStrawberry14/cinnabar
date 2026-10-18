@@ -1,12 +1,22 @@
 ## Native direct networking (in progress)
 
-The optional `native-networking` feature adds signed-out direct connections through
-the Cinnabar networking libraries. The CLI selects RakNet or directed NetherNet LAN
-with `--native-networking`; the Go backend remains the default. Native connections
-feed the existing Rust spawn, resource-pack presentation and play owners directly.
-Account services, CDN/cache integration, hosting, browser transport and the broader
-network/device acceptance matrix remain incomplete. This does not close a parity
-gate or authorize removing the working Go backend.
+The optional `native-networking` feature adds direct connections through the
+Cinnabar networking libraries. The menu can acquire credentials for the selected
+saved account and join RakNet with the same connection key used for its token mint,
+Login and key exchange. Account acquisition retains proof/session ownership and
+publishes saved credentials only after identity verification. Direct CLI startup
+still uses signed-out identity; directed NetherNet LAN is available without account
+signaling. The Go backend remains the default.
+
+Native resource-pack acquisition tries the bounded persistent archive cache and
+CDN before requesting missing data in-band. The resource-pack crate owns archive
+handoffs independently of protocol, and existing Rust presentation, spawn and play
+owners consume them directly.
+
+Native interactive sign-in, persistent derived-token reuse, service-resolved joins,
+signed NetherNet signaling, hosting, browser transport and the broader account,
+network/device and performance acceptance matrix remain incomplete. No parity gate
+closes and the working Go backend remains required during validation.
 
 ## Custom block and item texture inheritance
 
