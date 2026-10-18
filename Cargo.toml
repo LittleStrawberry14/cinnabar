@@ -158,15 +158,16 @@ wit-bindgen = "=0.57.1"
 wit-component = "=0.247.0"
 
 
-# Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1.
+# Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1,
+# with the naga GLSL front-end fixes shader-pack translation needs.
 [patch.crates-io]
-naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
+naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
+wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
 
-wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
+wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "3c49bd59cf628fe8246a5c4a465a7c30e724ca67" }
 
 [profile.dev]
 opt-level = 1
