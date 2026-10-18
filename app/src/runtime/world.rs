@@ -333,7 +333,7 @@ pub(crate) struct WorldPollInputs<'w, 's> {
     #[cfg(not(target_arch = "wasm32"))]
     menu: Option<Res<'w, client_shell::menu::MenuRuntime>>,
     #[cfg(target_arch = "wasm32")]
-    options: Res<'w, crate::browser::BrowserOptions>,
+    options: Res<'w, crate::browser_input::BrowserOptions>,
     render_queue: Option<ResMut<'w, ChunkRenderQueue>>,
 }
 
