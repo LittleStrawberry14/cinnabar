@@ -39,21 +39,27 @@ pub(super) async fn run(
     timeout: Duration,
 ) -> Outcome {
     let mut queued_refresh = false;
+    let fetch_deadline = AsyncInstant::now() + timeout;
     let result = async {
         let mut profile = wait(
             selection.source.fetch(socket_dir),
             shared,
             selection,
             requests,
-            Some(AsyncInstant::now() + timeout),
+            Some(fetch_deadline),
             &mut queued_refresh,
         )
         .await?
         .map_err(|_| Exit::Unavailable)?;
         wait(
             async {
-                artwork::fill(images, artwork::profile_slots(profile.profile_mut())).await;
                 profile
+                    .enrich(fetch_deadline)
+                    .await
+                    .map_err(|_| Exit::Unavailable)?;
+                profile.cache_avatar(images);
+                artwork::fill(images, artwork::profile_slots(profile.profile_mut())).await;
+                Ok(profile)
             },
             shared,
             selection,
@@ -61,7 +67,7 @@ pub(super) async fn run(
             None,
             &mut queued_refresh,
         )
-        .await
+        .await?
     }
     .await;
     match result {

@@ -3,6 +3,11 @@
 use super::*;
 use bedrock_services::xbox::social::{PeopleList, ProfileDetail, Social, User};
 
+mod achievements;
+mod facets;
+mod policy;
+mod statistics;
+
 /// A read remains tied to its original account while artwork is acquired off-frame.
 /// Presentation survives ordinary credential rotation, but never a replacement sign-in or XUID.
 pub(crate) struct NativeProfile {
@@ -10,9 +15,22 @@ pub(crate) struct NativeProfile {
     pub(crate) partial: bool,
     account: Arc<NativeAccount>,
     generation: String,
+    avatar: Option<bedrock_services::minecraft::profile::ImageBody>,
 }
 
 impl NativeProfile {
+    /// Admits persona bytes only through the existing artwork cache on its off-frame worker.
+    pub(crate) fn cache_avatar(&mut self, images: &crate::remote_images::ImageDirectory) {
+        if let Some(avatar) = self.avatar.take() {
+            if let Some(path) = images.store_service_image(&avatar.bytes) {
+                self.profile.avatar.path = path.to_string_lossy().into_owned();
+                self.profile.avatar_error = false;
+            } else {
+                self.partial = true;
+            }
+        }
+    }
+
     /// Rejects a retired or currently unverifiable selection immediately before menu publication.
     /// The profile worker calls this off-frame; the short protected lease performs no authentication.
     pub(crate) fn into_current(self) -> Option<bridge::Profile> {
@@ -42,7 +60,7 @@ impl NativeAccount {
     /// Reads overview and independent relationship counts through the selected account owner.
     /// The existing profile worker owns the original deadline and cancellation. Each phase
     /// rearms/persists the shared SDK owner and releases its lease before the next phase.
-    /// Unsupported profile facets remain unavailable.
+    /// Optional service failure retains the other successfully loaded facets.
     pub(crate) async fn read_profile(self: Arc<Self>) -> io::Result<NativeProfile> {
         let mut operation = Arc::clone(&self).acquire_verified().await?;
         let cached = operation.cached.as_ref().expect("verified account");
@@ -91,6 +109,7 @@ impl NativeAccount {
             partial,
             account: self,
             generation,
+            avatar: None,
         })
     }
 
@@ -131,6 +150,15 @@ impl NativeAccount {
 impl Operation {
     /// Revalidates the actual Xbox identity before each independent borrowed profile facet.
     async fn profile_social(&mut self) -> io::Result<Social<'_>> {
+        self.profile_identity().await?;
+        match &mut self.cached.as_mut().expect("account owner").owner {
+            Owner::Xbox(account) => Ok(account.social()),
+            Owner::Minecraft(services) => Ok(services.social()),
+        }
+    }
+
+    /// Reuses the same proof's current default authorization before dispatching any profile facet.
+    async fn profile_identity(&mut self) -> io::Result<()> {
         self.rearm()?;
         let authorization = self
             .cached
@@ -139,11 +167,7 @@ impl Operation {
             .owner
             .xbox_authorization()
             .await?;
-        self.verify_identity(authorization.xuid(), authorization.gamertag())?;
-        match &mut self.cached.as_mut().expect("account owner").owner {
-            Owner::Xbox(account) => Ok(account.social()),
-            Owner::Minecraft(services) => Ok(services.social()),
-        }
+        self.verify_identity(authorization.xuid(), authorization.gamertag())
     }
 }
 
@@ -193,5 +217,7 @@ fn apply_user(profile: &mut bridge::Profile, user: User) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod conformance;
 #[cfg(test)]
 mod tests;

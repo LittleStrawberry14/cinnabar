@@ -115,6 +115,7 @@ fn completed_profile_remains_bound_to_selected_generation_after_artwork() {
         account: Arc::clone(&account),
         generation: "original".into(),
         partial: false,
+        avatar: None,
         profile: bridge::Profile {
             xuid: "123".into(),
             ..Default::default()
@@ -146,6 +147,7 @@ fn completed_profile_rejects_another_verified_xuid() {
             account,
             generation: "original".into(),
             partial: false,
+            avatar: None,
             profile: bridge::Profile {
                 xuid: "123".into(),
                 ..Default::default()
@@ -173,4 +175,62 @@ async fn cancelled_profile_waiter_preserves_unrelated_account_operation() {
     drop(operation);
     assert!(!account.state.lock().unwrap().busy);
     assert!(account.state.lock().unwrap().cached.is_some());
+}
+
+/// The original optional budget drops a real account waiter while keeping the loaded overview and its live owner.
+#[tokio::test(start_paused = true)]
+async fn optional_profile_cutoff_preserves_loaded_data_and_unrelated_operation() {
+    let (_directory, account) = account();
+    let held = account.begin().unwrap();
+    let mut loaded = NativeProfile {
+        profile: bridge::Profile {
+            xuid: "123".into(),
+            gamertag: "Loaded".into(),
+            friends: Some(7),
+            ..Default::default()
+        },
+        partial: false,
+        account: Arc::clone(&account),
+        generation: "original".into(),
+        avatar: None,
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let mut enriching = Box::pin(loaded.enrich(deadline));
+    assert!(
+        enriching
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    enriching.await.unwrap();
+    assert_eq!(loaded.profile.gamertag, "Loaded");
+    assert_eq!(loaded.profile.friends, Some(7));
+    assert!(loaded.partial);
+    assert!(account.state.lock().unwrap().busy);
+    drop(held);
+    assert!(loaded.into_current().is_some());
+}
+
+/// Optional enrichment cannot continue under a replaced sign-in even when its prior DTO remains loaded.
+#[tokio::test]
+async fn optional_profile_facet_rejects_replacement_generation_before_authentication() {
+    let (directory, account) = account();
+    let mut loaded = NativeProfile {
+        profile: bridge::Profile {
+            xuid: "123".into(),
+            ..Default::default()
+        },
+        partial: false,
+        account,
+        generation: "original".into(),
+        avatar: None,
+    };
+    seed(&directory.path().join("oauth.json"), "replacement");
+    let error = loaded
+        .enrich(tokio::time::Instant::now() + Duration::from_secs(1))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(loaded.into_current().is_none());
 }

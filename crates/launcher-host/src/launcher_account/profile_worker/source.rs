@@ -59,6 +59,27 @@ impl Source {
 }
 
 impl Loaded {
+    /// Retains the loaded overview while native optional facets use only the original remaining budget.
+    pub(super) async fn enrich(&mut self, deadline: tokio::time::Instant) -> Result<(), ()> {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Self::Native(result) = self {
+            result.enrich(deadline).await.map_err(|_| ())?;
+        }
+        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+        let _ = deadline;
+        Ok(())
+    }
+
+    /// Publishes already-acquired native persona bytes through the same bounded image owner.
+    pub(super) fn cache_avatar(&mut self, images: &crate::remote_images::ImageDirectory) {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Self::Native(result) = self {
+            result.cache_avatar(images);
+        }
+        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+        let _ = images;
+    }
+
     /// Borrows the existing presentation DTO for the shared bounded artwork cache.
     pub(super) fn profile_mut(&mut self) -> &mut Profile {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
