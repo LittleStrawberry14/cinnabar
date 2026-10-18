@@ -73,7 +73,7 @@ impl ModHost {
     }
 
     /// Digest of the admitted source, used only for an explicit signed bundle scope.
-    pub fn source_digest(&self) -> [u8; 32] {
+    pub fn admitted_source_digest(&self) -> [u8; 32] {
         self.admitted_digest
     }
 }
