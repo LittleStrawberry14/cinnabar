@@ -511,14 +511,16 @@ the pointer. The Android workflow builds the APK for Android packaging changes, 
 and on demand. Tagged Beta and nightly releases also publish a release-profile APK with a
 persistent signing key and release checksums; Android installs updates through the APK installer.
 APKs compile the shared product icon into their launcher resources. Android 11+ relaunches offer
-copyable diagnostics after an unexpected process exit.
+copyable diagnostics and a report export to Downloads after an unexpected process exit. Native
+reports include Android's retained tombstone on Android 12+ when available.
 
 Incomplete: the touch layout, its sizes, the look gain and the stick behaviour are provisional,
 not matched to the native touch schemes, safe areas or settings. There is no keyboard or IME,
 Back routing, clipboard, browser links, local worlds, Microsoft sign-in background service,
 menu touch scrolling or touch-mode form scrolling. Device frames, audio, suspend and resume,
 and performance have no Android acceptance. No parity gate closes here.
-Reported exits after resource setup on Galaxy S21 remain undiagnosed; device acceptance is open.
+The reported Galaxy S21 native crash occurs after Vulkan device creation and before confirmed
+first presentation; its failing native call remains undiagnosed and device acceptance is open.
 
 ## Runtime terrain bindings
 
@@ -906,6 +908,17 @@ the effective dependency, and manifest checks keep the three Go module pins toge
 Full transport parity remains incomplete. Host-resolver timing and address admission,
 absolute monotonic timestamp origin, and discovery-peer reuse remain provisional across
 platforms. These limits and the unresolved server-routing behavior remain open gates.
+
+## Source-water retention during block changes
+
+Primary block changes preserve source water in the secondary layer when the
+pinned block property permits it. Server updates and local predictions share
+this transition, including ordered explicit secondary writes and water removal.
+The block registry derives containment per state from the shared library rather
+than an identifier list. Regressions cover both session ID formats, replacement
+controls, and malformed updates. Flowing/falling water retention, server-defined
+block capabilities, broader liquid parity, and hardware performance gates remain
+incomplete.
 
 ## Liquid surfaces beneath opaque roofs
 
@@ -2731,44 +2744,23 @@ keep their existing easing after movement stops. Rendered acceptance and native
 player-turn parity remain incomplete.
 
 2026-10-04 user-requested custom emotes — **Incomplete native/Lunar parity**:
-the native four-slot JSON-UI wheel and remappable emote control select an original,
-owned Twerk dance with a faster user-requested loop. The owned clip preserves skin
-hierarchy and clothing; render-time body and player-preview sampling leave the
-native first-person hand and remote actor animations intact. Slot preferences
-persist through Change Emotes, and gameplay input cancels playback. Identified
-native references, the public product visual reference, and remaining parity
-limits are recorded in [docs/reference/emote-wheel.md](docs/reference/emote-wheel.md).
-Exact Lunar keyframes/assets and full native animation parity are not verified.
-The revised clip follows the reference video's deeper squat and hip pulse,
-retargets both native and independent skin joints, and anchors foot centers.
-The pelvis rocks under steady shoulders/head, avoiding a whole-body jumping
-pulse; stance compensation keeps foot centers fixed on all three axes.
-The user rejected that first steady-head revision as still looking like a crouch.
-The next local revision increases the hip thrust, reduces the base torso lean,
-adds alternating torso twist and brings the hands closer to the thighs. It
-retains rigid legs on unsupported custom models. The latest local revision adds
-temporary thigh/shin joints to classic cuboid skins only during playback, crops
-their existing UVs, and bends the knees with a planted-foot two-segment solve.
-Stopping playback restores the original mesh/pose; native hand, remote actors
-and simulation skeletons remain unchanged. Eleven animation tests pass;
-exact Lunar/native parity remains incomplete.
-The user accepted the installed knee revision; the next local adjustment speeds
-up playback and increases vertical pelvis travel while keeping shoulders/head
-steady and foot centers planted. The user accepted the installed faster motion.
-The accompanying foot correction adds emote-only ankle joints, keeps the entire
-sole level, and anchors all four sole corners rather than only the foot center.
-The user reported an exposed ankle seam. The next local mesh correction embeds
-the ankle inside overlapping, original-textured foot/shin volumes; the timing
-and pelvis motion remain unchanged. The user accepted the installed correction on Windows.
-Focused checks pass: 480 JSON-UI tests, four saved-binding/slot tests, eleven
-animation tests, eleven emote UI tests and twenty-five app emote checks. The
-1280x720 software-rendered wheel/equip frames were inspected for readable text
-and geometry. The user accepted the installed wheel and knee revision; the
-latest ankle-seam correction is user-accepted on Windows. The animation
-revision is being integrated with current dev for the requested direct push.
-Strict affected-package clippy passes. Required affected verification reaches
-the existing ice/water liquid-face test failure after formatting, architecture
-and compilation pass; that meshing regression is outside this change.
+All emote choreography and reproducible exports, including Twerk and Breakdance,
+are owned by the API catalog. The client retains generic articulated clip playback,
+not a built-in emote list or procedural dances. Fresh profiles equip supported
+owned clips in catalog order; missing catalog content leaves empty slots. Saved
+IDs and current ownership resolve against exact admitted catalog revisions.
+The four-slot JSON-UI wheel supports paging, remapped keyboard/controller controls,
+and configured controller button swaps. Gameplay actions cancel playback.
+Classic cuboid skins retain render-only elbows, wrists, knees, ankles and a lower
+torso with cropped UVs, clothing, face layers and held-item anchors. Visible-body
+contact correction is shared with attachments without removing authored root lift.
+Native first-person hands and actors without shared playback keep their normal
+poses. Synthetic fixtures cover parser, catalog revision/defaults, input and pose
+ownership. The API validates its production exports independently. Unusual custom
+proportions, native Dressing Room navigation, Marketplace ownership/playback and
+exact native/Lunar animation parity remain incomplete. See
+[docs/reference/emote-wheel.md](docs/reference/emote-wheel.md).
+
 2026-10-04 F3 diagnostics (user-accepted developer feature): the supplied Java
 19w05a screenshot is the requested styling reference. F3 is available by default,
 hidden at startup, and the window title contains only the shared product name.
@@ -4280,8 +4272,16 @@ remaining wither spawn, armor and death behavior still need matched verification
 
 Sulfur-cube body and shell material aliases retain their cutout and blended states.
 The pinned adult and baby shell rasters preserve fractional opacity through actor
-carrier admission. Incomplete: absorbed-block scale and attachment placement remain
-unverified; restoring the shell does not close the full sulfur-cube rendering gate.
+carrier admission. The medium cube's absorbed oak log fills the shell in a matched
+local Bedrock comparison. Incomplete: other cube sizes, items and attachment placements
+remain unverified; these changes do not close the full sulfur-cube rendering gate.
+
+Client descriptions retain numeric or Molang `held_item_scale` through rig carriers.
+Equipment reads the owner's bounded frame sample and applies the factor once to the
+main hand in either perspective; omitted descriptions keep unit size. Regression
+fixtures cover carried blocks, native weapon stages, authored models, offhand isolation
+and exhausted frame budgets. Incomplete: native custom-model origins, expression
+side effects and extreme equipment visibility bounds still need matched comparisons.
 
 2026-10-05 custom actor lens materials: the Murder Mystery lens overrides its body's
 wildcard material with `slime_outer`. The compiler previously ignored bone-specific
@@ -10126,23 +10126,23 @@ Fully hidden valid cubes still return invisible, even if another cube was
 rejected. Regressions cover all three cases in hashed and palette sessions,
 including visual support, gap counts, and session application.
 
-## Custom fence connections need mesh-time neighbor evaluation
+## Custom fence connection states
 
-Custom fences gate permutation arms on neighbor queries such as
-`q.block_state('minecraft:connection_north')`. Those names are never block
-state axes, so no static state can satisfy them: every evaluation stays
-unevaluated and counted, and every state keeps the base (unconnected) post.
-Vanilla fences instead connect at mesh time through fence template flags
-and neighbor facts, which custom visuals cannot carry today.
+Custom fences use the `minecraft:connection` trait
+(`minecraft:cardinal_connections`): four neighbor-derived booleans
+(`minecraft:connection_north/east/south/west`) that read as ordinary block
+states in permutations and bone visibility. The trait parser expands them to
+four boolean palette axes (sixteen states), so each state hides only its
+disconnected rail bones and collision permutations resolve per state.
+Connection queries without the trait stay unevaluated and keep the base
+visual, locked by the connection permutation regression.
 
-A parity fix must compile each connection combination, record a
-mask-to-visual mapping the mesher can read, and select it per placed block
-using a documented neighbor-connection rule. Native behavior for these
-packs is unverified: unknown `block_state` names may render unconnected
-natively too. Until that comparison exists, the counted fallback to the
-base visual is the intended semantic, locked by the connection permutation
-regression. Incomplete: mask compilation, neighbor rule, meshing selection,
-and the native comparison.
+Incomplete: the axis order (north, east, south, west) and their placement
+after placement traits are provisional with no wire capture yet; hashed
+sessions hash sorted names and are unaffected, but sequential palettes need
+the server order confirmed. Rendered native comparison (isolated post
+against connected arms) and cross-block behavior (`connection_rule`,
+vanilla fences connecting to tagged custom fences) remain unverified.
 
 
 ## Import player data from Minecraft
