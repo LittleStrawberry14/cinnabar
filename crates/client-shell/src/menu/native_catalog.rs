@@ -2,10 +2,14 @@
 
 use super::*;
 use launcher::menu::CATALOG_REFRESH_INTERVAL;
-use launcher_host::native_account::{CatalogCards, CatalogWorker, NativeAccount};
+use launcher_host::native_account::{
+    CatalogCards, CatalogWorker, NativeAccount, NativeFriendSelection, NativeFriendWorld,
+};
 use std::{sync::Arc, time::Instant};
 
 const FAILURE_MESSAGE: &str = "Realms and friends: Refresh to try again.";
+// Enable only after the application owner passes admission, cancellation and cleanup qualification.
+const NATIVE_FRIEND_JOINS_QUALIFIED: bool = false;
 
 #[derive(Default)]
 pub(super) struct Controller {
@@ -13,6 +17,8 @@ pub(super) struct Controller {
     request: Option<Request>,
     epoch: u64,
     next_refresh: Option<Instant>,
+    friend_worlds: Vec<NativeFriendWorld>,
+    join: Option<NativeFriendSelection>,
 }
 
 struct Selection {
@@ -33,6 +39,10 @@ impl std::fmt::Debug for Controller {
 }
 
 impl Controller {
+    /// Retires an unconsumed service selection when a different session intent wins.
+    pub(super) fn cancel_join(&mut self) {
+        self.join = None;
+    }
     /// Cancels the prior request before allowing another operation on the same SDK owner.
     pub(super) fn pause(&mut self) {
         self.request = None;
@@ -49,6 +59,8 @@ impl Controller {
     fn retire(&mut self) {
         self.refresh();
         self.selected = None;
+        self.friend_worlds.clear();
+        self.join = None;
     }
 
     /// Reuses one account across listing, Realm resolution and final key mint without filesystem access.
@@ -82,6 +94,46 @@ impl Controller {
 }
 
 impl MenuRuntime {
+    /// Captures the selected opaque owner; the qualification gate keeps this action unavailable meanwhile.
+    pub(super) fn request_native_friend(&mut self, index: usize) {
+        if !NATIVE_FRIEND_JOINS_QUALIFIED {
+            self.message = Some("Native friend-world joining is not available yet.".into());
+            return;
+        }
+        let Some(selection) = self.native_friend_selection(index) else {
+            self.message =
+                Some("That friend world is no longer available. Refresh to try again.".into());
+            return;
+        };
+        self.remember_session_origin();
+        self.stop_catalog();
+        self.intents.join = None;
+        self.native_catalog.join = Some(selection);
+        self.show_connecting();
+    }
+
+    /// Moves the original selected service/account owner to the application's session controller.
+    pub fn take_native_friend_intent(&mut self) -> Option<NativeFriendSelection> {
+        if self.account_change_pending() {
+            self.native_catalog.cancel_join();
+            return None;
+        }
+        self.native_catalog.join.take()
+    }
+    /// Borrows the selected row's opaque service/account owner; display text never resolves a handle.
+    fn native_friend_selection(&mut self, index: usize) -> Option<NativeFriendSelection> {
+        if !self.native_sign_in || self.account_change_pending() {
+            return None;
+        }
+        let selected = self.native_catalog.selected.as_ref()?;
+        if selected.identity.as_deref() != self.selected_account_id()
+            || Some(&selected.path) != self.launcher_auth_cache().as_ref()
+        {
+            return None;
+        }
+        self.native_catalog.pause();
+        self.native_catalog.friend_worlds.get(index)?.selection()
+    }
     /// Takes the catalog's concrete account for a join after cancelling its request.
     /// The acquisition future waits off-frame until the old Operation finishes durable cleanup.
     pub fn native_account_for(&mut self, path: PathBuf) -> Arc<NativeAccount> {
@@ -114,7 +166,11 @@ impl MenuRuntime {
             Err(_) => failed = true,
         }
         match cards.friends {
-            Ok(cards) => self.friends.replace(cards),
+            Ok(worlds) => {
+                self.friends
+                    .replace(worlds.iter().map(|world| world.card().clone()).collect());
+                self.native_catalog.friend_worlds = worlds;
+            }
             Err(_) => failed = true,
         }
         if failed {

@@ -681,6 +681,8 @@ pub use execution::{NetworkExecutor, SessionRead};
 #[cfg(not(target_arch = "wasm32"))]
 pub use start::spawn_network;
 pub use start::{PreparedLogin, prepare_network};
+#[cfg(not(target_arch = "wasm32"))]
+pub use start::{SessionCompanion, spawn_network_with_companion};
 
 /// The inbound half of a play session; its write half runs on its own task.
 trait NetworkSession: execution::SessionOwner {
@@ -959,6 +961,8 @@ mod pump;
 use pump::*;
 mod pump_runtime;
 use pump_runtime::*;
+mod terminal;
+use terminal::TerminalOwner;
 mod disconnect_display;
 use disconnect_display::disconnect_display_reason;
 #[cfg(test)]

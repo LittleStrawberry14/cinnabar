@@ -76,7 +76,12 @@ impl NetworkExecutor for NativeNetworkExecutor {
 
     async fn report_packs(&self, applied: bool) {
         if let Some(directory) = &self.socket_dir {
-            protocol::report_pack_application(directory, applied).await;
+            // Reporting is best effort; an unresponsive core must not strand terminal cleanup.
+            let _ = tokio::time::timeout(
+                super::FINAL_CONTROL_FLUSH_TIMEOUT,
+                protocol::report_pack_application(directory, applied),
+            )
+            .await;
         }
     }
 }

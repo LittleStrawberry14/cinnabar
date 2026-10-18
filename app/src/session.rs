@@ -32,6 +32,8 @@ use std::time::Instant;
 mod client_id;
 #[cfg(feature = "native-networking")]
 mod native_account;
+#[cfg(feature = "native-networking")]
+mod native_friend;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
 
@@ -64,6 +66,12 @@ pub(crate) struct SessionController {
     native_transport: Option<protocol::NativeTransport>,
     #[cfg(feature = "native-networking")]
     native_account: Option<native_account::SelectedAccount>,
+    #[cfg(feature = "native-networking")]
+    native_friend: Option<launcher_host::native_account::NativeFriendSelection>,
+    #[cfg(feature = "native-networking")]
+    native_friend_session: bool,
+    #[cfg(feature = "native-networking")]
+    friend_cleanup: crate::runtime::network::session::friend::FriendCleanupOwner,
     /// Polls the per-session core this join started for its server trust question.
     trust: Option<SessionTrust>,
     /// Server packs recent joins compiled; released once no join follows.
@@ -127,6 +135,12 @@ impl SessionController {
             native_transport: None,
             #[cfg(feature = "native-networking")]
             native_account: None,
+            #[cfg(feature = "native-networking")]
+            native_friend: None,
+            #[cfg(feature = "native-networking")]
+            native_friend_session: false,
+            #[cfg(feature = "native-networking")]
+            friend_cleanup: Default::default(),
             trust: None,
             kept_packs: crate::runtime::network::compiled_stacks(),
         }
@@ -206,6 +220,11 @@ impl SessionController {
     fn fail_join(&mut self, menu: &mut MenuRuntime, message: String) {
         menu.show_join_failure(message);
         self.connecting = false;
+        #[cfg(feature = "native-networking")]
+        {
+            self.native_friend = None;
+            self.native_friend_session = false;
+        }
         self.kept_packs.keep_for_rejoin();
     }
 
@@ -351,6 +370,11 @@ impl SessionResources<'_> {
         controller.presence = None;
         controller.destination_identity = None;
         controller.local_world = false;
+        #[cfg(feature = "native-networking")]
+        {
+            controller.native_friend = None;
+            controller.native_friend_session = false;
+        }
         let generation = controller.next_generation();
         if let (Some(far), Some(stream)) = (
             self.far_terrain.as_mut(),
@@ -516,10 +540,25 @@ fn poll_join(
             }
             let login_settings = login_settings(menu, session.input.as_deref());
             #[cfg(feature = "native-networking")]
-            let native_account = if matches!(endpoint, protocol::SessionEndpoint::Native(_)) {
+            let native_account = if controller.native_friend.is_none()
+                && matches!(endpoint, protocol::SessionEndpoint::Native(_))
+            {
                 native_auth_cache.map(|path| controller.native_account_for(menu, path))
             } else {
                 None
+            };
+            #[cfg(feature = "native-networking")]
+            let native_friend = match controller
+                .native_friend
+                .take()
+                .map(|selection| controller.friend_cleanup.request(selection))
+                .transpose()
+            {
+                Ok(request) => request,
+                Err(error) => {
+                    controller.fail_join(menu, error.to_string());
+                    return;
+                }
             };
             if let Err(error) = start_network(
                 commands,
@@ -529,6 +568,8 @@ fn poll_join(
                 endpoint,
                 #[cfg(feature = "native-networking")]
                 native_account,
+                #[cfg(feature = "native-networking")]
+                native_friend,
                 login_settings,
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
@@ -589,6 +630,9 @@ fn start_network(
     #[cfg(feature = "native-networking")] native_account: Option<
         std::sync::Arc<launcher_host::native_account::NativeAccount>,
     >,
+    #[cfg(feature = "native-networking")] native_friend: Option<
+        crate::runtime::network::session::friend::FriendConnectionRequest,
+    >,
     login_settings: protocol::LoginSettings,
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
@@ -601,6 +645,8 @@ fn start_network(
         endpoint,
         #[cfg(feature = "native-networking")]
         native_account,
+        #[cfg(feature = "native-networking")]
+        native_friend,
         display_name: menu.display_name().to_owned(),
         client_random_id,
         client_blob_cache: cache.cache(),
@@ -630,7 +676,9 @@ pub(crate) fn drive_session(
     mut session: SessionResources,
 ) {
     #[cfg(feature = "native-networking")]
-    if menu.account_operation_pending() && session.controller.native_account.is_some() {
+    if menu.account_operation_pending()
+        && (session.controller.native_account.is_some() || session.controller.native_friend_session)
+    {
         session.leave();
         session.controller.native_account = None;
     }
@@ -703,6 +751,10 @@ fn drive_intents(
         // A user-initiated join always starts a fresh transfer chain.
         session.controller.begin_fresh_transfer_chain();
         attempt_connect(menu, session, cache, intent);
+    }
+    #[cfg(feature = "native-networking")]
+    if let Some(selection) = menu.take_native_friend_intent() {
+        native_friend::begin(menu, session, selection);
     }
     poll_join(commands, menu, session, cache);
 }

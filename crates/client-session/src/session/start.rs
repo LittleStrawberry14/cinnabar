@@ -2,9 +2,15 @@ use super::*;
 use simulation_clock::identity::PositionAuthorityGeneration;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod companion;
+#[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
+pub use companion::SessionCompanion;
+#[cfg(not(target_arch = "wasm32"))]
 pub use native::spawn_network;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::spawn_network_with_companion;
 #[cfg(test)]
 use native::{run_session_runtime, unless_cancelled};
 
@@ -48,6 +54,7 @@ struct NetworkChannels<P> {
     shutdown_rx: watch::Receiver<bool>,
     readiness_ingress: Arc<ReadinessIngressCounter>,
     experience_gate: Arc<experience::ExperienceGate>,
+    terminal: Arc<TerminalOwner>,
 }
 
 /// Allocates the same bounded FIFOs for native threads and local browser tasks.
@@ -70,6 +77,7 @@ fn network_channels<P>(
         shutdown_rx,
         readiness_ingress: Arc::clone(&readiness_ingress),
         experience_gate: Arc::clone(&experience_gate),
+        terminal: Arc::default(),
     };
     let handle = NetworkHandle {
         session_generation: session_generation.get(),
@@ -104,6 +112,7 @@ impl<P: Send + 'static> NetworkChannels<P> {
             mut shutdown_rx,
             readiness_ingress: network_readiness_ingress,
             experience_gate: network_experience_gate,
+            terminal,
         } = self;
         let Some(login) =
             wait_for_login_or_cancel(login(shutdown_rx.clone()), &mut shutdown_rx).await
@@ -113,6 +122,9 @@ impl<P: Send + 'static> NetworkChannels<P> {
         let (session, (game_data, packs)) = match login {
             Ok(connected) => connected,
             Err(error) => {
+                if !terminal.network() {
+                    return;
+                }
                 send_login_error(&control_event_tx, &mut shutdown_rx, error).await;
                 return;
             }
@@ -125,6 +137,9 @@ impl<P: Send + 'static> NetworkChannels<P> {
             None => return,
             Some(Ok(packs)) => packs,
             Some(Err(error)) => {
+                if !terminal.network() {
+                    return;
+                }
                 send_startup_failure(&control_event_tx, &mut shutdown_rx, error, None).await;
                 return;
             }
@@ -140,6 +155,9 @@ impl<P: Send + 'static> NetworkChannels<P> {
         let item_registry = match start_game_item_registry(&game_data) {
             Ok(registry) => registry,
             Err(error) => {
+                if !terminal.network() {
+                    return;
+                }
                 send_startup_failure(&control_event_tx, &mut shutdown_rx, error, None).await;
                 return;
             }
@@ -185,6 +203,7 @@ impl<P: Send + 'static> NetworkChannels<P> {
                 control_event_tx,
                 world_event_tx,
                 shutdown_rx,
+                terminal,
                 (network_readiness_ingress, network_experience_gate),
                 observation,
                 executor.clone(),

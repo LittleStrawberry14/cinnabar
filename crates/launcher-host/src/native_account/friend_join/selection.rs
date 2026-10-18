@@ -10,6 +10,7 @@ const WORLD_TEMPLATE: &str = "MinecraftLobby";
 
 /// One explicitly selected service handle and its expected host/session identity.
 /// Activity properties supply no transport authority; only the later join can do so.
+#[derive(Clone)]
 pub struct FriendSelection {
     pub(super) handle: Uuid,
     pub(super) reference: mpsd::Reference,

@@ -17,6 +17,38 @@ use std::{
 };
 use uuid::Uuid;
 
+/// A catalog selection retaining its actual service identity and selected account generation.
+/// This is an intent, not membership approval; fields and diagnostics never expose its locator.
+#[derive(Clone)]
+pub struct NativeFriendSelection {
+    account: Arc<NativeAccount>,
+    scope: Scope,
+    selection: FriendSelection,
+}
+
+impl NativeFriendSelection {
+    /// Captures an existing verified catalog owner without reading credentials or starting I/O.
+    pub(super) fn capture(
+        account: Arc<NativeAccount>,
+        generation: String,
+        xuid: String,
+        selection: FriendSelection,
+    ) -> Self {
+        Self {
+            account,
+            scope: Scope { generation, xuid },
+            selection,
+        }
+    }
+
+    /// Starts this exact selected handle on its original account generation, on the caller's runtime.
+    pub fn begin(self, deadline: Instant) -> io::Result<FriendJoin> {
+        let mut join = self.account.friend_join(self.selection, deadline)?;
+        join.scope = Some(self.scope);
+        Ok(join)
+    }
+}
+
 /// One completed admission, bound to the account generation that joined the directory.
 /// No Debug or serialization: the nonce authorizes this player's game login.
 pub struct FriendAdmission {
@@ -112,6 +144,7 @@ pub struct FriendJoin {
     session: Option<Box<mpsd::Session>>,
     ambiguous: bool,
     changed: bool,
+    active_refresh_deadline: Option<Instant>,
     retry_at: Option<Instant>,
     deadline: Instant,
     admitted: bool,
@@ -142,6 +175,7 @@ impl NativeAccount {
             session: None,
             ambiguous: false,
             changed: false,
+            active_refresh_deadline: None,
             retry_at: None,
             deadline,
             admitted: false,
@@ -154,6 +188,66 @@ impl NativeAccount {
 }
 
 impl FriendJoin {
+    /// Waits an explicit 412 retry instant while preserving the original deadline and RTA controls.
+    pub async fn wait_retry(&mut self, when: Instant) -> io::Result<()> {
+        service(
+            self.socket
+                .as_mut()
+                .ok_or_else(|| invalid("friend RTA is unavailable"))?,
+            self.subscription
+                .ok_or_else(|| invalid("friend subscription is unavailable"))?,
+            &self.selection.reference,
+            &mut self.changed,
+            self.deadline,
+            tokio::time::sleep_until(when.into()),
+        )
+        .await
+    }
+
+    /// Drives the live subscription without an idle disconnect deadline.
+    /// Once a refresh starts, its absolute service deadline survives cancellation of this future.
+    pub async fn drive_active(&mut self) -> io::Result<()> {
+        if !self.admitted || self.closing || self.closed {
+            return Err(invalid("friend membership is not active"));
+        }
+        if !self.changed {
+            let event = self
+                .socket
+                .as_mut()
+                .ok_or_else(|| invalid("friend RTA is unavailable"))?
+                .drive()
+                .await
+                .map_err(socket_error)?;
+            event_changed(
+                event,
+                self.subscription
+                    .ok_or_else(|| invalid("friend subscription is unavailable"))?,
+                &self.selection.reference,
+                &mut self.changed,
+            )?;
+        }
+        if self.changed {
+            let deadline = *self
+                .active_refresh_deadline
+                .get_or_insert_with(|| Instant::now() + super::ACQUISITION_TIMEOUT);
+            while self.changed {
+                self.refresh(deadline).await?;
+            }
+            self.active_refresh_deadline = None;
+        }
+        self.current_admission()?;
+        Ok(())
+    }
+
+    /// Stops local I/O before retaining unresolved membership for another runtime's explicit cleanup.
+    /// This never claims the remote member was removed and performs no HTTP or account operation.
+    pub fn stop_transport(&mut self) {
+        self.closing = true;
+        if let Some(socket) = &mut self.socket {
+            socket.abort();
+        }
+    }
+
     /// Prepares this joined world's signed transport on the same verified leased account.
     /// Retain and drive this owner alongside the returned connection, then explicitly close it.
     /// Matching updates during preparation retire the handoff and require an explicit retry.
@@ -403,7 +497,9 @@ impl FriendJoin {
 
     /// Acquires the sole existing account/lease owner and fences every service operation by generation.
     async fn operation(&mut self, deadline: Instant) -> io::Result<Operation> {
-        let acquire = Arc::clone(&self.account).acquire_verified();
+        let expected_generation = self.scope.as_ref().map(|scope| scope.generation.clone());
+        let acquire =
+            Arc::clone(&self.account).acquire_verified_for(expected_generation.as_deref());
         let mut operation = if !self.closing {
             if let (Some(socket), Some(subscription)) = (&mut self.socket, self.subscription) {
                 service(

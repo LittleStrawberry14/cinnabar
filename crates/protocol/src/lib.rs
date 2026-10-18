@@ -21,7 +21,9 @@ mod item_capacity;
 mod login;
 mod session_endpoint;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use session_endpoint::{MAX_NATIVE_JOIN_NONCE_BYTES, NativeMessagingTarget};
+pub use session_endpoint::{
+    MAX_NATIVE_JOIN_NONCE_BYTES, NATIVE_JOIN_TIMEOUT, NativeMessagingTarget,
+};
 pub use session_endpoint::{NativeConnectionTarget, NativeTransport, SessionEndpoint};
 mod movement;
 mod nbt_tree;

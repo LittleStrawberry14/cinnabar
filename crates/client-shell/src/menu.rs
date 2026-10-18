@@ -444,11 +444,21 @@ impl MenuRuntime {
     }
 
     pub fn take_disconnect_request(&mut self) -> bool {
-        std::mem::take(&mut self.intents.disconnect)
+        let requested = std::mem::take(&mut self.intents.disconnect);
+        #[cfg(feature = "native-networking")]
+        if requested {
+            self.native_catalog.cancel_join();
+        }
+        requested
     }
 
     pub fn take_exit_request(&mut self) -> bool {
-        std::mem::take(&mut self.intents.exit)
+        let requested = std::mem::take(&mut self.intents.exit);
+        #[cfg(feature = "native-networking")]
+        if requested {
+            self.native_catalog.cancel_join();
+        }
+        requested
     }
 
     pub fn activate_from_input(&mut self, action: MenuAction) {
@@ -683,8 +693,8 @@ impl MenuRuntime {
             MenuAction::PlayFriend(index) => {
                 if let Some(friend) = self.friends.get(index) {
                     if self.native_sign_in {
-                        self.message =
-                            Some("Native friend-world joining is not available yet.".into());
+                        #[cfg(feature = "native-networking")]
+                        self.request_native_friend(index);
                     } else if friend.xuid.is_empty() {
                         self.message =
                             Some("That friend world has no stable Xbox identity.".to_owned());
@@ -915,6 +925,8 @@ impl MenuRuntime {
 
     /// Queues a join to `address` for the session controller.
     pub fn request_connect(&mut self, address: String) {
+        #[cfg(feature = "native-networking")]
+        self.native_catalog.cancel_join();
         if self.external.is_some() {
             self.request_external_connect(address);
             return;
