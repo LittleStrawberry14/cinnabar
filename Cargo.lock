@@ -829,9 +829,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bedrock-client"
+version = "0.1.0"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=6ab643402b0486b7261455bd8b54065a2ed176f6#6ab643402b0486b7261455bd8b54065a2ed176f6"
+dependencies = [
+ "bedrock-packs",
+ "bedrock-protocol-1-26-51",
+ "bytes",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=c280b067a4028ee56d6c1caecaacdf19ef4747d1#c280b067a4028ee56d6c1caecaacdf19ef4747d1"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=6ab643402b0486b7261455bd8b54065a2ed176f6#6ab643402b0486b7261455bd8b54065a2ed176f6"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -851,8 +867,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedrock-packs"
+version = "0.1.0"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=6ab643402b0486b7261455bd8b54065a2ed176f6#6ab643402b0486b7261455bd8b54065a2ed176f6"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "bedrock-protocol-1-26-51"
 version = "0.1.0"
+source = "git+https://github.com/cinnabar-mc/protocolgen?rev=4e9626abbb51b8fa842f49b4aea0fb4d3c01a682#4e9626abbb51b8fa842f49b4aea0fb4d3c01a682"
 dependencies = [
  "bytes",
  "glam",
@@ -865,10 +893,10 @@ name = "bedrock-replay"
 version = "0.1.20"
 dependencies = [
  "anyhow",
+ "bedrock-packs",
  "bridge",
  "bytes",
  "futures",
- "pack-json",
  "protocol",
  "resource-pack",
  "serde",
@@ -2450,6 +2478,7 @@ dependencies = [
  "actor-animation",
  "anyhow",
  "assets",
+ "bedrock-packs",
  "bevy",
  "block-transform",
  "bootstrap-ui",
@@ -2499,7 +2528,6 @@ dependencies = [
  "pack-compile-input",
  "pack-compiler",
  "pack-entity-compiler",
- "pack-json",
  "pack-runtime",
  "particles",
  "player-state",
@@ -2680,13 +2708,13 @@ dependencies = [
  "actor-animation",
  "anyhow",
  "assets",
+ "bedrock-packs",
  "bevy",
  "chunk-pipeline",
  "client-ui",
  "client-world",
  "crossbeam-queue",
  "inventory 0.1.20",
- "pack-json",
  "particles",
  "player-state",
  "protocol",
@@ -2840,6 +2868,7 @@ dependencies = [
 name = "client-session"
 version = "0.1.20"
 dependencies = [
+ "bedrock-packs",
  "bridge",
  "bytes",
  "crash-report",
@@ -2868,6 +2897,7 @@ version = "0.1.20"
 dependencies = [
  "ash",
  "assets",
+ "bedrock-packs",
  "bevy",
  "bridge",
  "chunk-pipeline",
@@ -2929,6 +2959,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "assets",
+ "bedrock-packs",
  "bridge",
  "chunk-pipeline",
  "client-world",
@@ -2947,7 +2978,6 @@ dependencies = [
  "oreui",
  "pack-compiler",
  "pack-entity-compiler",
- "pack-json",
  "player-state",
  "protocol",
  "protocol-ids",
@@ -5652,7 +5682,7 @@ dependencies = [
 name = "json-ui"
 version = "0.1.20"
 dependencies = [
- "pack-json",
+ "bedrock-packs",
  "serde",
  "serde_json",
  "test-alloc",
@@ -5728,6 +5758,7 @@ name = "launcher"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "bridge",
  "cosmetics",
  "json-ui",
@@ -5750,6 +5781,7 @@ version = "0.1.20"
 dependencies = [
  "anyhow",
  "async-io",
+ "bedrock-packs",
  "bedrock-services",
  "bridge",
  "cosmetics",
@@ -7357,8 +7389,8 @@ name = "pack-compile-input"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "image",
- "pack-json",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7370,11 +7402,11 @@ name = "pack-compiler"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "cap-fs-ext",
  "cap-std",
  "image",
  "pack-compile-input",
- "pack-json",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7387,10 +7419,10 @@ name = "pack-entity-compiler"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "image",
  "pack-compile-input",
  "pack-compiler",
- "pack-json",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7416,24 +7448,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "pack-json"
-version = "0.1.20"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pack-runtime"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "block-transform",
  "image",
  "json-ui",
  "pack-compile-input",
  "pack-entity-compiler",
- "pack-json",
  "protocol",
  "rayon",
  "resource-pack",
@@ -7490,8 +7514,8 @@ name = "particles"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "bytemuck",
- "pack-json",
  "render-model",
  "serde_json",
  "tracing",
@@ -7932,7 +7956,9 @@ version = "0.1.20"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bedrock-client",
  "bedrock-net",
+ "bedrock-packs",
  "bedrock-protocol-1-26-51",
  "block-transform",
  "bridge",
@@ -8616,9 +8642,9 @@ name = "resource-pack"
 version = "0.1.20"
 dependencies = [
  "aes 0.8.4",
+ "bedrock-packs",
  "cap-fs-ext",
  "cap-std",
- "pack-json",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -10484,10 +10510,10 @@ name = "ui-engine"
 version = "0.1.20"
 dependencies = [
  "assets",
+ "bedrock-packs",
  "crossbeam-channel",
  "image",
  "json-ui",
- "pack-json",
  "rayon",
  "render-api",
  "render-model",

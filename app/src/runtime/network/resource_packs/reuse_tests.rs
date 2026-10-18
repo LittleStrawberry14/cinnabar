@@ -1,7 +1,7 @@
+use bedrock_packs::{ResourcePackArchive, ResourcePackHandoff};
 use std::sync::Arc;
 
 use resource_pack::{PackAdmission, ValidatedPackStack};
-use resource_pack::{ResourcePackArchive, ResourcePackHandoff};
 
 use super::{CompileEnvironment, CompiledStacks, compile_reusing};
 use crate::runtime::network::resource_packs::{

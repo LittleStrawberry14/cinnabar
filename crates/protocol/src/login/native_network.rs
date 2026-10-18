@@ -16,10 +16,10 @@ use bedrock_net::login::{
     OfflineIdentity, encode_authenticated_request, encode_offline_request, finish_key_exchange,
 };
 use bedrock_net::{CompressionAlgorithm, CompressionSettings};
+use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, wire};
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use rand::rngs::SysRng;
-use resource_pack::ResourcePackHandoff;
 use serde_json::{json, value::RawValue};
 use std::{
     io,

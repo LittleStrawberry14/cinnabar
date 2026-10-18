@@ -23,7 +23,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
+native-networking = ["dep:bedrock-net", "dep:bedrock-client", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "uuid/serde"]
 
 [[test]]
 name = "it"
@@ -34,6 +34,7 @@ name = "native-join"
 required-features = ["native-networking"]
 
 [dependencies]
+bedrock-packs.workspace = true
 resource-pack = { path = "../resource-pack" }
 protocol-ids = { path = "../protocol-ids" }
 simulation-clock = { path = "../simulation-clock" }
@@ -54,7 +55,7 @@ tracing.workspace = true
 web-time.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
-bedrock-protocol-1-26-51 = { path = "vendor/bedrock-protocol-1-26-51" }
+bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "4e9626abbb51b8fa842f49b4aea0fb4d3c01a682" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { workspace = true, features = ["js"] }
@@ -63,7 +64,8 @@ uuid = { workspace = true, features = ["js"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
 cap-std = "3.4.5"
 cap-fs-ext = "3.4.5"
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "c280b067a4028ee56d6c1caecaacdf19ef4747d1", features = ["raknet", "login"], optional = true }
+bedrock-net = { workspace = true, features = ["raknet", "login"], optional = true }
+bedrock-client = { workspace = true, optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "ecdh", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
 nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "a7317aeadccd4f8fc8e98e631b3fdaaad8a8cc7a", optional = true }

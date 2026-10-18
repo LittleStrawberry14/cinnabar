@@ -105,8 +105,8 @@ fn selected_subpack_logical_content_changes_the_fingerprint() {
     }
     let bytes = writer.finish().unwrap().into_inner();
     let admit = |subpack: &str| {
-        resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::from_archives(vec![
-            resource_pack::ResourcePackArchive::unencrypted(
+        resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::from_archives(vec![
+            bedrock_packs::ResourcePackArchive::unencrypted(
                 id.parse().unwrap(),
                 "1.0.0".into(),
                 subpack.into(),

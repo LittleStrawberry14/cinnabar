@@ -7,7 +7,7 @@ use protocol::LoginSequence;
 pub fn spawn_network<P: Send + 'static>(
     config: NetworkConfig,
     prepare_presentation: impl FnOnce(
-        resource_pack::ResourcePackHandoff,
+        bedrock_packs::ResourcePackHandoff,
         &protocol::GameData,
         &(dyn Fn() -> bool + Sync),
     ) -> Option<Result<PreparedSession<P>, String>>

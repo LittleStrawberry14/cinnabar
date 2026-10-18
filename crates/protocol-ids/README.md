@@ -10,6 +10,6 @@ checked by `tools/fixturegen`. Its `-ids-out` option regenerates that fixture.
 identity, and word-specific flags and effects missing from those numeric inputs.
 
 Run `python3 tools/fixturegen/generate_ids.py` after updating these inputs.
-It reads enchantments from the vendored codec and air from the hash-checked
+It reads enchantments from the pinned generated codec and air from the hash-checked
 active block registry, then writes `src/generated.rs`. The fixture generator
 tests reject drift in both the numeric fixture and generated declarations.

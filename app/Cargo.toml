@@ -81,7 +81,7 @@ world = { path = "../crates/world" }
 web-time.workspace = true
 cosmetics = { path = "../crates/cosmetics" }
 protocol-ids = { path = "../crates/protocol-ids" }
-pack-json = { path = "../crates/pack-json" }
+bedrock-packs.workspace = true
 env-compat = { path = "../crates/env-compat" }
 client-shell = { path = "../crates/client-shell" }
 client-interaction = { path = "../crates/client-interaction" }

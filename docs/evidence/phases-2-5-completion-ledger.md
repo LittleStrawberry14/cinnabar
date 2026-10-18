@@ -2,13 +2,16 @@
 
 ## Native direct networking (in progress)
 
-The optional native backend composes the networking libraries with the client's
-existing resource-pack presentation, spawn and play owners. Signed-out direct
-joins and their retries bypass Go provisioning. In-band archives are bounded and
+The optional native backend composes reusable packet-driven pack negotiation with
+the client's resource-pack admission, spawn and play owners. Shared JSONC, archive
+handoff and pack-transfer behavior now belong to bedrock-packs/bedrock-client;
+Cinnabar retains bounded asynchronous CDN/cache I/O. Signed-out direct joins and
+their retries bypass Go provisioning. In-band archives are bounded and
 hash-checked; their final server stack retains order, versions, sub-packs and keys.
-The Go backend remains the default. Account services, CDN/cache integration,
-hosting, browser transport and broad network/device acceptance remain incomplete.
-This closes no parity or Go-removal gate.
+The extraction awaits executable validation. The Go backend remains the default.
+Account services, reusable Login/connection sequencing, hosting, browser transport
+and broad network/device acceptance remain incomplete. This closes no parity or
+Go-removal gate.
 
 ## Browser host composition
 
@@ -614,7 +617,7 @@ JSON-UI banner controls draw ordered front-cloth layers from the active artwork.
 
 ## Protocol codec swap
 
-`protocol` uses protocolgen's vendored contract crate as its only codec; Valentine and its
+`protocol` uses protocolgen's pinned Git contract crate as its only codec; Valentine and its
 normalization machinery are gone. Packet routing and UI budgets derive from the generated packet
 table and field sites rather than hand-maintained ID lists. The ported tests have not been
 executed locally. No existing completion entry is advanced.

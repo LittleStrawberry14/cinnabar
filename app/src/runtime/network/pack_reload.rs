@@ -68,7 +68,7 @@ pub(crate) struct PackReload {
 
 impl Default for PackReload {
     fn default() -> Self {
-        let empty = resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::default());
+        let empty = resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::default());
         Self {
             geometry: Default::default(),
             globals: empty.clone(),
@@ -143,7 +143,7 @@ impl PackReload {
         self.server = match &packs.admission {
             PackAdmission::Validated(stack) => stack.clone(),
             PackAdmission::None => {
-                resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::default())
+                resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::default())
             }
         };
         self.inputs = packs.inputs.clone();
@@ -154,7 +154,7 @@ impl PackReload {
     /// Retires server layers; globals remain available in the menus.
     pub(super) fn end_session(&mut self) {
         self.server =
-            resource_pack::validate_handoff(resource_pack::ResourcePackHandoff::default());
+            resource_pack::validate_handoff(bedrock_packs::ResourcePackHandoff::default());
         self.inputs = Arc::default();
         self.items = None;
         self.generation = 0;

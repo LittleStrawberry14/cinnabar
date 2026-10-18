@@ -51,7 +51,7 @@ pub(super) fn restore(root: &Path) -> Result<UserState> {
     anyhow::ensure!(
         state.settings.stored_bindings_valid()
             && state.servers.len() <= crate::servers::MAX_SAVED_SERVERS
-            && state.active.len() <= resource_pack::MAX_PACKS,
+            && state.active.len() <= bedrock_packs::MAX_PACKS,
         "Import backup is invalid"
     );
     crate::servers::validate(&state.servers)?;

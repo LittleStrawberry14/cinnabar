@@ -24,7 +24,6 @@ members = [
     "crates/gameplay",
     "crates/client-session",
     "crates/chunk-pipeline",
-    "crates/pack-json",
     "crates/pack-compiler",
     "crates/pack-compiler/input",
     "crates/pack-compiler/entity",
@@ -90,8 +89,6 @@ members = [
     "tools/cxb",
     "tools/release-manifest",
 ]
-# The vendored codec is generated and linted upstream; only `protocol` builds it.
-exclude = ["crates/protocol/vendor/bedrock-protocol-1-26-51"]
 resolver = "3"
 
 [workspace.package]
@@ -100,6 +97,9 @@ edition = "2024"
 rust-version = "1.99.0"
 
 [workspace.dependencies]
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "6ab643402b0486b7261455bd8b54065a2ed176f6" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "6ab643402b0486b7261455bd8b54065a2ed176f6" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "6ab643402b0486b7261455bd8b54065a2ed176f6" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.

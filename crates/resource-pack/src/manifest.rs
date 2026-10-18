@@ -4,7 +4,7 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use pack_json::parse_jsonc_lenient;
+use bedrock_packs::jsonc::parse_jsonc_lenient;
 
 use crate::{AdmissionError, MAX_SUBPACKS, Subpack};
 

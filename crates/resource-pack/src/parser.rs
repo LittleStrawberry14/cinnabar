@@ -3,26 +3,26 @@
 //! Structural ZIP damage or a bad manifest drops one pack; odd entries inside an
 //! otherwise sound archive are skipped and counted instead.
 
+use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS, MAX_STACK_ARCHIVE_BYTES};
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
     sync::Arc,
 };
 
-use crate::ResourcePackArchive;
+use bedrock_packs::ResourcePackArchive;
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive};
 
 use crate::{
-    AdmissionError, MAX_ARCHIVE_BYTES, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK,
-    MAX_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_PATH_BYTES,
+    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK, MAX_FILE_BYTES,
+    MAX_MANIFEST_BYTES, MAX_PATH_BYTES,
     crypto::{ContentKey, contents_file_keys},
     manifest::read_manifest,
     pack::{EntryIndex, ValidatedPack, read_entry},
 };
 use crate::{
-    MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK, MAX_PACKS, MAX_STACK_ARCHIVE_BYTES,
-    PackRejection, ValidatedPackStack,
+    MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK, PackRejection, ValidatedPackStack,
 };
 
 const EOCD_MIN_BYTES: usize = 22;

@@ -1,10 +1,10 @@
 //! Bounded import of ordinary pack archives and resource halves of add-on bundles.
 
-use pack_json::{normalize_jsonc, parse_jsonc};
+use bedrock_packs::jsonc::{normalize_jsonc, parse_jsonc};
+use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
 
 use crate::{
-    AdmissionError, MAX_ARCHIVE_BYTES, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES,
-    MAX_MANIFEST_BYTES, MAX_PACKS,
+    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES, MAX_MANIFEST_BYTES,
     library::{ImportReport, InstalledPack, LibraryError},
     manifest::{Version, read_manifest},
     parser::{
@@ -99,7 +99,8 @@ pub(crate) fn read_import(
         .to_string_lossy();
     read_bundle(bytes, &source, 0, &mut report, &mut imported)
         .map_err(|error| file_error(&source, error))?;
-    if imported.iter().map(|(_, bytes)| bytes.len()).sum::<usize>() > crate::MAX_STACK_ARCHIVE_BYTES
+    if imported.iter().map(|(_, bytes)| bytes.len()).sum::<usize>()
+        > bedrock_packs::MAX_STACK_ARCHIVE_BYTES
     {
         return Err(AdmissionError::StackArchiveTooLarge.into());
     }
@@ -162,7 +163,7 @@ fn read_bundle(
                     }
                 };
                 nested_bytes = nested_bytes.saturating_add(bytes.len());
-                if nested_bytes > crate::MAX_STACK_ARCHIVE_BYTES {
+                if nested_bytes > bedrock_packs::MAX_STACK_ARCHIVE_BYTES {
                     return Err(AdmissionError::StackArchiveTooLarge.into());
                 }
                 let nested_source = format!("{source}/{path}");

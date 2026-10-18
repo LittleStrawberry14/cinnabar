@@ -305,9 +305,9 @@ mod tests {
         }
     }
 
-    /// A re-vendored codec fails here until the target manifest records its pin.
+    /// A generated codec update must match the target manifest contract and fingerprint.
     #[test]
-    fn vendored_codec_matches_the_target_pin() {
+    fn generated_codec_matches_the_target_pin() {
         let target: Value =
             serde_json::from_str(include_str!("../../../../assets/bedrock-target.json")).unwrap();
         assert_eq!(target["wire_protocol"], i64::from(PROTOCOL_VERSION));
