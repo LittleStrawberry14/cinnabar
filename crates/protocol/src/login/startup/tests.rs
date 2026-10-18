@@ -404,7 +404,7 @@ mod session {
             (
                 "conflicting-start",
                 vec![start_game(RUNTIME_ID + 1)],
-                "conflicting StartGame runtime identity",
+                "conflicting StartGame runtime entity ID",
             ),
             (
                 "zero-radius",
