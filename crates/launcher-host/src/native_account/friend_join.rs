@@ -240,7 +240,13 @@ impl FriendJoin {
             &self.selection.reference,
             &mut self.changed,
             self.deadline,
-            account.prepare_messaging_borrowed(&mut operation, target, claims, random_id),
+            account.prepare_messaging_borrowed(
+                &mut operation,
+                target,
+                claims,
+                random_id,
+                self.deadline.into(),
+            ),
         )
         .await??;
         if self.changed {

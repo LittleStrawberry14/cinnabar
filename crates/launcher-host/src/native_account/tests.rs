@@ -481,6 +481,7 @@ async fn borrowed_messaging_cannot_reuse_another_account_operation() {
             target,
             serde_json::json!({}),
             protocol::ClientRandomId::new(1).unwrap(),
+            tokio::time::Instant::now() + ACQUISITION_TIMEOUT,
         )
         .await;
     let error = match result {

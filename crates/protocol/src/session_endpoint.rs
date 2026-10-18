@@ -15,12 +15,12 @@ pub enum NativeTransport {
     RakNet,
     /// Directed LAN discovery and ICE/DTLS/SCTP with self-signed Login.
     NetherNetLan,
-    /// Protected Player Messaging with signed SDP and an explicit joined-session nonce.
+    /// Protected Player Messaging with signed SDP and explicit friend or Realm admission.
     NetherNetMessaging,
 }
 
-/// An explicit joined-session route, distinct from a friend-world listing.
-/// The nonce must come from the caller's join admission, never a guessed card field.
+/// An explicit Player Messaging route, distinct from a discovery listing.
+/// Friend nonces come from joined-session admission; authenticated Realms use a private nonce-free policy.
 /// No Debug implementation exposes the admission challenge.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub struct NativeMessagingTarget {
@@ -46,7 +46,22 @@ impl NativeMessagingTarget {
         Ok(Self { peer, nonce })
     }
 
-    /// Returns the exact authenticated Player Messaging recipient.
+    /// Builds transport metadata for the caller-authorized nonce-free Realm handoff.
+    /// Friend routes remain available only through the nonce-bearing constructor.
+    pub(crate) fn realm(peer: uuid::Uuid) -> std::io::Result<Self> {
+        if peer.is_nil() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid native Realm messaging target",
+            ));
+        }
+        Ok(Self {
+            peer,
+            nonce: zeroize::Zeroizing::new(String::new()),
+        })
+    }
+
+    /// Returns the exact Player Messaging recipient supplied by the admission owner.
     pub fn peer(&self) -> uuid::Uuid {
         self.peer
     }
@@ -86,6 +101,13 @@ mod tests {
         assert_eq!(endpoint.transport, NativeTransport::NetherNetMessaging);
         assert_eq!(endpoint.address, peer.to_string());
         assert_eq!(target.nonce(), "synthetic-challenge");
+
+        let realm = NativeMessagingTarget::realm(peer).unwrap();
+        assert_eq!(realm.peer(), peer);
+        assert_eq!(realm.connection_target().address, peer.to_string());
+        assert_eq!(realm.nonce(), "");
+        assert!(NativeMessagingTarget::realm(uuid::Uuid::nil()).is_err());
+        assert!(NativeMessagingTarget::new(peer, String::new()).is_err());
     }
 }
 

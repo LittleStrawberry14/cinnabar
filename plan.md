@@ -42,8 +42,13 @@ Native Realm and friend-world discovery project existing menu cards through one
 selected-account owner, fencing stale account and Go replies. Realm resolution
 and final credential mint retain that same owner. Realm codes preview without
 accepting membership; pending service replies retry within the resolution bound.
-Authenticated unsupported transports fail explicitly. Invitation acceptance and
-unrelated catalog feeds retain their existing Go owners.
+The JSON-RPC Realm route retains the authenticated service response and the same
+leased account through mint and protected socket preparation. Its exact UUID
+recipient uses explicit nonce-free Realm policy, with the original proof key,
+service clock and provider-only peer verification. This source slice awaits owning
+execution and end-to-end Realm acceptance. Legacy WebSocket and unknown transports
+fail explicitly. Invitation acceptance and unrelated catalog feeds retain their
+existing Go owners.
 
 Protected Player Messaging preparation qualifies the issued credential against
 bounded provider metadata and retains the original proof, service clock and hard
@@ -106,8 +111,8 @@ compile; final source review and owning execution remain pending. Live profile a
 remains open; the Go profile remains the default.
 
 Incomplete: native hosting transport and application adoption, remaining profile and
-invitation services, signed Realm NetherNet admission, browser transport adoption,
-remote provider-key refresh, end-to-end service/transport cancellation, compiled
+invitation services, end-to-end signed Realm NetherNet acceptance, browser transport
+adoption, remote provider-key refresh, end-to-end service/transport cancellation, compiled
 UI captures, real-account/device/server/network acceptance and Go-baseline
 performance measurements. Source-based vanilla parity and full integration gates
 remain open. These results do not authorize changing the default or removing Go.

@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// Rejects a later preparation phase after the caller's original admission cutoff.
+pub(super) fn check_preparation_deadline(deadline: tokio::time::Instant) -> io::Result<()> {
+    if tokio::time::Instant::now() >= deadline {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "native connection preparation timed out",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 impl NativeAccount {
     /// Acquires account credentials and mints for one fresh connection key.
     /// The caller polls this on its session runtime and cancels by dropping the future.

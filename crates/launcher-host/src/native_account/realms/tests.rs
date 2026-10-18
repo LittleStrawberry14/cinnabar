@@ -15,23 +15,23 @@ fn transaction<T>(what: &str, mut perform: impl FnMut() -> io::Result<T>) -> T {
     completed.expect("transaction completed")
 }
 
-/// Service transport admission preserves IPv6 text and never guesses unknown/signed transports as RakNet.
+/// Service transport admission preserves IPv6 and distinguishes JSON-RPC UUIDs from unsupported protocols.
 #[test]
 fn realm_transport_and_catalog_metadata_follow_the_service() {
     let address: RealmAddress = serde_json::from_str(
         r#"{"address":"[2001:db8::8]:19132","networkProtocol":"default","pendingUpdate":true}"#,
     )
     .unwrap();
-    let target = raknet_target(address).unwrap();
+    let target = resolved_route(address).unwrap().into_target();
     assert_eq!(target.address, "[2001:db8::8]:19132");
     assert_eq!(target.transport, protocol::NativeTransport::RakNet);
-    for protocol in ["NETHERNET", "NETHERNET_JSONRPC", "FUTURE_PROTOCOL"] {
+    for protocol in ["NETHERNET", "FUTURE_PROTOCOL"] {
         let address: RealmAddress = serde_json::from_value(
             serde_json::json!({"address":"123", "networkProtocol": protocol}),
         )
         .unwrap();
         assert_eq!(
-            raknet_target(address).unwrap_err().kind(),
+            resolved_route(address).err().unwrap().kind(),
             io::ErrorKind::Unsupported
         );
     }
@@ -59,6 +59,102 @@ fn realm_transport_and_catalog_metadata_follow_the_service() {
     assert!(realm_target("realm_id/0").is_err());
     assert!(realm_target("realm_id/not-an-id").is_err());
     assert!(realm_target("[2001:db8::8]:19132").unwrap().is_none());
+}
+
+/// A JSON-RPC service recipient is one nonnil UUID, never a legacy network ID or host address.
+#[test]
+fn realm_jsonrpc_retains_the_service_route_and_rejects_ambiguous_recipients() {
+    let peer = uuid::Uuid::from_u128(1);
+    let address: RealmAddress = serde_json::from_value(serde_json::json!({
+        "address": peer.to_string(),
+        "networkProtocol": "NETHERNET_JSONRPC",
+        "pendingUpdate": true,
+        "sessionRegionData": {"regionName": "synthetic-region", "serviceQuality": 2}
+    }))
+    .unwrap();
+    let route = resolved_route(address).unwrap();
+    assert_eq!(route.messaging_peer, Some(peer));
+    assert!(route.response.pending_update);
+    let region = route.response.session_region.as_ref().unwrap();
+    assert_eq!(region.region_name, "synthetic-region");
+    assert_eq!(region.service_quality, 2);
+    let target = route.into_target();
+    assert_eq!(target.address, peer.to_string());
+    assert_eq!(
+        target.transport,
+        protocol::NativeTransport::NetherNetMessaging
+    );
+
+    for recipient in [
+        "",
+        "123",
+        "example.invalid:19132",
+        &uuid::Uuid::nil().to_string(),
+    ] {
+        let address: RealmAddress = serde_json::from_value(serde_json::json!({
+            "address": recipient, "networkProtocol": "NETHERNET_JSONRPC"
+        }))
+        .unwrap();
+        assert_eq!(
+            resolved_route(address).err().unwrap().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+}
+
+/// Cancelled or expired Realm preparation cannot retire another in-flight account operation.
+#[tokio::test(start_paused = true)]
+async fn realm_preparation_cancellation_preserves_the_existing_account_owner() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let account = Arc::new(NativeAccount::new(
+        AccountStore::new(directory.path().join("synthetic-oauth.json")),
+        directory.path().join("device.json"),
+        None,
+    ));
+    let held = account.begin().unwrap();
+    let target = protocol::NativeConnectionTarget {
+        address: format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
+        transport: protocol::NativeTransport::RakNet,
+    };
+    let random_id = protocol::ClientRandomId::new(1).unwrap();
+    let mut cancelled = Box::pin(Arc::clone(&account).prepare_connection(
+        target.clone(),
+        serde_json::json!({}),
+        random_id,
+    ));
+    assert!(matches!(
+        cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    drop(cancelled);
+    assert_eq!(
+        account.begin().err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+
+    let mut expired =
+        Box::pin(Arc::clone(&account).prepare_connection(target, serde_json::json!({}), random_id));
+    assert!(matches!(
+        expired
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    tokio::time::advance(RESOLUTION_TIMEOUT + ACQUISITION_TIMEOUT).await;
+    assert_eq!(expired.await.err().unwrap().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        account.begin().err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    drop(held);
+    drop(account.begin().unwrap());
 }
 
 /// Realms promotion and subsequent operations retain the same Minecraft Session-Id and proof owner.
