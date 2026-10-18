@@ -71,6 +71,12 @@ Launch the menu with native RakNet enabled, then sign in or select a saved accou
 cargo run -p cinnabar --features native-networking -- --native-networking raknet
 ```
 
+Native mode runs Microsoft device-code sign-in and saved-account validation in Rust through the
+existing account menu. Pending attempts keep the active account unchanged until Xbox identity
+verification and account commit complete. Failed or timed-out saved-account checks stop native
+joins with an authentication error. Hosted Xbox profile creation still requires the default
+Go mode; account catalog, Realms, friends and local worlds retain their current Go owners.
+
 Authenticated direct joins retain one native account owner across retries and transfers. Refresh
 rotation shares the existing account-cache leases with Go, and private checkpoints retain proof
 and refresh ownership. Persistent derived-service caches and live authenticated acceptance remain

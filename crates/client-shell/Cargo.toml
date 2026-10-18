@@ -9,6 +9,7 @@ publish = false
 platform-specific = ["macos", "windows"]
 
 [features]
+native-networking = ["launcher-host/native-networking"]
 developer-control = ["dep:developer-control"]
 test-support = ["launcher/test-support", "launcher-host/test-support"]
 

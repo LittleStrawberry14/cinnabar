@@ -13,10 +13,21 @@ CDN before requesting missing data in-band. The resource-pack crate owns archive
 handoffs independently of protocol, and existing Rust presentation, spawn and play
 owners consume them directly.
 
-Native interactive sign-in, persistent derived-token reuse, service-resolved joins,
+Opt-in native Microsoft device-code sign-in and saved-account validation use the
+existing menu presenter and account mutation worker. Interactive attempts release
+file leases while waiting for approval, retain OAuth/proof in a fenced pending slot,
+and commit only after Xbox identity verification. Native saved validation publishes
+profile metadata under its selected generation lease. Cancellation cannot promote
+an unverified identity or erase a newer pending attempt. A failed or expired native
+saved-account check stops the requested join with an authentication error; it does
+not downgrade the join to signed-out identity. Explicit signed-out joins remain
+available. Direct native joins do not await an unrelated Go account-core readiness check.
+
+Hosted Xbox profile creation, persistent derived-token reuse, service-resolved joins,
 signed NetherNet signaling, hosting, browser transport and the broader account,
-network/device and performance acceptance matrix remain incomplete. No parity gate
-closes and the working Go backend remains required during validation.
+network/device and performance acceptance matrix remain incomplete. Native sign-in
+HTTP/UI acceptance remains open. No parity gate closes and the working Go backend
+remains required during validation.
 
 ## Custom block and item texture inheritance
 

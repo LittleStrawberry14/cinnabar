@@ -541,6 +541,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         loaded_assets.selected_path.clone(),
         args.language.as_deref(),
     );
+    #[cfg(feature = "native-networking")]
+    let menu = menu.with_native_sign_in(args.native_transport.is_some());
     crate::runtime::network::await_overlay_texture_device();
     let network = if connection_requested {
         match spawn_network(NetworkConfig {

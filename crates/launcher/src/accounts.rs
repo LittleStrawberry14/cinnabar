@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod native;
+pub mod pending;
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// The shared download and local-copy bound for catalog and Xbox profile artwork.
@@ -49,6 +50,13 @@ pub struct AccountProfile {
     pub id: String,
     pub gamertag: String,
     pub picture_path: Option<String>,
+}
+
+impl AccountProfile {
+    /// Validates public metadata from an already authenticated Xbox identity.
+    pub fn from_identity(id: &str, gamertag: &str) -> io::Result<Self> {
+        checked_profile(id, gamertag, None)
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -164,7 +172,8 @@ impl AccountStore {
         let pending = self.pending_cache();
         let _pending = cache_leases(&pending)?;
         remove_optional(&pending)?;
-        remove_optional(&derived_path(&pending))
+        remove_optional(&derived_path(&pending))?;
+        pending::remove_attempt(self)
     }
 
     /// The caller stops its cores before removing the selected account's saved credentials.

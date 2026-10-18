@@ -145,6 +145,7 @@ pub struct MenuRuntime {
     catalog: launcher_host::catalog::Catalog,
     catalog_art: Option<launcher_host::catalog_art::CatalogArt>,
     auth_process: Option<AuthSupervisor>,
+    native_sign_in: bool,
     auth_attempted: bool,
     auth_restart_requested: bool,
     /// The account core a held join may still use; `None` when it cannot start for the join.
@@ -237,6 +238,8 @@ struct SessionIntents {
     join_sign_in_deadline: Option<std::time::Instant>,
     /// The background sign-in check serves a join: it may finish, but never prompts.
     join_sign_in_check: bool,
+    /// A selected native account may not silently become a signed-out join.
+    native_auth_required: bool,
     disconnect: bool,
     respawn: bool,
     exit: bool,
@@ -344,28 +347,6 @@ impl MenuRuntime {
         self.visible = true;
     }
 
-    /// The queued join, once the saved account's check has settled (bounded) and any
-    /// sign-in helper the join does not outlive has finished cleaning up.
-    pub fn take_join_intent(&mut self) -> Option<JoinIntent> {
-        if self.external.is_some() {
-            return self.intents.join.take();
-        }
-        let helper_outlives_join = match self.settle_join_sign_in(std::time::Instant::now()) {
-            account::JoinSignIn::Waiting => return None,
-            account::JoinSignIn::Settled => false,
-            account::JoinSignIn::Expired => true,
-        };
-        if !helper_outlives_join
-            && self
-                .auth_process
-                .as_ref()
-                .is_some_and(|process| !process.cleanup_complete())
-        {
-            return None;
-        }
-        self.intents.join.take()
-    }
-
     /// The session is live: the menu gives way to the world.
     pub fn show_world(&mut self) {
         self.reset_death();
@@ -403,6 +384,7 @@ impl MenuRuntime {
         self.intents.join = None;
         self.intents.join_sign_in_deadline = None;
         self.intents.join_sign_in_check = false;
+        self.intents.native_auth_required = false;
         self.retry_target = None;
         self.show_session_origin(MenuScreen::Play);
     }
