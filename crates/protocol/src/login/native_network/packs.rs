@@ -15,6 +15,12 @@ use std::{io, path::Path, sync::Arc};
 
 const MAX_CDN_DOWNLOADS: usize = 4;
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Reports real HTTP attempts only within one fixture-owned native join future.
+    pub(super) static HTTP_ATTEMPTS: tokio::sync::mpsc::Sender<uuid::Uuid>;
+}
+
 /// Tries cache and CDN before requesting missing archives on the retained game connection.
 pub(super) async fn acquire(
     connection: &mut Connection,

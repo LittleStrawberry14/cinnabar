@@ -107,6 +107,12 @@ pub(super) async fn preload(
             {
                 return Err(invalid("unsupported pack CDN URL"));
             }
+            #[cfg(test)]
+            let _ = super::HTTP_ATTEMPTS.try_with(|attempts| {
+                attempts
+                    .try_send(id)
+                    .expect("fixture HTTP-attempt capacity");
+            });
             let mut response = client
                 .get(url)
                 .send()

@@ -8,7 +8,7 @@ use nethernet_tokio::{AcceptedSession, NetherServer, ServerData};
 use std::time::Duration;
 
 /// Sends generated packets through the same bounded batch codec used by native connections.
-async fn send<S: bedrock_net::BatchPhase>(
+pub(super) async fn send<S: bedrock_net::BatchPhase>(
     peer: &AcceptedSession,
     codec: &BatchCodec<S>,
     packets: &[crate::Packet],
@@ -28,7 +28,7 @@ async fn send<S: bedrock_net::BatchPhase>(
 }
 
 /// Reads one real reliable message and decodes its original generated packet entries.
-async fn receive<S: bedrock_net::BatchPhase>(
+pub(super) async fn receive<S: bedrock_net::BatchPhase>(
     peer: &mut AcceptedSession,
     codec: &BatchCodec<S>,
 ) -> Vec<crate::Packet> {
