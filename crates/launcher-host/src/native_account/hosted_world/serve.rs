@@ -11,7 +11,6 @@ use bedrock_client::server::{
     ServerLoginEvent, ServerPacksReady, ServerSettingsEvent,
     session::{ServerPackDelivery, ServerPackEvent, ServerSpawnEvent},
 };
-use bedrock_protocol_1_26_51::packets;
 use bridge::host_world::{HostProcess, PendingBackendPeer, contract::Identity};
 use p384::ecdsa::SigningKey;
 use protocol::{NativeAcceptingIo, NativeHostWorld, native_host_packs};
@@ -81,7 +80,6 @@ impl NativeHostedWorld {
         policy: &NativeHostedLoginPolicy,
         deadline: Instant,
     ) -> io::Result<ServerPacksReady<HostedLoginApproval>> {
-        let mut skipped = 0_u64;
         let mut login = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
             self.directory_ref()?.check_login_policy(policy)?;
@@ -113,7 +111,7 @@ impl NativeHostedWorld {
                     handshake: retained,
                     packet,
                 } => {
-                    unhandled(&packet, &mut skipped)?;
+                    wire.handle_unhandled(&packet)?;
                     handshake = retained;
                 }
             }
@@ -135,7 +133,7 @@ impl NativeHostedWorld {
                     login: retained,
                     packet,
                 } => {
-                    unhandled(&packet, &mut skipped)?;
+                    wire.handle_unhandled(&packet)?;
                     login = retained;
                 }
             }
@@ -185,7 +183,7 @@ impl NativeHostedWorld {
                     acknowledgment: retained,
                     packet,
                 } => {
-                    unhandled(&packet, &mut skipped)?;
+                    wire.handle_unhandled(&packet)?;
                     acknowledgment = retained;
                 }
             }
@@ -219,7 +217,6 @@ impl NativeHostedWorld {
             .map_err(|_| rejected())?;
         self.peer_io(Some(deadline), wire.send(packets, deadline))
             .await?;
-        let mut skipped = 0_u64;
         let ready = loop {
             self.recheck_login(session.login(), &policy, session.grant())?;
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
@@ -283,7 +280,7 @@ impl NativeHostedWorld {
                     session: retained,
                     packet,
                 } => {
-                    unhandled(&packet, &mut skipped)?;
+                    wire.handle_unhandled(&packet)?;
                     session = retained;
                 }
             }
@@ -321,7 +318,7 @@ impl NativeHostedWorld {
                 }
                 ServerSpawnEvent::Initialized(initialized) => break initialized,
                 ServerSpawnEvent::Unhandled { session, packet } => {
-                    unhandled(&packet, &mut skipped)?;
+                    wire.handle_unhandled(&packet)?;
                     spawning = session;
                 }
             }
@@ -344,22 +341,6 @@ impl NativeHostedWorld {
         self.recheck_login(accepted.login(), &policy, accepted.grant())?;
         Ok(NativeHostedPeer::new(wire, backend, accepted))
     }
-}
-
-/// Ends actual peer terminals immediately, while counting known but unused nonterminal input.
-fn unhandled(packet: &packets::Packet, skipped: &mut u64) -> io::Result<()> {
-    if matches!(
-        packet,
-        packets::Packet::Disconnect(_) | packets::Packet::Transfer(_)
-    ) {
-        return Err(io::Error::new(
-            io::ErrorKind::ConnectionAborted,
-            "native hosted peer ended",
-        ));
-    }
-    *skipped = skipped.saturating_add(1);
-    tracing::debug!(id = ?packet.id(), skipped = *skipped, "skipped unused native hosted packet");
-    Ok(())
 }
 
 /// Does not format provider tokens, signed client data or hosted-world identifiers.

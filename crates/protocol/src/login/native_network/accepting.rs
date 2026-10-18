@@ -76,6 +76,22 @@ impl NativeAcceptingIo {
         }
     }
 
+    /// Ends decoded peer terminals and counts known input unused by the accepting continuation.
+    pub fn handle_unhandled(&mut self, packet: &packets::Packet) -> io::Result<()> {
+        if matches!(
+            packet,
+            packets::Packet::Disconnect(_) | packets::Packet::Transfer(_)
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "native hosted peer ended",
+            ));
+        }
+        self.skipped = self.skipped.saturating_add(1);
+        tracing::debug!(id = ?packet.id(), skipped = self.skipped, "skipped unused native hosted packet");
+        Ok(())
+    }
+
     /// Flushes exact typed effects on the same compression/cipher/transport owner.
     /// Keep this actual future pinned while driving unrelated service work; do not restart writes.
     pub async fn send(
