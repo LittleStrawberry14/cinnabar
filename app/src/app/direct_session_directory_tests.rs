@@ -22,6 +22,44 @@ fn native_direct_connections_do_not_provision_a_core_directory() {
     ));
 }
 
+/// Native command-line connections use the same endpoint grammar as saved menu destinations.
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_cli_endpoint_normalizes_bare_host_and_ipv6_addresses() {
+    let root = tempfile::tempdir().unwrap();
+    for address in [
+        "play.example.net:19133",
+        "[2001:db8::7]:19134",
+        "play.example.net",
+        "2001:db8::7",
+        " play.example.net ",
+    ] {
+        let parsed = run_args(&[
+            "client",
+            "--address",
+            address,
+            "--native-networking",
+            "raknet",
+        ]);
+        let bridge::ConnectTarget::RakNet(expected) =
+            launcher_host::launcher_core::target_for(address)
+        else {
+            panic!("direct fixture must use the ordinary endpoint owner");
+        };
+        let protocol::SessionEndpoint::Native(target) = parsed
+            .session_endpoint(root.path().join("native-session"))
+            .unwrap()
+        else {
+            panic!("native direct command-line target changed backend");
+        };
+        assert_eq!(target.transport, protocol::NativeTransport::RakNet);
+        assert_eq!(
+            target.address, expected,
+            "native command-line endpoint lost existing normalization for {address}"
+        );
+    }
+}
+
 fn run_args(arguments: &[&str]) -> args::ClientArgs {
     match args::ClientArgs::parse_from(arguments.to_vec()) {
         Ok(ParseOutcome::Run(parsed)) => *parsed,
