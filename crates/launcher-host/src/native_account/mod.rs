@@ -22,6 +22,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 const ACQUISITION_TIMEOUT: Duration = Duration::from_secs(30);
 const LEASE_RETRY: Duration = Duration::from_millis(25);
 const XBOX_RELYING_PARTY: &str = "http://xboxlive.com";
+const REFRESH_ONLY_EXPIRY: &str = "1970-01-01T00:00:00Z";
 
 /// Retains proof and service credentials for one selected application account.
 /// No runtime, polling task or HTTP request is created until `prepare` is polled.
@@ -43,7 +44,26 @@ struct Cached {
     generation: String,
     binding: [u8; 32],
     owner: Owner,
+    identity: Option<AccountIdentity>,
+}
+
+/// Retains the generation's account anchor and current OAuth identity validation.
+struct AccountIdentity {
+    xuid: String,
     gamertag: String,
+    current_credential: bool,
+}
+
+impl Cached {
+    /// Retains the generation's verified XUID while invalidating identity for a changed OAuth revision.
+    fn adopt_credentials(&mut self, credentials: Credentials, binding: [u8; 32]) -> io::Result<()> {
+        self.owner.replace_credentials(credentials)?;
+        self.binding = binding;
+        if let Some(identity) = &mut self.identity {
+            identity.current_credential = false;
+        }
+        Ok(())
+    }
 }
 
 enum Owner {
@@ -58,6 +78,7 @@ struct Operation {
     cached: Option<Cached>,
     lease: Option<NativeLease>,
     published: bool,
+    rejected: bool,
 }
 
 impl NativeAccount {
@@ -116,7 +137,11 @@ impl NativeAccount {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     tokio::time::sleep(LEASE_RETRY).await
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // No new request began; retired or unreadable storage must also release cached secrets.
+                    operation.cached = None;
+                    return Err(error);
+                }
             }
         });
         let lease = operation.lease.as_ref().expect("acquired lease");
@@ -130,7 +155,7 @@ impl NativeAccount {
                 "selected native account changed",
             ));
         }
-        let policy = xbox::Config::default();
+        let policy = authentication_policy();
         if lease.client_id().is_some_and(|id| id != policy.client_id) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -163,48 +188,75 @@ impl NativeAccount {
                 generation: lease.generation().to_owned(),
                 binding: lease.binding(),
                 owner: Owner::Xbox(Box::new(account)),
-                gamertag: String::new(),
+                identity: None,
             });
         } else if let Some(cached) = operation.cached.as_mut()
             && cached.binding != lease.binding()
         {
-            cached
-                .owner
-                .replace_credentials(import_credentials(lease, &policy)?)?;
-            cached.binding = lease.binding();
+            cached.adopt_credentials(import_credentials(lease, &policy)?, lease.binding())?;
         }
 
-        if let Owner::Xbox(account) = &mut operation.cached.as_mut().expect("account owner").owner {
-            let identity = account
-                .authorize(XBOX_RELYING_PARTY)
-                .await
-                .map_err(service_error)?;
-            if operation
+        if let Some(identity) = operation
+            .cached
+            .as_ref()
+            .expect("account owner")
+            .identity
+            .as_ref()
+            && operation
                 .lease
                 .as_ref()
                 .expect("acquired lease")
                 .selected_id()
-                .is_some_and(|id| id != identity.xuid())
-            {
-                operation.cached = None;
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "native account identity does not match the selection",
-                ));
-            }
+                .is_some_and(|selected| selected != identity.xuid)
+        {
+            operation.rejected = true;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native account identity does not match the selection",
+            ));
+        }
+
+        if operation
+            .cached
+            .as_ref()
+            .expect("account owner")
+            .identity
+            .as_ref()
+            .is_none_or(|identity| !identity.current_credential)
+        {
+            let authorization = operation
+                .cached
+                .as_mut()
+                .expect("account owner")
+                .owner
+                .xbox_authorization()
+                .await?;
+            operation.verify_identity(authorization.xuid(), authorization.gamertag())?;
+        }
+        if matches!(
+            operation.cached.as_ref().expect("account owner").owner,
+            Owner::Xbox(_)
+        ) {
+            let identity = operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity");
             let version = u32::try_from(protocol::PROTOCOL_VERSION)
                 .map_err(|_| io::Error::other("invalid application protocol version"))?;
             let config = minecraft::Config::desktop(
                 protocol::GAME_VERSION,
                 version,
-                metadata::service_device_id(identity.xuid())?,
+                metadata::service_device_id(&identity.xuid)?,
             );
             operation.persist()?;
             let Cached {
                 generation,
                 binding,
                 owner,
-                ..
+                identity,
             } = operation.cached.take().expect("account owner");
             let Owner::Xbox(account) = owner else {
                 unreachable!("checked Xbox owner")
@@ -214,7 +266,7 @@ impl NativeAccount {
                 generation,
                 binding,
                 owner: Owner::Minecraft(Box::new(services)),
-                gamertag: identity.gamertag().to_owned(),
+                identity,
             });
             operation.published = false;
         }
@@ -237,15 +289,23 @@ impl NativeAccount {
         };
         let key = SigningKey::try_generate_from_rng(&mut SysRng)
             .map_err(|_| io::Error::other("native connection key generation failed"))?;
-        let cached = operation.cached.as_mut().expect("account owner");
-        let Owner::Minecraft(services) = &mut cached.owner else {
-            unreachable!("prepared Minecraft owner")
-        };
-        let token = services
+        let token = operation
+            .minecraft()?
             .multiplayer_token(key.verifying_key())
             .await
             .map_err(service_error)?;
-        profile.apply(&mut claims, random_id, &cached.gamertag);
+        profile.apply(
+            &mut claims,
+            random_id,
+            &operation
+                .cached
+                .as_ref()
+                .expect("account owner")
+                .identity
+                .as_ref()
+                .expect("verified identity")
+                .gamertag,
+        );
         let raw = serde_json::value::to_raw_value(&claims)
             .map_err(|_| io::Error::other("serialize native client data"))?;
         let prepared = protocol::NativeAuthentication::new(key, token.as_str().to_owned(), &raw)?;
@@ -271,11 +331,21 @@ impl NativeAccount {
             cached: state.cached.take(),
             lease: None,
             published: false,
+            rejected: false,
         })
     }
 }
 
 impl Owner {
+    /// Revalidates the current credential's Xbox identity without consuming the Minecraft session.
+    async fn xbox_authorization(&mut self) -> io::Result<Arc<xbox::Authorization>> {
+        match self {
+            Self::Xbox(account) => account.authorize(XBOX_RELYING_PARTY).await,
+            Self::Minecraft(services) => services.xbox_authorization().await,
+        }
+        .map_err(service_error)
+    }
+
     /// Borrows the current rotated OAuth state without cloning the SDK owner.
     fn credentials(&self) -> &Credentials {
         match self {
@@ -304,6 +374,58 @@ impl Owner {
 }
 
 impl Operation {
+    /// Binds the saved slot only after checking the acquired authorization's actual identity.
+    fn verify_identity(&mut self, xuid: &str, gamertag: &str) -> io::Result<()> {
+        let lease = self.lease.as_ref().expect("acquired lease");
+        let cached = self.cached.as_ref().expect("account owner");
+        if lease.selected_id().is_some_and(|selected| selected != xuid)
+            || cached
+                .identity
+                .as_ref()
+                .is_some_and(|previous| previous.xuid != xuid)
+        {
+            self.rejected = true;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native account identity does not match the selection",
+            ));
+        }
+        self.cached.as_mut().expect("account owner").identity = Some(AccountIdentity {
+            xuid: xuid.to_owned(),
+            gamertag: gamertag.to_owned(),
+            current_credential: true,
+        });
+        Ok(())
+    }
+
+    /// Allows service minting only after current credentials pass every application identity fence.
+    fn minecraft(&mut self) -> io::Result<&mut minecraft::Minecraft> {
+        if self.rejected {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native account identity was rejected",
+            ));
+        }
+        let cached = self
+            .cached
+            .as_mut()
+            .ok_or_else(|| io::Error::other("native account owner unavailable"))?;
+        if cached
+            .identity
+            .as_ref()
+            .is_none_or(|identity| !identity.current_credential)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "native account identity is not verified",
+            ));
+        }
+        match &mut cached.owner {
+            Owner::Minecraft(services) => Ok(services),
+            Owner::Xbox(_) => Err(io::Error::other("native Minecraft owner is not prepared")),
+        }
+    }
+
     /// Writes the newest refresh before success and updates the cached file revision.
     fn persist(&mut self) -> io::Result<()> {
         let (Some(cached), Some(lease)) = (self.cached.as_mut(), self.lease.as_mut()) else {
@@ -315,31 +437,47 @@ impl Operation {
                 "native account has not adopted the current leased credentials",
             ));
         }
-        let checkpoint = cached.owner.checkpoint()?;
         let credentials = cached.owner.credentials();
-        if credentials.access_token().is_empty() {
-            lease.publish_checkpoint(checkpoint.as_bytes())?;
-        } else {
-            let elapsed = credentials
-                .expires_at()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| io::Error::other("invalid native OAuth expiry"))?;
-            let nanos = i128::try_from(elapsed.as_nanos())
-                .map_err(|_| io::Error::other("invalid native OAuth expiry"))?;
-            let expiry = OffsetDateTime::from_unix_timestamp_nanos(nanos)
-                .map_err(|_| io::Error::other("invalid native OAuth expiry"))?
-                .format(&Rfc3339)
-                .map_err(|_| io::Error::other("invalid native OAuth expiry"))?;
-            lease.publish(
-                credentials.access_token(),
-                credentials.refresh_token(),
-                &expiry,
-                checkpoint.as_bytes(),
-            )?;
+        let mut publication_error = None;
+        if !credentials.access_token().is_empty() {
+            let publication = oauth_expiry(credentials.expires_at()).and_then(|expiry| {
+                lease.publish_oauth(
+                    credentials.access_token(),
+                    credentials.refresh_token(),
+                    &expiry,
+                )
+            });
+            if let Err(error) = publication {
+                if !matches!(
+                    error.kind(),
+                    io::ErrorKind::FileTooLarge | io::ErrorKind::InvalidInput
+                ) {
+                    return Err(error);
+                }
+                // Fail this join, but preserve a rotated refresh when the access record cannot be shared with Go.
+                lease.publish_oauth("", credentials.refresh_token(), REFRESH_ONLY_EXPIRY)?;
+                self.rejected = true;
+                publication_error = Some(error);
+            }
         }
+        // OAuth is already durable even if checkpoint encoding or saved-slot publication fails next.
         cached.binding = lease.binding();
+        let checkpoint = cached.owner.checkpoint()?;
+        if !self.rejected
+            && let Some(identity) = &cached.identity
+            && identity.current_credential
+        {
+            if let Err(error) =
+                lease.publish_verified_identity(&identity.xuid, checkpoint.as_bytes())
+            {
+                lease.publish_active_checkpoint(checkpoint.as_bytes())?;
+                return Err(error);
+            }
+        } else {
+            lease.publish_active_checkpoint(checkpoint.as_bytes())?;
+        }
         self.published = true;
-        Ok(())
+        publication_error.map_or(Ok(()), Err)
     }
 }
 
@@ -350,11 +488,36 @@ impl Drop for Operation {
             self.cached = None;
             tracing::warn!("native account credential persistence failed");
         }
+        if self.rejected {
+            self.cached = None;
+        }
         if let Ok(mut state) = self.account.state.lock() {
             state.cached = self.cached.take();
             state.busy = false;
         }
     }
+}
+
+/// Chooses the current application's Android policy explicitly, independent of SDK defaults.
+fn authentication_policy() -> xbox::Config {
+    xbox::Config {
+        client_id: "0000000048183522".into(),
+        user_agent: "XAL Android 2025.11.20251111.000".into(),
+        device: xbox::Device::Android,
+        device_version: "13".into(),
+        sandbox: "RETAIL".into(),
+    }
+}
+
+/// Formats an acquired absolute expiry without panicking on an unrepresentable service value.
+fn oauth_expiry(expires: std::time::SystemTime) -> io::Result<String> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "invalid native OAuth expiry");
+    let elapsed = expires.duration_since(UNIX_EPOCH).map_err(|_| invalid())?;
+    let nanos = i128::try_from(elapsed.as_nanos()).map_err(|_| invalid())?;
+    OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|_| invalid())?
+        .format(&Rfc3339)
+        .map_err(|_| invalid())
 }
 
 /// Imports the leased refresh credential conservatively; process-local expiry anchors are not portable.

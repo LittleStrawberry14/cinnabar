@@ -11,6 +11,7 @@ reads = [
     "assets/branding/icon.png",
     "assets/branding/title.png",
     "core/authcache/derived_suffix.txt",
+    "core/authcache/cache_limit.txt",
     "core/catalog/artwork_limit.txt",
     "core/catalog/profile_overview_limit.txt",
 ]

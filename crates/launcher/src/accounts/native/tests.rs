@@ -44,7 +44,7 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
         .store
         .try_native_lease()
         .unwrap()
-        .publish_checkpoint(b"temporary-proof")
+        .publish_active_checkpoint(b"temporary-proof")
         .unwrap();
     write_private(
         &derived_path(&fixture.store.active_cache),
@@ -70,12 +70,10 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
     );
     assert!(try_lease(&cache_lock_path(&fixture.store.active_cache)).is_err());
     native
-        .publish(
-            "new-access",
-            "rotated-refresh",
-            "2099-01-01T00:00:00Z",
-            b"synthetic-proof-owner",
-        )
+        .publish_oauth("new-access", "rotated-refresh", "2099-01-01T00:00:00Z")
+        .unwrap();
+    native
+        .publish_verified_identity("123", b"synthetic-proof-owner")
         .unwrap();
     assert!(!checkpoint_path(&fixture.store, None).exists());
     let oauth: serde_json::Value =
@@ -98,12 +96,7 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
     fixture.sign_in("replacement");
     assert_eq!(
         native
-            .publish(
-                "stale",
-                "stale-refresh",
-                "2099-01-01T00:00:00Z",
-                b"stale-proof"
-            )
+            .publish_oauth("stale", "stale-refresh", "2099-01-01T00:00:00Z")
             .unwrap_err()
             .kind(),
         io::ErrorKind::PermissionDenied
@@ -120,12 +113,7 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
     remove_optional(&fixture.store.active_cache).unwrap();
     assert_eq!(
         native
-            .publish(
-                "stale",
-                "stale-refresh",
-                "2099-01-01T00:00:00Z",
-                b"stale-proof"
-            )
+            .publish_oauth("stale", "stale-refresh", "2099-01-01T00:00:00Z")
             .unwrap_err()
             .kind(),
         io::ErrorKind::NotFound
@@ -137,4 +125,44 @@ fn rotation_is_persisted_and_generation_replacement_or_removal_cannot_be_undone(
     fixture.store.sign_out().unwrap();
     assert!(!checkpoint_path(&fixture.store, Some("123")).exists());
     assert!(fixture.store.try_native_lease().is_err());
+}
+
+/// The native writer accepts exactly the Go reader's serialized bound and rejects escaped overflow.
+#[test]
+fn active_oauth_publication_preserves_go_reader_compatibility() {
+    let fixture = Fixture::new();
+    fixture.sign_in("boundary");
+    let mut native = fixture.store.try_native_lease().unwrap();
+    let expiry = "2099-01-01T00:00:00Z";
+    native.publish_oauth("", "rotated-refresh", expiry).unwrap();
+    let overhead = read_private(&fixture.store.active_cache).unwrap().len();
+    let boundary = "a".repeat(MAX_OAUTH_CACHE_BYTES - overhead);
+    native
+        .publish_oauth(&boundary, "rotated-refresh", expiry)
+        .unwrap();
+    let previous =
+        read_private_bounded(&fixture.store.active_cache, MAX_OAUTH_CACHE_BYTES as u64).unwrap();
+    assert_eq!(previous.len(), MAX_OAUTH_CACHE_BYTES);
+    assert_eq!(
+        parse_oauth(&previous).unwrap().refresh_token.as_str(),
+        "rotated-refresh"
+    );
+    for oversized in [
+        format!("{boundary}a"),
+        "\0".repeat(MAX_OAUTH_CACHE_BYTES / 6),
+    ] {
+        assert_eq!(
+            native
+                .publish_oauth(&oversized, "unpublished-refresh", expiry)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::FileTooLarge
+        );
+        assert_eq!(read_private(&fixture.store.active_cache).unwrap(), previous);
+        assert_eq!(native.refresh_token(), "rotated-refresh");
+    }
+    native
+        .publish_oauth("small", "next-refresh", expiry)
+        .unwrap();
+    assert_eq!(native.refresh_token(), "next-refresh");
 }

@@ -63,10 +63,12 @@ impl DeviceProfile {
 }
 
 /// Derives the shared service-device identity from the account XUID and one cross-language namespace.
-pub(super) fn service_device_id(xuid: &str) -> io::Result<uuid::Uuid> {
+pub(super) fn service_device_id(xuid: &str) -> io::Result<bedrock_services::minecraft::DeviceId> {
     let namespace = uuid::Uuid::parse_str(SERVICE_NAMESPACE.trim())
         .map_err(|_| io::Error::other("invalid service device namespace"))?;
-    Ok(uuid::Uuid::new_v5(&namespace, xuid.as_bytes()))
+    Ok(bedrock_services::minecraft::DeviceId::compact(
+        uuid::Uuid::new_v5(&namespace, xuid.as_bytes()),
+    ))
 }
 
 /// Preserves the signed login-ID bit pattern and per-word UUID byte order.
@@ -123,8 +125,8 @@ mod tests {
         let repeated = self_signed_id(random_id, &profile.id).to_string();
         assert_eq!(claims["SelfSignedId"], repeated);
         assert_eq!(
-            service_device_id("123").unwrap(),
-            service_device_id("123").unwrap()
+            service_device_id("123").unwrap().to_string(),
+            "fa540d627071506d92c1e6888b3099e6"
         );
         assert_ne!(
             service_device_id("123").unwrap(),

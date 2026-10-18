@@ -12,9 +12,12 @@ pub mod native;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// The shared download and local-copy bound for catalog and Xbox profile artwork.
 pub const MAX_ARTWORK_BYTES: usize =
-    artwork_byte_limit(include_bytes!("../../../core/catalog/artwork_limit.txt"));
+    embedded_byte_limit(include_bytes!("../../../core/catalog/artwork_limit.txt"));
+/// Serialized active OAuth records must remain readable by the existing Go credential owner.
+pub const MAX_OAUTH_CACHE_BYTES: usize =
+    embedded_byte_limit(include_bytes!("../../../core/authcache/cache_limit.txt"));
 
-const fn artwork_byte_limit(bytes: &[u8]) -> usize {
+const fn embedded_byte_limit(bytes: &[u8]) -> usize {
     let mut limit = 0usize;
     let mut index = 0;
     while index < bytes.len() {
@@ -22,19 +25,19 @@ const fn artwork_byte_limit(bytes: &[u8]) -> usize {
             b'0'..=b'9' => {
                 limit = match limit.checked_mul(10) {
                     Some(limit) => limit,
-                    None => panic!("embedded artwork byte limit overflow"),
+                    None => panic!("embedded byte limit overflow"),
                 };
                 limit = match limit.checked_add((bytes[index] - b'0') as usize) {
                     Some(limit) => limit,
-                    None => panic!("embedded artwork byte limit overflow"),
+                    None => panic!("embedded byte limit overflow"),
                 };
             }
             b'\r' | b'\n' => {}
-            _ => panic!("invalid embedded artwork byte limit"),
+            _ => panic!("invalid embedded byte limit"),
         }
         index += 1;
     }
-    assert!(limit > 0, "invalid embedded artwork byte limit");
+    assert!(limit > 0, "invalid embedded byte limit");
     limit
 }
 const DERIVED_SUFFIX: &str = include_str!("../../../core/authcache/derived_suffix.txt");
@@ -126,7 +129,7 @@ impl AccountStore {
         }
         let _active = cache_leases(&self.active_cache)?;
         if index.active.as_deref() == Some(id) && read_optional(&self.active_cache)?.is_some() {
-            return Ok(());
+            return read_credentials(&self.active_cache).map(|_| ());
         }
         let credentials = self.credentials(id)?;
         self.activate_locked(&mut index, id, &credentials)
@@ -203,7 +206,11 @@ impl AccountStore {
                 &derived_path(&self.active_cache),
                 credentials.derived.as_deref().map(str::as_bytes),
             )?;
-            write_private(&self.active_cache, credentials.oauth.as_bytes())?;
+            write_private_bounded(
+                &self.active_cache,
+                credentials.oauth.as_bytes(),
+                MAX_OAUTH_CACHE_BYTES as u64,
+            )?;
             index.active = Some(id.to_owned());
             self.write_index(index)
         })();
@@ -361,7 +368,7 @@ fn checked_profile(
 }
 
 fn read_credentials(path: &Path) -> io::Result<Credentials> {
-    let oauth = String::from_utf8(read_private(path)?)
+    let oauth = String::from_utf8(read_private_bounded(path, MAX_OAUTH_CACHE_BYTES as u64)?)
         .map_err(|_| invalid("invalid OAuth cache encoding"))?;
     let derived = read_optional(&derived_path(path))?
         .map(|bytes| {
@@ -374,6 +381,9 @@ fn read_credentials(path: &Path) -> io::Result<Credentials> {
 }
 
 fn validate_credentials(credentials: &Credentials) -> io::Result<()> {
+    if credentials.oauth.len() > MAX_OAUTH_CACHE_BYTES {
+        return Err(invalid("OAuth cache exceeds the shared credential limit"));
+    }
     let oauth: serde_json::Value =
         serde_json::from_str(&credentials.oauth).map_err(|_| invalid("invalid OAuth cache"))?;
     if oauth

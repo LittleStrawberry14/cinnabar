@@ -46,7 +46,7 @@ url = "2"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "b75de35e19ccadbf4b246bec22a5713cd2754dff", optional = true }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "7f6a74c326eb09f7c6cd84de8309bba9d4e8476e", optional = true }
 p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }
