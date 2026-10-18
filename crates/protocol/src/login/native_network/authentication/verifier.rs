@@ -97,6 +97,7 @@ impl NativeTokenVerifier {
                             .is_none_or(|usage| usage == "sig")
                         && (published.key_ops.is_empty()
                             || published.key_ops.iter().any(|op| op == "verify"))
+                        && published.key.validate_rs256().is_ok()
                 })
                 .map(|published| published.key)
                 .collect(),

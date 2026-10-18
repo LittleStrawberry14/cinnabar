@@ -5,7 +5,7 @@ use nethernet::identity::jwt::Claims;
 use p384::ecdsa::VerifyingKey;
 use std::{
     io,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 const CLAIMS_LEEWAY: Duration = Duration::from_secs(60);
@@ -29,17 +29,12 @@ pub(super) fn validate(
     }
     let latest = now.checked_add(CLAIMS_LEEWAY).ok_or_else(rejected)?;
     for name in ["nbf", "iat"] {
-        if let Some(value) = claims.values().get(name).filter(|value| !value.is_null()) {
-            let seconds = value.as_i64().ok_or_else(rejected)?;
-            let time = if seconds >= 0 {
-                UNIX_EPOCH.checked_add(Duration::from_secs(seconds.unsigned_abs()))
-            } else {
-                UNIX_EPOCH.checked_sub(Duration::from_secs(seconds.unsigned_abs()))
-            }
-            .ok_or_else(rejected)?;
-            if time > latest {
-                return Err(rejected());
-            }
+        if claims
+            .numeric_date(name)
+            .map_err(|_| rejected())?
+            .is_some_and(|time| time > latest)
+        {
+            return Err(rejected());
         }
     }
     if let Some(value) = claims
