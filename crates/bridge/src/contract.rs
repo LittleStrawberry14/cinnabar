@@ -275,6 +275,9 @@ pub const CINNABAR_API_MAX_LOOKUP_XUIDS: usize = 128;
 /// Fallback lifetime of a Cinnabar lookup answer.
 pub const CINNABAR_API_CACHE_TTL_MS: u32 = 120000;
 
+/// Android authentication title used to derive the title presence service configuration.
+pub const PRESENCE_TITLE_ID: u32 = 1739947436;
+
 /// Xbox presence game mode for survival.
 pub const PRESENCE_GAME_MODE_SURVIVAL: i32 = 0;
 

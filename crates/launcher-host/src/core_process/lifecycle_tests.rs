@@ -114,6 +114,19 @@ fn core_guard_stop_without_a_child_reports_not_running() {
 }
 
 #[test]
+fn detached_retirement_reports_the_actual_child_exit() {
+    let (child, directory) = stdin_holding_child();
+    let mut guard = CoreProcessGuard::default();
+    guard.replace(child);
+    let (done, retired) = crossbeam_channel::bounded(1);
+    guard.stop_detached_with_outcome(move |outcome| done.send(outcome).unwrap());
+    let outcome = retired.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(outcome, CoreStopOutcome::ExitedAfterGracefulClose);
+    assert_eq!(guard.stop(), CoreStopOutcome::NotRunning);
+    remove_directory(&directory);
+}
+
+#[test]
 fn core_guard_replace_stops_the_previous_child_gracefully() {
     let (first, first_directory) = stdin_holding_child();
     let (second, second_directory) = stdin_holding_child();

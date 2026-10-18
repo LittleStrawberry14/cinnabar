@@ -102,6 +102,7 @@
     {"rust_name": "", "go_name": "CinnabarAPILookupRefillPerMin", "value": 512, "rust_type": "u32", "doc": "Fallback lookup refill in XUIDs per minute."},
     {"rust_name": "", "go_name": "CinnabarAPIPingIntervalMS", "value": 30000, "rust_type": "u32", "doc": "Fallback keepalive interval."},
     {"rust_name": "", "go_name": "CinnabarAPIReconnectMaxMS", "value": 300000, "rust_type": "u32", "doc": "Fallback reconnect backoff cap."},
+    {"rust_name": "PRESENCE_TITLE_ID", "go_name": "PresenceTitleID", "value": 1739947436, "rust_type": "u32", "doc": "Android authentication title used to derive the title presence service configuration."},
     {"rust_name": "PRESENCE_GAME_MODE_SURVIVAL", "go_name": "PresenceGameModeSurvival", "value": 0, "rust_type": "i32", "doc": "Xbox presence game mode for survival."},
     {"rust_name": "PRESENCE_GAME_MODE_CREATIVE", "go_name": "PresenceGameModeCreative", "value": 1, "rust_type": "i32", "doc": "Xbox presence game mode for creative."},
     {"rust_name": "PRESENCE_GAME_MODE_ADVENTURE", "go_name": "PresenceGameModeAdventure", "value": 2, "rust_type": "i32", "doc": "Xbox presence game mode for adventure."},

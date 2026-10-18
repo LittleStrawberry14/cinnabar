@@ -63,6 +63,17 @@ under review; compiled application cancellation and service integration proof
 remain incomplete, including the shared service-library pin update.
 
 Incomplete: native hosting transport and application adoption, remaining profile and
+Title presence defaults to the Go account worker. Native sign-in selects an
+account-lifetime publisher on the existing account event runtime. It reuses the
+selected leased SDK owner, coalesces activity, retains each actual service future
+and schedules the returned heartbeat interval. Core policy changes wait for the
+old process's actual retirement; account switches and replacement publishers also
+wait for original-generation native cleanup. Unconfirmed exit/removal retains one
+cleanup obligation and blocks replacement. Owning execution, end-to-end protected
+HTTP/process transitions and real-account presence qualification remain open;
+bounded HTTP completion does not prove server-side write ordering after cancellation.
+
+Incomplete: native hosted-world approval and publication, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled
 UI captures, real-account/device/server/network acceptance and Go-baseline

@@ -36,10 +36,15 @@ mod cinnabar_players;
 mod feeds;
 mod shared_players;
 use feeds::{CoreFeeds, catalog_round};
+mod events;
 mod invites;
 mod message_reports;
+mod presence;
 pub mod profile_worker;
 mod realm_membership;
+pub use presence::{TitlePresenceLifetime, TitlePresenceRetirement};
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod native_presence;
 
 #[cfg(all(test, unix))]
 mod presence_polling_tests;
@@ -72,6 +77,9 @@ struct Snapshot {
     /// Wakes Profile independently when its account identity changes.
     profile_wake: Option<Sender<()>>,
     xbox_presence: bridge::XboxPresenceState,
+    title_presence_owner: crate::launcher_core::TitlePresenceOwner,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_presence_account: Option<Arc<crate::native_account::NativeAccount>>,
     /// The Cinnabar API identity and visibility the events worker keeps the core configured with.
     cinnabar_api: Option<bridge::CinnabarApiConfig>,
     shared_players: shared_players::Exchange,
@@ -158,6 +166,13 @@ pub struct LauncherAccount {
     /// Dropping it stops the catalog and feed workers.
     _alive: Sender<()>,
     socket_dir: PathBuf,
+    presence_lifetime: TitlePresenceLifetime,
+}
+
+impl Drop for LauncherAccount {
+    fn drop(&mut self) {
+        self.presence_lifetime.retire();
+    }
 }
 
 impl LauncherAccount {
@@ -165,6 +180,30 @@ impl LauncherAccount {
     /// the workers stop when this is dropped. Events, the slow catalog and the screen feeds
     /// each poll on their own worker, publishing every answer as it arrives.
     pub fn new(socket_dir: PathBuf, artwork: PathBuf) -> Self {
+        Self::start(socket_dir, artwork, Snapshot::default())
+    }
+
+    /// Starts native title presence on the same event worker after the previous core was reaped.
+    /// The account is the menu's existing selected owner, shared with catalog and game operations.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn with_native_presence(
+        socket_dir: PathBuf,
+        artwork: PathBuf,
+        account: Option<Arc<crate::native_account::NativeAccount>>,
+    ) -> Self {
+        Self::start(
+            socket_dir,
+            artwork,
+            Snapshot {
+                title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
+                native_presence_account: account,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Starts the existing feed workers and one event/runtime owner.
+    fn start(socket_dir: PathBuf, artwork: PathBuf, initial: Snapshot) -> Self {
         let (catalog_wake, catalog_changes) = bounded(1);
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
@@ -174,8 +213,9 @@ impl LauncherAccount {
             feed_wake: Some(feed_wake.clone()),
             home_wake: Some(home_wake.clone()),
             profile_wake: Some(profile_refresh.clone()),
-            ..Default::default()
+            ..initial
         }));
+        let presence_lifetime = TitlePresenceLifetime::new();
         let (sign_out, requests) = bounded(1);
         let (alive, stop) = bounded(0);
         let message_reports = message_reports::start(socket_dir.clone(), stop.clone());
@@ -189,7 +229,8 @@ impl LauncherAccount {
         let cinnabar_rosters = cinnabar_players::start(socket_dir.clone(), Arc::clone(&snapshot));
         let shared = Arc::clone(&snapshot);
         let dir = socket_dir.clone();
-        thread::spawn(move || poll_events(&dir, &shared, &requests));
+        let lifetime = presence_lifetime.clone();
+        thread::spawn(move || events::poll(&dir, &shared, &requests, &lifetime));
         let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
         thread::spawn(move || poll_catalog(&dir, &shared, &until, &catalog_changes));
         let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
@@ -215,7 +256,13 @@ impl LauncherAccount {
             cinnabar_rosters,
             _alive: alive,
             socket_dir,
+            presence_lifetime,
         }
+    }
+
+    /// Retains the existing worker's retirement proof independently of the Bevy resource.
+    pub fn title_presence_lifetime(&self) -> TitlePresenceLifetime {
+        self.presence_lifetime.clone()
     }
 
     /// Retires Go Realms/friend-world results and polling when the native menu owns discovery.
@@ -235,7 +282,16 @@ impl LauncherAccount {
 
     /// Publishes the newest committed world activity for the control worker.
     pub fn set_xbox_presence(&self, state: bridge::XboxPresenceState) {
-        publish(&self.snapshot, |snapshot| snapshot.xbox_presence = state);
+        let changed = self.with(|snapshot| {
+            if snapshot.xbox_presence == state {
+                return false;
+            }
+            snapshot.xbox_presence = state;
+            true
+        });
+        if changed {
+            self.presence_lifetime.wake();
+        }
     }
 
     /// Keeps the core's Cinnabar API connection on `channel`, showing this player when `visible`.
@@ -352,120 +408,9 @@ fn wait_catalog(stop: &Receiver<()>, changes: &Receiver<()>) -> bool {
     }
 }
 
+#[cfg(test)]
 fn poll_events(socket_dir: &std::path::Path, shared: &Mutex<Snapshot>, requests: &Receiver<()>) {
-    let Some(runtime) = runtime() else {
-        return;
-    };
-    let mut sent_presence = None;
-    let mut presence_failed = false;
-    let mut sent_cinnabar = None;
-    let mut seen_release = None;
-    let mut ping_due = Instant::now();
-    let mut pinged: Vec<String> = Vec::new();
-    loop {
-        let joining = shared
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .joining;
-        let interval = if joining {
-            JOIN_EVENT_INTERVAL
-        } else {
-            EVENT_INTERVAL
-        };
-        match requests.recv_timeout(interval) {
-            Ok(()) => {
-                let _ = runtime.block_on(bridge::sign_out(socket_dir));
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-        }
-        let presence = shared
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .xbox_presence
-            .clone();
-        if sent_presence.as_ref() != Some(&presence) {
-            let sent = runtime.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    bridge::report_xbox_presence(socket_dir, &presence),
-                )
-                .await
-            });
-            if matches!(sent, Ok(Ok(()))) {
-                sent_presence = Some(presence);
-                presence_failed = false;
-            } else if !presence_failed {
-                tracing::warn!("Xbox presence control unavailable; retrying");
-                presence_failed = true;
-            }
-        }
-        let cinnabar = shared
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .cinnabar_api
-            .clone();
-        if let Some(config) = &cinnabar
-            && sent_cinnabar.as_ref() != Some(config)
-        {
-            let sent = runtime.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    bridge::configure_cinnabar_api(socket_dir, config),
-                )
-                .await
-            });
-            if matches!(sent, Ok(Ok(()))) {
-                sent_cinnabar = Some(config.clone());
-            }
-        }
-        let generation = auth_generation(shared);
-        if let Ok(events) = runtime.block_on(bridge::poll_events(socket_dir)) {
-            if let Some(release) = new_release(&mut seen_release, events.cinnabar_release.as_ref())
-            {
-                crate::lifecycle::update::release_published(release);
-            }
-            publish(shared, |snapshot| {
-                if let Some(disconnect) = events.disconnect
-                    && snapshot.last_disconnect != Some(disconnect.sequence)
-                {
-                    // The first poll only records the standing disconnect.
-                    if snapshot.last_disconnect.is_some() {
-                        // An empty message reads as vanilla's no-reason line.
-                        let reason = disconnect.message.trim().to_owned();
-                        snapshot.events.push(AccountEvent::Disconnected { reason });
-                    }
-                    snapshot.last_disconnect = Some(disconnect.sequence);
-                }
-                snapshot.last_disconnect.get_or_insert(0);
-                snapshot.connect = events.connect;
-                snapshot.server_trust = events.server_trust;
-            });
-            publish_account(shared, generation, |snapshot| {
-                snapshot.set_account(events.auth);
-            });
-        }
-        let targets = shared
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .ping_targets
-            .clone();
-        // The feeds worker publishes first, so rows it adds are new targets here
-        // and are pinged on the next tick instead of a round later.
-        if targets != pinged {
-            ping_due = Instant::now();
-        }
-        if !targets.is_empty() && Instant::now() >= ping_due {
-            ping_due = Instant::now() + PING_INTERVAL;
-            pinged = targets.clone();
-            let pongs = runtime.block_on(bridge::ping_servers(socket_dir, &targets));
-            let pings = round_results(
-                &targets,
-                settle("ping", pongs, &mut false).unwrap_or_default(),
-            );
-            publish(shared, |snapshot| snapshot.pings = Some(pings));
-        }
-    }
+    events::poll(socket_dir, shared, requests, &TitlePresenceLifetime::new());
 }
 
 /// The announced release when its identity differs from the last one seen.

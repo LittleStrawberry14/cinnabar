@@ -42,6 +42,7 @@ fn fixture(exited: bool) -> (LauncherCoreSlot, MenuRuntime, World, PathBuf) {
             socket_dir: socket_dir.clone(),
             authenticated: false,
             auth_cache: None,
+            title_presence_owner: TitlePresenceOwner::Core,
             attached: true,
         }),
         failed: None,
@@ -297,5 +298,57 @@ fn realm_membership_core_exit_retires_the_pending_dialog() {
             menu.realm_membership.state.is_none(),
             "a detached account control cannot complete the dialog"
         );
+    }
+}
+
+#[test]
+fn presence_policy_change_retires_the_actual_core_before_replacement() {
+    let (mut slot, mut menu, mut world, _) = fixture(false);
+    install_exiting_core(&menu);
+    let original = slot.core.as_ref().unwrap()._guard.id();
+    slot.set_title_presence_owner(TitlePresenceOwner::Native);
+    drive(&mut slot, &mut menu, &mut world, false);
+    assert_eq!(slot.core.as_ref().unwrap()._guard.id(), original);
+    assert_eq!(slot.title_presence_owner(), Some(TitlePresenceOwner::Core));
+    drive(&mut slot, &mut menu, &mut world, true);
+    assert!(slot.core.is_none());
+    assert!(slot.retiring.is_some());
+    assert!(!world.contains_resource::<LauncherAccount>());
+    test_time::eventually_within(
+        Duration::from_secs(5),
+        "the old presence core to retire",
+        || {
+            drive(&mut slot, &mut menu, &mut world, true);
+            slot.core.is_some()
+        },
+    );
+    assert_eq!(
+        slot.last_core_retirement(),
+        Some(CoreStopOutcome::ExitedAfterGracefulClose)
+    );
+    assert_eq!(
+        slot.title_presence_owner(),
+        Some(TitlePresenceOwner::Native)
+    );
+    assert_ne!(slot.core.as_ref().unwrap()._guard.id(), original);
+}
+
+#[test]
+fn unconfirmed_retirement_holds_replacement_even_after_policy_changes() {
+    for outcome in [Some(CoreStopOutcome::Unreaped), None] {
+        let mut slot = LauncherCoreSlot::default();
+        let (done, retired) = crossbeam_channel::bounded(1);
+        slot.retiring = Some(retired);
+        if let Some(outcome) = outcome {
+            done.send(outcome).unwrap();
+        }
+        drop(done);
+        assert!(!slot.retirement_complete());
+        assert_eq!(slot.last_core_retirement(), outcome);
+        slot.set_title_presence_owner(TitlePresenceOwner::Native);
+        assert!(!slot.retirement_complete());
+        slot.set_title_presence_owner(TitlePresenceOwner::Core);
+        assert!(!slot.retirement_complete());
+        assert!(slot.core.is_none());
     }
 }
