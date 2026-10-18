@@ -246,8 +246,9 @@ class ObservationTests(unittest.TestCase):
                          for index in range(handler.max_redirections)}]:
             request = urllib.request.Request(watch.API_ROOT + "repos/example/reference")
             request.redirect_dict = visited
-            with self.assertRaises(urllib.error.HTTPError):
+            with self.assertRaises(urllib.error.HTTPError) as redirect_error:
                 handler.http_error_302(request, io.BytesIO(b"moved"), 301, "moved", {"location": target})
+            redirect_error.exception.close()
         with self.assertRaises(watch.WatchError):
             handler.redirect_request(request, io.BytesIO(b"x" * (watch.MAX_RESPONSE_BYTES + 1)),
                                      301, "moved", {}, target)
