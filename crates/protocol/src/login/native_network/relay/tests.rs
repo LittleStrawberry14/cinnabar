@@ -11,6 +11,8 @@ use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, types::ActorRunti
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherServer, ServerData};
 use std::time::Duration;
 
+mod retention;
+
 /// Uses a real native Login peer to prove the shared prefix and browser wire boundary; no ready owner is forged.
 /// Exact gateway RakNet admission and application account/controller authority are separate qualification gates.
 #[tokio::test]
