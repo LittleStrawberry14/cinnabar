@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 const UNCLAIMED: u8 = 0;
 const NETWORK: u8 = 1;
+#[cfg(not(target_arch = "wasm32"))]
 const COMPANION: u8 = 2;
 
 /// Shared only by the existing network, outbound and companion futures for one session.
@@ -27,6 +28,7 @@ impl TerminalOwner {
     }
 
     /// Allows companion-triggered shutdown only when no network terminal has already been retained.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn companion(&self) -> bool {
         self.0
             .compare_exchange(UNCLAIMED, COMPANION, Ordering::AcqRel, Ordering::Acquire)
