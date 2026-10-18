@@ -15,6 +15,12 @@ End-to-end account/signaling/cleanup acceptance and native friend UI qualificati
 remain incomplete. Go stays the default. Real-account, broad
 server/device/network, performance and source-based parity gates remain open.
 
+The unadvertised host directory and native account-lifetime presence owners pass
+the full 450-test host suite. Presence bridge and shell filters pass, including
+actual old-process retirement before policy replacement. Ambiguous updates retain
+the original cleanup authority even after a later successful removal. Live
+account/process handoff and accepting-host transport remain unqualified.
+
 ## Native protected checkpoint revisions (in progress)
 
 The native store binds opaque checkpoints to the selected account, exact OAuth

@@ -13,7 +13,7 @@ const UNCONFIRMED: u8 = 3;
 /// Whether this lifetime finished its only cleanup before another publisher may start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitlePresenceRetirement {
-    /// No native write began, or the original account's removal completed successfully.
+    /// No native write began, or removal succeeded without an earlier uncertain update.
     Complete,
     /// Cleanup or worker termination was uncertain; replacement remains blocked.
     Unconfirmed,

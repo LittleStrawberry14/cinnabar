@@ -58,23 +58,22 @@ Nonce intent follows complete member snapshots; only an acknowledged exact
 conditional document approves an already authenticated Login XUID. Departures,
 reentry, unresolved writes and world replacement revoke approval. These APIs
 create no runtime, listener, activity, supported route or invitation. Existing
-Go local-world processes and hosting remain unchanged. Source implementation is
-under review; compiled application cancellation and service integration proof
-remain incomplete, including the shared service-library pin update.
+Go local-world processes and hosting remain unchanged. Independent source review
+and owning host tests pass. Application service-cancellation and accepting
+transport integration remain incomplete.
 
-Incomplete: native hosting transport and application adoption, remaining profile and
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the
 selected leased SDK owner, coalesces activity, retains each actual service future
 and schedules the returned heartbeat interval. Core policy changes wait for the
 old process's actual retirement; account switches and replacement publishers also
 wait for original-generation native cleanup. An uncertain update, removal or
-worker exit retains one cleanup obligation and blocks replacement; later successful
-HTTP responses do not prove ordering of a previously ambiguous write. Owning execution, end-to-end protected
-HTTP/process transitions and real-account presence qualification remain open;
-bounded HTTP completion does not prove server-side write ordering after cancellation.
+worker exit retains one cleanup obligation and blocks replacement; later
+successful HTTP responses do not prove ordering of a previously ambiguous write.
+Owning host, bridge and shell presence tests pass. End-to-end protected HTTP,
+process transitions and real-account presence qualification remain open.
 
-Incomplete: native hosted-world approval and publication, remaining profile and
+Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, signed Realm NetherNet admission, browser transport adoption,
 remote provider-key refresh, end-to-end service/transport cancellation, compiled
 UI captures, real-account/device/server/network acceptance and Go-baseline
