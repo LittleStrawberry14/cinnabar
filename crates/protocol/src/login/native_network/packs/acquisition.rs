@@ -247,3 +247,6 @@ impl Stores {
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
+
+#[cfg(test)]
+mod service_tests;

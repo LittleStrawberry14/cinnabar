@@ -3,18 +3,39 @@
 use super::*;
 use std::{future::pending, time::Duration};
 
-struct ServiceRequest {
+pub(crate) struct ServiceRequest {
     deadline: tokio::time::Instant,
     end: bool,
     outcome: oneshot::Sender<io::Result<()>>,
 }
 
-struct ServiceConnection {
+pub(crate) struct ServiceConnection {
     incoming: mpsc::Receiver<Bytes>,
     service: mpsc::Receiver<ServiceRequest>,
     full: Option<oneshot::Sender<()>>,
     terminal: Option<io::Error>,
     reads: usize,
+}
+
+/// Creates the existing caller-driven service boundary with independent bounded payload input.
+pub(crate) fn connection() -> (
+    ServiceConnection,
+    mpsc::Sender<Bytes>,
+    mpsc::Sender<ServiceRequest>,
+) {
+    let (incoming, receive) = mpsc::channel(2);
+    let (service, requests) = mpsc::channel(1);
+    (
+        ServiceConnection {
+            incoming: receive,
+            service: requests,
+            full: None,
+            terminal: None,
+            reads: 0,
+        },
+        incoming,
+        service,
+    )
 }
 
 impl PacketConnection for ServiceConnection {
@@ -72,7 +93,7 @@ impl PacketConnection for ServiceConnection {
 }
 
 /// Queues one finite service lease independently of bounded world payload input.
-async fn request_service(
+pub(crate) async fn request_service(
     service: &mpsc::Sender<ServiceRequest>,
     end: bool,
 ) -> (tokio::time::Instant, oneshot::Receiver<io::Result<()>>) {

@@ -14,7 +14,7 @@ use crate::login::native_network::{Connection, PacketConnection};
 const QUEUED_BATCHES: usize = 4;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) struct NativeReader {
     incoming: mpsc::Receiver<io::Result<Bytes>>,

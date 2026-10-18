@@ -2,7 +2,7 @@
 
 mod acquisition;
 
-use super::{Connection, apply_handshake, failure, handshake_failure};
+use super::{Connection, PacketConnection, apply_handshake, failure, handshake_failure};
 use crate::ProtocolError;
 use bedrock_client::{
     handshake::ClientHandshake,
@@ -27,14 +27,14 @@ pub(super) async fn acquire(
     let cache = if offers.is_empty() {
         None
     } else {
-        acquisition::open_cache(cache_root).await
+        wait_io(connection, acquisition::open_cache(cache_root)).await
     };
     let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
         acquisition::http_client().ok()
     } else {
         None
     };
-    let mut preloads = stream::iter(offers.into_iter().enumerate().map(|(index, offer)| {
+    let preloads = stream::iter(offers.into_iter().enumerate().map(|(index, offer)| {
         let (cache, client, cancelled) = (cache.clone(), client.clone(), Arc::clone(&cancelled.0));
         async move {
             let result = acquisition::preload(&offer, cache, client, cancelled).await;
@@ -42,8 +42,8 @@ pub(super) async fn acquire(
         }
     }))
     .buffer_unordered(MAX_CDN_DOWNLOADS)
-    .collect::<Vec<_>>()
-    .await;
+    .collect::<Vec<_>>();
+    let mut preloads = wait_io(connection, preloads).await;
     preloads.sort_unstable_by_key(|(index, _, _)| *index);
     let mut stores = acquisition::Stores::new();
     for (_, offer, preload) in preloads {
@@ -64,7 +64,7 @@ pub(super) async fn acquire(
         let packet = connection.next_packet().await.map_err(failure)?;
         if matches!(&*packet.data, packets::Packet::ResourcePackStack(_)) {
             // The library transfers exclusive archive ownership at the stack boundary.
-            stores.finish().await;
+            wait_io(connection, stores.finish()).await;
         }
         match negotiation.receive(*packet.data).map_err(pack_failure)? {
             PackEvent::Send(packets) => {
@@ -86,6 +86,14 @@ pub(super) async fn acquire(
             }
         }
     }
+}
+
+/// Retains one caller-owned acquisition wait on the existing connection owner.
+async fn wait_io<T>(
+    _connection: &mut impl PacketConnection,
+    operation: impl std::future::Future<Output = T>,
+) -> T {
+    operation.await
 }
 
 /// Sends each generated response immediately under the existing batch packet limit.

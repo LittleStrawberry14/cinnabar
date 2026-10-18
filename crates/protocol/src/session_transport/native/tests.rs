@@ -212,4 +212,4 @@ async fn oversized_batches_never_consume_queue_capacity() {
     assert_eq!(receive.recv().await.unwrap().body, b"fits"[..]);
 }
 
-mod service;
+pub(crate) mod service;
