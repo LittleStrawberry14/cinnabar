@@ -17,6 +17,11 @@ pub(crate) trait PacketConnection: Send + 'static {
     ) -> impl std::future::Future<Output = io::Result<()>> + Send;
     /// Retains partial input when the pump cancels a receive wait.
     fn recv_body(&mut self) -> impl std::future::Future<Output = io::Result<Bytes>> + Send;
+    /// Progresses caller-owned service/control work without consuming application payloads.
+    /// A terminal cause remains staged for ordinary reads to drain accepted data first.
+    fn maintain(&mut self) -> impl std::future::Future<Output = ()> + Send {
+        std::future::pending()
+    }
     /// Flushes accepted transport output and ends this connection.
     fn close(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
 }
