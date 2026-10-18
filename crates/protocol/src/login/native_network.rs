@@ -286,7 +286,9 @@ async fn connect<P: Send + 'static>(
         login.settings.resource_pack_cache_dir.as_deref(),
     )
     .await?;
+    let deferred = connection.take_deferred();
     let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
+    transport.prepend(deferred);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;
     let (initialization, spawned) = super::startup::await_spawn(
@@ -339,9 +341,7 @@ async fn apply_handshake(
             return Ok(Some(negotiation));
         }
         HandshakeEvent::Unhandled(packet) => {
-            if let Some(error) = connection.negotiation_failure(*packet) {
-                return Err(error);
-            }
+            connection.defer_unhandled(*packet)?;
         }
         _ => {
             return Err(failure(io::Error::new(

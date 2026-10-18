@@ -1,5 +1,6 @@
 //! Compression, encryption and packet FIFO retained for the entire connection.
 
+use super::super::startup::{DeferredPackets, MAX_DEFERRED_PACKET_BYTES};
 use super::transport::Transport;
 use crate::{Packet, packet::GameHeader};
 use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
@@ -31,6 +32,8 @@ pub(crate) struct Connection {
     codec: BatchCodec,
     limits: BatchLimits,
     pending: VecDeque<Bytes>,
+    current: Option<Bytes>,
+    deferred: DeferredPackets,
     ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
     negotiation_skips: u64,
 }
@@ -62,6 +65,8 @@ impl Connection {
             transport,
             limits,
             pending: VecDeque::new(),
+            current: None,
+            deferred: DeferredPackets::default(),
             ciphers: None,
             negotiation_skips: 0,
         }
@@ -225,6 +230,7 @@ impl Connection {
 
     /// Decodes one handshake packet while preserving every sibling from its batch.
     pub(super) async fn next_packet(&mut self) -> io::Result<Packet> {
+        self.current = None;
         self.fill().await?;
         let bytes = self.pending.pop_front().expect("fill supplies packets");
         let mut reader = wire::Reader::from_shared(&bytes);
@@ -237,6 +243,7 @@ impl Connection {
         })?;
         let body = bytes.slice(reader.position()..);
         let data = crate::codec::decode_body(id, &body).map_err(io::Error::other)?;
+        self.current = Some(bytes);
         Ok(Packet::from_parts(
             GameHeader {
                 id,
@@ -245,6 +252,35 @@ impl Connection {
             },
             data,
         ))
+    }
+
+    /// Handles terminals immediately and retains other unhandled input in its original wire form.
+    pub(super) fn defer_unhandled(
+        &mut self,
+        packet: packets::Packet,
+    ) -> Result<(), crate::ProtocolError> {
+        if matches!(
+            packet,
+            packets::Packet::Disconnect(_) | packets::Packet::Transfer(_)
+        ) {
+            if let Some(error) = self.negotiation_failure(packet) {
+                return Err(error);
+            }
+            return Ok(());
+        }
+        let bytes = self.current.take().ok_or_else(|| {
+            super::failure(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "native deferred packet has no received frame",
+            ))
+        })?;
+        retain_early(&mut self.deferred, bytes)
+    }
+
+    /// Transfers bounded early input once, ahead of packets not yet consumed by negotiation.
+    pub(super) fn take_deferred(&mut self) -> Vec<crate::raw_packet::RawPacket> {
+        self.current = None;
+        std::mem::take(&mut self.deferred).into_packets()
     }
 
     /// Checks ciphertext input before decrypting or allocating decoded state.
@@ -257,6 +293,29 @@ impl Connection {
         }
         Ok(())
     }
+}
+
+/// Restores only the length prefix around original packet bytes under the existing startup bound.
+fn retain_early(deferred: &mut DeferredPackets, bytes: Bytes) -> Result<(), crate::ProtocolError> {
+    let mut frame = Vec::new();
+    wire::Writer::with_limit(&mut frame, MAX_DEFERRED_PACKET_BYTES)
+        .write_len_var_u32(bytes.len())
+        .map_err(io::Error::other)
+        .map_err(super::failure)?;
+    let retained = frame.len().saturating_add(bytes.len());
+    if retained > MAX_DEFERRED_PACKET_BYTES {
+        return Err(crate::codec::SessionFailure::BatchTooLarge {
+            actual: retained,
+            max: MAX_DEFERRED_PACKET_BYTES,
+        }
+        .into());
+    }
+    frame.extend_from_slice(&bytes);
+    let mut packets =
+        crate::raw_packet::decode_batch_body(Bytes::from(frame), MAX_DEFERRED_PACKET_BYTES)?;
+    let packet = packets.pop().expect("one original packet was framed");
+    deferred.push(packet)?;
+    Ok(())
 }
 
 /// Restores the cleartext marker around a directional cipher body when required.
@@ -301,3 +360,6 @@ impl PacketConnection for Connection {
         self.transport.close().await
     }
 }
+
+#[cfg(test)]
+mod tests;
