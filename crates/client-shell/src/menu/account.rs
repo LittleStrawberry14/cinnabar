@@ -115,7 +115,9 @@ impl MenuRuntime {
     fn apply_catalog(&mut self, catalog: CatalogFile) {
         let featured = self.catalog_cards(catalog.featured);
         self.featured.replace(featured);
-        self.realms.replace(catalog.realms);
+        if !self.native_sign_in {
+            self.realms.replace(catalog.realms);
+        }
         self.friends
             .replace(catalog.friends.into_iter().map(Into::into).collect());
         // Service errors may contain URLs, response bodies, or account material.
@@ -144,6 +146,8 @@ impl MenuRuntime {
     /// A new join waits on the saved account's check instead of cancelling it, starting the
     /// check if the menu has not yet; interactive sign-in is abandoned as before.
     pub(super) fn hold_join_for_sign_in(&mut self) {
+        #[cfg(feature = "native-networking")]
+        self.native_realms.pause();
         self.intents.native_auth_required = self.native_sign_in
             && (self.feeds.account_active_id.is_some()
                 || auth_cache_path(&self.layout).is_some()
@@ -186,7 +190,10 @@ impl MenuRuntime {
         let native_direct = self.native_sign_in
             && self.intents.join.as_ref().is_some_and(|join| {
                 !join.local_world
-                    && matches!(target_for(&join.address), bridge::ConnectTarget::RakNet(_))
+                    && matches!(
+                        target_for(&join.address),
+                        bridge::ConnectTarget::RakNet(_) | bridge::ConnectTarget::Realm(_)
+                    )
             });
         let core_ready = native_direct
             || self

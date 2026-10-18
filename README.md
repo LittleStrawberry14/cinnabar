@@ -75,7 +75,10 @@ Native mode runs Microsoft device-code sign-in and saved-account validation in R
 existing account menu. Pending attempts keep the active account unchanged until Xbox identity
 verification and account commit complete. Failed or timed-out saved-account checks stop native
 joins with an authentication error. Hosted Xbox profile creation still requires the default
-Go mode; account catalog, Realms, friends and local worlds retain their current Go owners.
+Go mode. Native Realms browsing and RakNet resolution share the selected account with Login;
+Realms that advertise authenticated NetherNet fail explicitly until native signaling is ready.
+Realm invitation preview/acceptance, other account catalog sections, friends and local worlds
+retain their current Go owners.
 
 Authenticated direct joins retain one native account owner across retries and transfers. Refresh
 rotation shares the existing account-cache leases with Go, and private checkpoints retain proof
@@ -90,9 +93,9 @@ cargo run -p cinnabar --features native-networking -- --address HOST:PORT --nati
 
 Use `nethernet-lan` with a peer's LAN discovery endpoint for directed IPv4 NetherNet.
 The native backend uses the existing Rust resource-pack presentation, spawn and play paths.
-Realms, friend worlds and hosting retain the Go backend. Authenticated native NetherNet is not yet
-supported. CDN/cache integration and broader acceptance remain in progress;
-the working Go backend remains the default.
+Native Realms joins admit the service's RakNet transport. Friend worlds and hosting retain the
+Go backend. Authenticated native NetherNet is not yet supported. CDN/cache integration and
+broader acceptance remain in progress; the working Go backend remains the default.
 
 Built on these libraries:
 

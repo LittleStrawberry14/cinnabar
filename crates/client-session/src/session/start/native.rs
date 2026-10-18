@@ -68,9 +68,8 @@ pub fn spawn_network<P: Send + 'static>(
                                 target: None,
                             };
                             #[cfg(feature = "native-networking")]
-                            if let Some(acquire) = config.native_authentication {
-                                let protocol::SessionEndpoint::Native(target) = &config.endpoint
-                                else {
+                            if let Some(acquire) = config.native_preparation {
+                                let protocol::SessionEndpoint::Native(_) = &config.endpoint else {
                                     return Err(protocol::ProtocolError::Authentication(
                                         std::io::Error::new(
                                             std::io::ErrorKind::InvalidInput,
@@ -78,11 +77,11 @@ pub fn spawn_network<P: Send + 'static>(
                                         ),
                                     ));
                                 };
-                                let authentication = acquire
+                                let (target, authentication) = acquire
                                     .await
                                     .map_err(protocol::ProtocolError::Authentication)?;
                                 return LoginSequence::connect_native_authenticated(
-                                    target,
+                                    &target,
                                     login,
                                     authentication,
                                     prepare,

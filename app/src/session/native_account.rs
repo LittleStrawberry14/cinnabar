@@ -14,20 +14,16 @@ impl SessionController {
     /// Reuses one SDK owner until the selected cache/identity changes, without frame I/O.
     pub(super) fn native_account_for(
         &mut self,
-        menu: &MenuRuntime,
+        menu: &mut MenuRuntime,
         path: PathBuf,
     ) -> Arc<NativeAccount> {
+        let account = menu.native_account_for(path.clone());
         let identity = menu.selected_account_id().map(str::to_owned);
-        if self
-            .native_account
-            .as_ref()
-            .is_none_or(|previous| previous.path != path || previous.identity != identity)
-        {
-            let account = Arc::new(NativeAccount::new(
-                launcher::accounts::AccountStore::new(path.clone()),
-                menu.layout().device_profile_file(),
-                identity.clone(),
-            ));
+        if self.native_account.as_ref().is_none_or(|previous| {
+            previous.path != path
+                || previous.identity != identity
+                || !Arc::ptr_eq(&previous.account, &account)
+        }) {
             self.native_account = Some(SelectedAccount {
                 path,
                 identity,

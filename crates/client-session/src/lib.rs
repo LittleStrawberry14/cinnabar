@@ -49,6 +49,6 @@ impl Default for SessionTrace {
 static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use session::NativeAuthenticationPreparation;
+pub use session::NativeConnectionPreparation;
 #[cfg(not(target_arch = "wasm32"))]
 pub use session::{NetworkConfig, packet_log, spawn_network};

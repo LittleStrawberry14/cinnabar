@@ -75,7 +75,9 @@ impl MenuRuntime {
     /// the status overrides the auth supervisor's, events surface on screen, and
     /// a pending sign-out request is sent.
     pub fn sync_account_control(&mut self, control: &mut dyn AccountControl) {
-        if let Some(realms) = control.realms() {
+        if let Some(realms) = control.realms()
+            && !self.native_sign_in
+        {
             self.realms.replace(realms);
         }
         if let Some(mut friends) = control.friends() {
