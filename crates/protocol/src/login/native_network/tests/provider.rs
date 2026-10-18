@@ -5,14 +5,14 @@ use base64::{
 };
 use bedrock_net::login::encode_authenticated_request;
 use nethernet::identity::{MINECRAFT_AUDIENCE, jwt::Jws};
-use p384::pkcs8::EncodePublicKey;
+use p384::{ecdsa::SigningKey, pkcs8::EncodePublicKey};
 use rsa::{
     RsaPrivateKey, pkcs1v15,
     sha2::Sha256,
     signature::{SignatureEncoding, Signer},
     traits::PublicKeyParts,
 };
-use serde_json::Value;
+use serde_json::{Value, json, value::RawValue};
 use std::{
     sync::OnceLock,
     time::{Duration, Instant, UNIX_EPOCH},

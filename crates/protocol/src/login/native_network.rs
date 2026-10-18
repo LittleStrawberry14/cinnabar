@@ -3,26 +3,23 @@
 mod authentication;
 pub use authentication::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
 mod connection;
+mod negotiated;
 mod packs;
+mod spawn;
 mod transport;
 pub(crate) use connection::{Connection, PacketConnection};
 
-use super::{JoinPreparation, LoginSequence, NativeJoinPreparation, PlaySession, SessionLogin};
+use super::{LoginSequence, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
-use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
 use crate::{GameData, ProtocolError};
 use crate::{NativeConnectionTarget, NativeTransport};
 use bedrock_client::{
-    handshake::{ClientHandshake, HandshakeError, HandshakeEvent, HandshakeOptions},
+    handshake::{HandshakeError, HandshakeEvent},
     packs::PackNegotiation,
 };
-use bedrock_net::login::OfflineIdentity;
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
-use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
-use rand::rngs::SysRng;
-use serde_json::{json, value::RawValue};
-use std::{io, sync::Arc, time::SystemTime};
+use std::io;
 
 /// Retains a decoded negotiation boundary when a response write fails.
 async fn preserve_negotiation_boundary(
@@ -153,169 +150,8 @@ async fn connect<P: Send + 'static>(
     authentication: Option<NativeAuthentication>,
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
-    if login.target.is_some() {
-        return Err(failure(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "native join does not accept a core target override",
-        )));
-    }
-    let (key, authentication, messaging) = match authentication {
-        Some(authentication) => {
-            authentication::ensure_current(authentication.expires, std::time::Instant::now())
-                .map_err(ProtocolError::Authentication)?;
-            let handoff = authentication
-                .into_handoff()
-                .map_err(ProtocolError::Authentication)?;
-            (
-                handoff.key,
-                Some((handoff.token, handoff.claims, handoff.expires)),
-                handoff.messaging,
-            )
-        }
-        None => (
-            Arc::new(
-                SigningKey::try_generate_from_rng(&mut SysRng)
-                    .map_err(io::Error::other)
-                    .map_err(failure)?,
-            ),
-            None,
-            None,
-        ),
-    };
-    let transport = transport::Transport::connect(target, messaging)
-        .await
-        .map_err(|error| {
-            if authentication::is_expired(&error) {
-                ProtocolError::Authentication(error)
-            } else {
-                failure(error)
-            }
-        })?;
-    let mut connection = Connection::new(transport);
-    let mut handshake = ClientHandshake::new(
-        key,
-        HandshakeOptions {
-            batch_encryption: connection.transport.batch_encryption(),
-            blob_cache: login.cache.is_some(),
-            max_login_bytes: connection.max_decoded_bytes(),
-            ..Default::default()
-        },
-    )
-    .map_err(handshake_failure)?;
-    connection
-        .send(handshake.start().map_err(handshake_failure)?)
-        .await?;
-    loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
-        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
-        match event {
-            HandshakeEvent::Compression(settings) => {
-                connection.enable_compression(settings);
-                break;
-            }
-            event => {
-                if apply_handshake(&mut connection, event).await?.is_some() {
-                    return Err(failure(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "resource offer preceded Login",
-                    )));
-                }
-            }
-        }
-    }
-    let (mut claims, token) = if let Some((token, claims, expires)) = authentication {
-        (serde_json::Value::Object(claims), Some((token, expires)))
-    } else {
-        let mut claims = super::client_data::login_client_data(
-            login.display_name,
-            login.client_random_id,
-            login.skin.as_ref(),
-            login.settings,
-        );
-        // Signed-out desktop identity is independent of Xbox title/device authentication.
-        claims["DeviceOS"] = json!(native_device_os());
-        claims["DeviceModel"] = json!("");
-        claims["DeviceId"] = json!(uuid::Uuid::new_v4().to_string());
-        claims["DefaultInputMode"] = claims["CurrentInputMode"].clone();
-        (claims, None)
-    };
-    claims["ServerAddress"] = json!(target.address);
-    claims["Nonce"] = json!(connection.transport.nonce());
-    let claims = RawValue::from_string(
-        serde_json::to_string(&claims)
-            .map_err(io::Error::other)
-            .map_err(failure)?,
-    )
-    .map_err(io::Error::other)
-    .map_err(failure)?;
-    let deadline = token.as_ref().map(|(_, expires)| *expires);
-    let packet = if let Some((token, expires)) = token {
-        authentication::ensure_current(expires, std::time::Instant::now())
-            .map_err(ProtocolError::Authentication)?;
-        handshake.login_authenticated(&token, &claims)
-    } else {
-        let identity = uuid::Uuid::new_v4().to_string();
-        handshake.login_offline(
-            &OfflineIdentity {
-                display_name: login.display_name,
-                identity: &identity,
-                xuid: "",
-                playfab_id: "",
-                playfab_title_id: "",
-            },
-            &claims,
-            SystemTime::now(),
-        )
-    }
-    .map_err(handshake_failure)?;
-    match deadline {
-        Some(deadline) => connection.send_before(packet, deadline).await?,
-        None => connection.send(packet).await?,
-    }
-    let negotiation = loop {
-        let packet = connection.next_packet().await.map_err(failure)?;
-        let event = handshake.receive(*packet.data).map_err(handshake_failure)?;
-        if let Some(negotiation) = apply_handshake(&mut connection, event).await? {
-            break negotiation;
-        }
-    };
-    let packs = packs::acquire(
-        &mut connection,
-        &mut handshake,
-        negotiation,
-        login.settings.resource_pack_cache_dir.as_deref(),
-    )
-    .await?;
-    let deferred = connection.take_deferred();
-    let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
-    transport.adopt_startup(deferred);
-    let preparation = NativeJoinPreparation;
-    let mut prepared_job = None;
-    let (initialization, spawned) = super::startup::await_spawn(
-        &mut transport,
-        login.settings.view_distance_chunks,
-        |start, items| {
-            prepared_job = Some(
-                preparation.submit(move || prepare(packs, GameData::from_wire(&start, &items))),
-            );
-        },
-    )
-    .await?;
-    let job = prepared_job.expect("spawn requires StartGame and item registry");
-    tokio::pin!(job);
-    let prepared = tokio::select! {
-        value = &mut job => value,
-        () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => job.await,
-    };
-    Ok((
-        PlaySession::new(
-            transport,
-            login.cache,
-            initialization,
-            spawned.terrain_received,
-        ),
-        prepared,
-    ))
+    let negotiated = negotiated::negotiate(target, &login, authentication).await?;
+    spawn::continue_join(negotiated, login, prepare).await
 }
 
 /// Applies ordered pure-core effects on the retained connection without restarting its FIFO.
@@ -372,19 +208,4 @@ fn disconnected(packet: packets::Disconnect) -> ProtocolError {
 /// Attaches the native transport error without labelling it as malformed packet input.
 fn failure(error: io::Error) -> ProtocolError {
     SessionFailure::NativeTransport(error).into()
-}
-
-/// Reports the actual host family for a signed-out connection, independently of OAuth titles.
-fn native_device_os() -> i32 {
-    if cfg!(target_os = "android") {
-        1
-    } else if cfg!(target_os = "ios") {
-        2
-    } else if cfg!(target_os = "macos") {
-        3
-    } else if cfg!(target_os = "windows") {
-        8
-    } else {
-        15
-    }
 }
