@@ -370,6 +370,7 @@ fn stale_checkpoint_owner_cannot_undo_another_processes_rejection() {
         checkpoint_revision: stale_checkpoint_revision,
         owner: Owner::Xbox(Box::new(sdk)),
         identity: None,
+        provider: None,
     });
     operation.lease = Some(account.store.try_native_lease().unwrap());
     assert_eq!(
