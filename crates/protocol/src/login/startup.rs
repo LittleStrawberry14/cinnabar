@@ -18,7 +18,6 @@ use crate::{LoadingScreenPhase, Packet, ProtocolError, ServerTransferEvent, Sess
 /// Bounds the bytes deferred to play while the spawn prerequisites arrive.
 pub(super) const MAX_DEFERRED_PACKET_BYTES: usize = 16 * 1024 * 1024;
 /// The fallback view radius when the caller supplies no saved preference.
-#[cfg(test)]
 pub(super) const DEFAULT_CHUNK_RADIUS: u8 = 16;
 /// The stage a join-time Disconnect names once the session has been handed over.
 const STAGE: &str = "StartGame";
