@@ -1,6 +1,86 @@
 use super::*;
 use std::future::Future;
 
+struct ReplayConnection {
+    incoming: mpsc::Receiver<Bytes>,
+    fifth_read: Option<oneshot::Sender<()>>,
+    reads: usize,
+}
+
+impl PacketConnection for ReplayConnection {
+    async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::BrokenPipe, "peer closed"))
+    }
+
+    async fn recv_body(&mut self) -> io::Result<Bytes> {
+        let bytes = self
+            .incoming
+            .recv()
+            .await
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed"))?;
+        self.reads += 1;
+        if self.reads == QUEUED_BATCHES + 1
+            && let Some(read) = self.fifth_read.take()
+        {
+            let _ = read.send(());
+        }
+        Ok(bytes)
+    }
+
+    async fn close(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn write_failure_keeps_a_received_transfer_behind_full_ingress() {
+    use bedrock_protocol_1_26_51::{packets, wire};
+    let (incoming, receive) = mpsc::channel(QUEUED_BATCHES + 1);
+    let (fifth_read, received_fifth) = oneshot::channel();
+    let mut transport = SessionTransport::from_native(ReplayConnection {
+        incoming: receive,
+        fifth_read: Some(fifth_read),
+        reads: 0,
+    });
+    for _ in 0..QUEUED_BATCHES {
+        incoming
+            .send(
+                crate::session_transport::batch_body(&[crate::Packet::new(
+                    packets::SetTime::default(),
+                )])
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    incoming
+        .send(
+            crate::session_transport::batch_body(&[crate::Packet::new(packets::Transfer {
+                server_address: "target.example".into(),
+                server_port: wire::U16LE(19132),
+                ..Default::default()
+            })])
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    received_fifth.await.unwrap();
+    let body =
+        crate::session_transport::batch_body(&[crate::Packet::new(packets::SetTime::default())])
+            .unwrap();
+    assert!(transport.sender().send(body).await.is_err());
+    for _ in 0..QUEUED_BATCHES {
+        assert!(matches!(
+            transport.recv().await.unwrap(),
+            super::super::Inbound::Packet(_)
+        ));
+    }
+    let super::super::Inbound::Packet(packet) = transport.recv().await.unwrap() else {
+        panic!("expected original Transfer")
+    };
+    assert_eq!(packet.id, packets::PacketId::Transfer);
+}
+
 #[tokio::test]
 async fn cancelling_admission_neither_accepts_nor_repeats_a_batch() {
     let (send, mut receive) = mpsc::channel(1);

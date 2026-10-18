@@ -8,7 +8,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::{PacketSender, Reader, SessionTransport};
-use crate::login::native_network::Connection;
+use crate::login::native_network::{Connection, PacketConnection};
 
 const QUEUED_BATCHES: usize = 4;
 
@@ -84,47 +84,48 @@ impl NativeSender {
 
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
-    pub(crate) fn from_native(mut connection: Connection) -> Self {
+    pub(crate) fn from_native(mut connection: impl PacketConnection) -> Self {
         let (send, mut outgoing) = mpsc::channel::<SendBatch>(QUEUED_BATCHES);
         let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
         let (stop, mut stopping) = oneshot::channel();
         let task = tokio::spawn(async move {
             let mut pending = None;
+            let mut writes_failed = false;
+            let mut reads_failed = false;
             loop {
                 tokio::select! {
-                    biased;
                     _ = &mut stopping => break,
                     _ = incoming.closed() => break,
-                    batch = outgoing.recv() => {
-                        let Some(batch) = batch else { break };
-                        let result = connection.send_body(batch.body).await;
-                        let failed = result.is_err();
-                        let _ = batch.written.send(result);
-                        if failed { break; }
-                    }
                     permit = incoming.reserve(), if pending.is_some() => {
                         let Ok(permit) = permit else { break };
                         permit.send(pending.take().expect("pending input"));
+                        if reads_failed { break; }
                     }
-                    result = connection.recv_body(), if pending.is_none() => {
-                        let failed = result.is_err();
-                        pending = Some(result);
-                        if failed {
-                            if let Ok(permit) = incoming.reserve().await {
-                                permit.send(pending.take().expect("terminal input"));
-                            }
-                            break;
+                    result = connection.recv_body(), if pending.is_none() && !reads_failed => {
+                        if result.is_err() {
+                            reads_failed = true;
+                            fail_queued_writes(&mut outgoing);
                         }
+                        pending = Some(result);
+                    }
+                    batch = outgoing.recv(), if !writes_failed && !reads_failed => {
+                        let Some(batch) = batch else { break };
+                        let result = connection.send_body(batch.body).await;
+                        writes_failed = result.is_err();
+                        let _ = batch.written.send(result);
+                        if writes_failed { fail_queued_writes(&mut outgoing); }
                     }
                 }
             }
-            outgoing.close();
-            while let Some(batch) = outgoing.recv().await {
-                let result = connection.send_body(batch.body).await;
-                let failed = result.is_err();
-                let _ = batch.written.send(result);
-                if failed {
-                    break;
+            if !writes_failed && !reads_failed {
+                outgoing.close();
+                while let Some(batch) = outgoing.recv().await {
+                    let result = connection.send_body(batch.body).await;
+                    let failed = result.is_err();
+                    let _ = batch.written.send(result);
+                    if failed {
+                        break;
+                    }
                 }
             }
             let _ = connection.close().await;
@@ -150,4 +151,10 @@ impl SessionTransport {
             delivered: (0, 0),
         }
     }
+}
+
+/// Rejects queued writes immediately so their failure can unblock the receive boundary drain.
+fn fail_queued_writes(outgoing: &mut mpsc::Receiver<SendBatch>) {
+    outgoing.close();
+    while outgoing.try_recv().is_ok() {}
 }

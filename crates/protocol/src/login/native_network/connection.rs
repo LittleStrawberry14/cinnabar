@@ -8,15 +8,47 @@ use bedrock_protocol_1_26_51::{packets, wire};
 use bytes::{Bytes, BytesMut};
 use std::{collections::VecDeque, io};
 
+/// Exclusive packet I/O consumed by the native session pump.
+pub(crate) trait PacketConnection: Send + 'static {
+    /// Sends one complete batch without cancelling cipher or transport progress.
+    fn send_body(
+        &mut self,
+        body: Bytes,
+    ) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    /// Retains partial input when the pump cancels a receive wait.
+    fn recv_body(&mut self) -> impl std::future::Future<Output = io::Result<Bytes>> + Send;
+    /// Flushes accepted transport output and ends this connection.
+    fn close(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
+}
+
 pub(crate) struct Connection {
     pub(super) transport: Transport,
     codec: BatchCodec,
     limits: BatchLimits,
     pending: VecDeque<Bytes>,
     ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
+    negotiation_skips: u64,
 }
 
 impl Connection {
+    /// Retains usable redirects and counts unusable decoded targets without ending the join.
+    pub(super) fn negotiation_failure(
+        &mut self,
+        packet: packets::Packet,
+    ) -> Option<crate::ProtocolError> {
+        match super::negotiation_failure(packet) {
+            Ok(error) => Some(error),
+            Err(reason) => {
+                self.negotiation_skips = self.negotiation_skips.saturating_add(1);
+                tracing::warn!(
+                    ?reason,
+                    skipped = self.negotiation_skips,
+                    "skipped unusable negotiation transfer"
+                );
+                None
+            }
+        }
+    }
     /// Starts an uncompressed session and retains all later state on this same owner.
     pub(super) fn new(transport: Transport) -> Self {
         let limits = BatchLimits::default();
@@ -26,6 +58,7 @@ impl Connection {
             limits,
             pending: VecDeque::new(),
             ciphers: None,
+            negotiation_skips: 0,
         }
     }
 
@@ -73,33 +106,6 @@ impl Connection {
                 io::ErrorKind::InvalidInput,
                 "native outgoing batch exceeds decoded byte limit",
             ));
-        }
-        Ok(())
-    }
-
-    /// Advances the cipher only inside this owner's uninterrupted write operation.
-    pub(crate) async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
-        Self::check_body_size(&body)?;
-        let entries = wire::Frames::new(body, self.limits.max_packets)
-            .map(|frame| {
-                let frame = frame.map_err(io::Error::other)?;
-                let mut reader = wire::Reader::from_shared(frame.frame());
-                reader.read_var_u32().map_err(io::Error::other)?;
-                Ok(frame.frame().slice(reader.position()..))
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
-            if let Some((encryptor, _)) = &mut self.ciphers {
-                let marker = self.transport.header().marker();
-                let body = if marker.is_some() {
-                    message.slice(1..)
-                } else {
-                    message
-                };
-                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
-                self.check_wire_size(&message)?;
-            }
-            self.transport.send(message).await?;
         }
         Ok(())
     }
@@ -168,25 +174,6 @@ impl Connection {
         ))
     }
 
-    /// Reframes the unread batch as ordinary Bedrock entries for lazy play decoding.
-    pub(crate) async fn recv_body(&mut self) -> io::Result<Bytes> {
-        self.fill().await?;
-        let mut body = Vec::new();
-        for packet in self.pending.drain(..) {
-            let mut writer = wire::Writer::with_limit(&mut body, self.limits.max_decoded_bytes);
-            writer
-                .write_len_var_u32(packet.len())
-                .map_err(io::Error::other)?;
-            body.extend_from_slice(&packet);
-        }
-        Ok(Bytes::from(body))
-    }
-
-    /// Ends the actual transport, without starting another connection.
-    pub(crate) async fn close(&mut self) -> io::Result<()> {
-        self.transport.close().await
-    }
-
     /// Checks ciphertext input before decrypting or allocating decoded state.
     fn check_wire_size(&self, message: &[u8]) -> io::Result<()> {
         if message.len() > self.limits.max_encoded_bytes {
@@ -208,5 +195,53 @@ fn envelope(marker: Option<u8>, body: Bytes) -> Bytes {
         message.freeze()
     } else {
         body
+    }
+}
+
+impl PacketConnection for Connection {
+    /// Advances the cipher only inside this owner's uninterrupted write operation.
+    async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
+        Self::check_body_size(&body)?;
+        let entries = wire::Frames::new(body, self.limits.max_packets)
+            .map(|frame| {
+                let frame = frame.map_err(io::Error::other)?;
+                let mut reader = wire::Reader::from_shared(frame.frame());
+                reader.read_var_u32().map_err(io::Error::other)?;
+                Ok(frame.frame().slice(reader.position()..))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        for mut message in self.codec.encode(&entries).map_err(io::Error::other)? {
+            if let Some((encryptor, _)) = &mut self.ciphers {
+                let marker = self.transport.header().marker();
+                let body = if marker.is_some() {
+                    message.slice(1..)
+                } else {
+                    message
+                };
+                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
+                self.check_wire_size(&message)?;
+            }
+            self.transport.send(message).await?;
+        }
+        Ok(())
+    }
+
+    /// Reframes the unread batch as ordinary Bedrock entries for lazy play decoding.
+    async fn recv_body(&mut self) -> io::Result<Bytes> {
+        self.fill().await?;
+        let mut body = Vec::new();
+        for packet in self.pending.drain(..) {
+            let mut writer = wire::Writer::with_limit(&mut body, self.limits.max_decoded_bytes);
+            writer
+                .write_len_var_u32(packet.len())
+                .map_err(io::Error::other)?;
+            body.extend_from_slice(&packet);
+        }
+        Ok(Bytes::from(body))
+    }
+
+    /// Ends the actual transport, without starting another connection.
+    async fn close(&mut self) -> io::Result<()> {
+        self.transport.close().await
     }
 }

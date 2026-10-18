@@ -3,7 +3,7 @@
 mod connection;
 mod packs;
 mod transport;
-pub(crate) use connection::Connection;
+pub(crate) use connection::{Connection, PacketConnection};
 
 use super::{JoinPreparation, LoginSequence, NativeJoinPreparation, PlaySession, SessionLogin};
 use crate::codec::SessionFailure;
@@ -20,6 +20,22 @@ use std::{
 };
 
 const JOIN_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[cfg(test)]
+mod tests;
+
+/// Classifies a decoded negotiation packet that did not advance the current phase.
+fn negotiation_failure(
+    packet: packets::Packet,
+) -> Result<ProtocolError, crate::ServerTransferRejection> {
+    if let Some(target) = crate::ServerTransferEvent::from_packet_data(&packet)? {
+        return Ok(SessionFailure::ServerTransfer(target).into());
+    }
+    Ok(failure(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unexpected negotiation packet: {:?}", packet.id()),
+    )))
+}
 
 impl LoginSequence {
     /// Joins directly without a Go process. The timeout includes transport, Login,
@@ -67,11 +83,10 @@ async fn connect<P: Send + 'static>(
         match *packet.data {
             packets::Packet::NetworkSettings(settings) => break settings,
             packets::Packet::Disconnect(disconnect) => return Err(disconnected(disconnect)),
-            _ => {
-                return Err(failure(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "expected NetworkSettings",
-                )));
+            other => {
+                if let Some(error) = connection.negotiation_failure(other) {
+                    return Err(error);
+                }
             }
         }
     };
@@ -168,10 +183,9 @@ async fn connect<P: Send + 'static>(
                 )));
             }
             other => {
-                return Err(failure(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unexpected Login packet: {:?}", other.id()),
-                )));
+                if let Some(error) = connection.negotiation_failure(other) {
+                    return Err(error);
+                }
             }
         }
     };

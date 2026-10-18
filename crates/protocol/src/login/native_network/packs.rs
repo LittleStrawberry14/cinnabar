@@ -1,5 +1,7 @@
 //! Bounded in-band pack acquisition and server-selected stack ordering.
 
+mod builtins;
+
 use super::{Connection, disconnected, failure};
 use crate::{ProtocolError, ResourcePackArchive, ResourcePackHandoff};
 use bedrock_protocol_1_26_51::{
@@ -183,6 +185,11 @@ pub(super) async fn acquire(
                             .map_err(io::Error::other)
                             .map_err(failure)?,
                     )?;
+                    if !downloads.contains_key(&id)
+                        && builtins::contains(id, &pack.version.to_string_lossy())
+                    {
+                        continue;
+                    }
                     let download = downloads
                         .remove(&id)
                         .ok_or_else(|| invalid("stack contains an unavailable pack"))?;
@@ -213,10 +220,9 @@ pub(super) async fn acquire(
                     == bedrock_protocol_1_26_51::enums::PlayStatusType::Loginsuccess => {}
             packets::Packet::Disconnect(packet) => return Err(disconnected(packet)),
             other => {
-                return Err(invalid(&format!(
-                    "unexpected pack negotiation packet: {:?}",
-                    other.id()
-                )));
+                if let Some(error) = connection.negotiation_failure(other) {
+                    return Err(error);
+                }
             }
         }
     }

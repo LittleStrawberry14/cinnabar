@@ -10,6 +10,8 @@ autotests = false
 [package.metadata.cinnabar]
 platform-specific = ["windows"]
 reads = [
+    "core/go.mod",
+    "crates/protocol/data/builtin-packs.json",
     "assets/bedrock-target.json",
     "assets/block-data-sources.json",
     "crates/protocol-ids/data/protocol-ids.json",
@@ -21,7 +23,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls"]
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet-tokio", "dep:rustls", "uuid/serde"]
 
 [[test]]
 name = "it"
@@ -66,6 +68,7 @@ nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "4dd
 rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 test-alloc = { path = "../test-alloc" }
 tempfile = "3"
 test-time = { path = "../test-time" }

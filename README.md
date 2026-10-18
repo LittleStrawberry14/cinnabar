@@ -62,13 +62,26 @@ cinnabar (Rust, Bevy/wgpu)  ── local socket ──  bedrock-core (Go)
                                                         └─ NetherNet ─ Realms and friend worlds
 ```
 
-The Rust client owns everything you see and play. The Go core owns Xbox sign-in, encryption and
-the network transports. The target game version is pinned in `assets/bedrock-target.json`.
+The Rust client owns everything you see and play. By default, the Go core owns Xbox sign-in,
+encryption and the network transports. The target game version is pinned in `assets/bedrock-target.json`.
+
+Signed-out direct connections can opt into native Rust networking:
+
+```sh
+cargo run -p cinnabar --features native-networking -- --address HOST:PORT --native-networking raknet
+```
+
+Use `nethernet-lan` with a peer's LAN discovery endpoint for directed IPv4 NetherNet.
+The native backend uses the existing Rust resource-pack presentation, spawn and play paths.
+Account services, CDN/cache integration, hosting and broader acceptance remain in progress;
+the working Go backend remains the default.
 
 Built on these libraries:
 
 | Library | Used for |
 | --- | --- |
+| [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Optional native batch framing, compression, encryption, Login and RakNet transport. |
+| [nethernet](https://github.com/cinnabar-mc/nethernet) | Optional native LAN signaling, ICE, DTLS and SCTP transport. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
 | [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |

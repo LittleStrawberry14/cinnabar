@@ -1,5 +1,8 @@
 //! Exclusive native transport ownership for one direct connection.
 
+mod inbox;
+use inbox::Inbox;
+
 use super::{NativeConnectionTarget, NativeTransport};
 use bedrock_net::{
     BatchHeader,
@@ -22,6 +25,7 @@ pub(super) enum Transport {
         connection: NetherClient,
         key: SigningKey,
         nonce: String,
+        inbox: Inbox,
     },
 }
 
@@ -116,6 +120,7 @@ impl Transport {
                     connection,
                     key,
                     nonce: data.session_id,
+                    inbox: Inbox::default(),
                 })
             }
         }
@@ -160,8 +165,19 @@ impl Transport {
                 connection.queue_send(message).map_err(io::Error::other)?;
                 connection.flush().await.map_err(io::Error::other)
             }
-            Self::NetherNetLan { connection, .. } => {
-                connection.send(message).await.map_err(io::Error::other)
+            Self::NetherNetLan {
+                connection, inbox, ..
+            } => {
+                let session = connection.session();
+                let sending = async { session.send(message).await.map_err(io::Error::other) };
+                let incoming = futures::stream::unfold(connection, |connection| async move {
+                    match connection.recv().await {
+                        Ok(Some(message)) => Some((Ok(message), connection)),
+                        Ok(None) => None,
+                        Err(error) => Some((Err(io::Error::other(error)), connection)),
+                    }
+                });
+                inbox.send(sending, incoming).await
             }
         }
     }
@@ -170,13 +186,20 @@ impl Transport {
     pub(super) async fn recv(&mut self) -> io::Result<Bytes> {
         match self {
             Self::RakNet { connection, .. } => connection.recv().await.map_err(io::Error::other),
-            Self::NetherNetLan { connection, .. } => connection
-                .recv()
-                .await
-                .map_err(io::Error::other)?
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "NetherNet peer closed")
-                }),
+            Self::NetherNetLan {
+                connection, inbox, ..
+            } => {
+                if let Some(message) = inbox.pop() {
+                    return Ok(message);
+                }
+                connection
+                    .recv()
+                    .await
+                    .map_err(io::Error::other)?
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "NetherNet peer closed")
+                    })
+            }
         }
     }
 

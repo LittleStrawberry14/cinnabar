@@ -1,5 +1,15 @@
 # Phases 2-5 Completion Ledger
 
+## Native direct networking (in progress)
+
+The optional native backend composes the networking libraries with the client's
+existing resource-pack presentation, spawn and play owners. Signed-out direct
+joins and their retries bypass Go provisioning. In-band archives are bounded and
+hash-checked; their final server stack retains order, versions, sub-packs and keys.
+The Go backend remains the default. Account services, CDN/cache integration,
+hosting, browser transport and broad network/device acceptance remain incomplete.
+This closes no parity or Go-removal gate.
+
 ## Browser host composition
 
 The browser host uses verified memory carriers, the shared game frame and HUD, injected
