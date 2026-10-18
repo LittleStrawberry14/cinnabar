@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import subprocess
 
+import egress
+
 ROOT = Path(__file__).resolve().parents[2]
 STRUCT_TYPES = {"string": ("String", "string"), "u64": ("u64", "uint64"), "u32": ("u32", "uint32"), "strings": ("Vec<String>", "[]string")}
 
@@ -156,7 +158,10 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     manifest = json.loads((ROOT / "crates/bridge/data/contract.json").read_text(encoding="utf-8"))
-    for path, content in declarations(manifest).items():
+    outputs = declarations(manifest)
+    policy = json.loads((ROOT / "crates/bridge/data/gateway-egress.json").read_text(encoding="utf-8"))
+    outputs.update(egress.declarations(policy, ROOT))
+    for path, content in outputs.items():
         if args.check:
             if not path.exists() or path.read_text(encoding="utf-8") != content:
                 parser.exit(1, f"stale bridge contract: {path.relative_to(ROOT)}\n")
