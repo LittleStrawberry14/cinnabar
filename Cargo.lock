@@ -5845,7 +5845,6 @@ dependencies = [
  "image",
  "launcher",
  "libc",
- "md-5 0.10.6",
  "memmap2",
  "minidumper",
  "p384",
@@ -8033,12 +8032,14 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "futures",
+ "md-5 0.10.6",
  "nethernet",
  "nethernet-tokio",
  "p384",
  "protocol-ids",
  "rand",
  "render-api",
+ "reqwest 0.12.28",
  "reqwest 0.13.5",
  "resource-pack",
  "rsa",
@@ -8053,6 +8054,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
  "uuid",
  "web-time",
  "xxhash-rust",
@@ -10208,11 +10210,9 @@ dependencies = [
 [[package]]
 name = "tokio-websockets"
 version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52efb639344a7c6adb8e62c6f3d2c19c001ff1b79a5041ba1c6ed42e19c6aa5"
 dependencies = [
  "aws-lc-rs",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "futures-core",
  "futures-sink",
@@ -11412,6 +11412,35 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-transport",
+]
+
+[[package]]
+name = "web-gateway"
+version = "0.1.20"
+dependencies = [
+ "bedrock-net",
+ "bedrock-protocol-1-26-51",
+ "bedrock-services",
+ "bridge",
+ "bytes",
+ "futures",
+ "hex",
+ "http",
+ "httparse",
+ "p384",
+ "protocol",
+ "raknet",
+ "rand",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "subtle",
+ "test-time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tokio-websockets",
+ "zeroize",
 ]
 
 [[package]]
