@@ -88,12 +88,19 @@ pub(super) async fn acquire(
     }
 }
 
-/// Retains one caller-owned acquisition wait on the existing connection owner.
+/// Drives service work beside one retained I/O wait; ordinary reads still own staged terminals.
 async fn wait_io<T>(
-    _connection: &mut impl PacketConnection,
+    connection: &mut impl PacketConnection,
     operation: impl std::future::Future<Output = T>,
 ) -> T {
-    operation.await
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            biased;
+            () = connection.maintain() => {},
+            output = &mut operation => return output,
+        }
+    }
 }
 
 /// Sends each generated response immediately under the existing batch packet limit.
