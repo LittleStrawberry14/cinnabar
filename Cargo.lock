@@ -5796,6 +5796,7 @@ dependencies = [
  "bytemuck",
  "mod-api",
  "naga",
+ "test-alloc",
 ]
 
 [[package]]
