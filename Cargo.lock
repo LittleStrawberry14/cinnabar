@@ -7589,6 +7589,7 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "pack-compiler",
  "particles",
+ "png",
  "rayon",
  "render-api",
  "render-model",
