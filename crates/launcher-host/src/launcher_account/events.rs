@@ -181,34 +181,7 @@ async fn control(
                 sent_cinnabar = Some(config.clone());
             }
         }
-        let generation = auth_generation(shared);
-        if let Ok(events) = bridge::poll_events(socket_dir).await {
-            if core_api
-                && let Some(release) =
-                    new_release(&mut seen_release, events.cinnabar_release.as_ref())
-            {
-                crate::lifecycle::update::release_published(release);
-            }
-            publish(shared, |snapshot| {
-                if let Some(disconnect) = events.disconnect
-                    && snapshot.last_disconnect != Some(disconnect.sequence)
-                {
-                    // The first poll only records the standing disconnect.
-                    if snapshot.last_disconnect.is_some() {
-                        // An empty message reads as vanilla's no-reason line.
-                        let reason = disconnect.message.trim().to_owned();
-                        snapshot.events.push(AccountEvent::Disconnected { reason });
-                    }
-                    snapshot.last_disconnect = Some(disconnect.sequence);
-                }
-                snapshot.last_disconnect.get_or_insert(0);
-                snapshot.connect = events.connect;
-                snapshot.server_trust = events.server_trust;
-            });
-            publish_account(shared, generation, |snapshot| {
-                snapshot.set_account(events.auth);
-            });
-        }
+        poll_core_events(socket_dir, shared, core_api, &mut seen_release).await;
         let targets = shared
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -241,3 +214,42 @@ async fn control(
         }
     }
 }
+
+/// Reads and projects the concrete Core event snapshot on the existing control executor.
+async fn poll_core_events(
+    socket_dir: &std::path::Path,
+    shared: &Mutex<Snapshot>,
+    core_api: bool,
+    seen_release: &mut Option<bridge::CinnabarRelease>,
+) {
+    let generation = auth_generation(shared);
+    if let Ok(events) = bridge::poll_events(socket_dir).await {
+        if core_api
+            && let Some(release) = new_release(seen_release, events.cinnabar_release.as_ref())
+        {
+            crate::lifecycle::update::release_published(release);
+        }
+        publish(shared, |snapshot| {
+            if let Some(disconnect) = events.disconnect
+                && snapshot.last_disconnect != Some(disconnect.sequence)
+            {
+                // The first poll only records the standing disconnect.
+                if snapshot.last_disconnect.is_some() {
+                    // An empty message reads as vanilla's no-reason line.
+                    let reason = disconnect.message.trim().to_owned();
+                    snapshot.events.push(AccountEvent::Disconnected { reason });
+                }
+                snapshot.last_disconnect = Some(disconnect.sequence);
+            }
+            snapshot.last_disconnect.get_or_insert(0);
+            snapshot.connect = events.connect;
+            snapshot.server_trust = events.server_trust;
+        });
+        publish_account(shared, generation, |snapshot| {
+            snapshot.set_account(events.auth);
+        });
+    }
+}
+
+#[cfg(all(test, unix, feature = "native-networking"))]
+mod tests;
