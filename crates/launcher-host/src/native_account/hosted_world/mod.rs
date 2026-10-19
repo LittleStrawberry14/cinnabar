@@ -37,6 +37,7 @@ pub struct HostedApproval {
 pub struct NativeHostedWorld {
     slot: Option<HostSlot>,
     directory: Option<HostDirectory>,
+    peers: active::peers::Peers,
 }
 
 impl NativeHostedWorld {

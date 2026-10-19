@@ -24,6 +24,7 @@ pub(super) struct Acquired {
 pub(super) async fn acceptor(
     world: &mut NativeHostedWorld,
     deadline: Instant,
+    visitor_limit: usize,
 ) -> io::Result<Acquired> {
     let (identity, request) = world.directory_mut()?.hosting_request(deadline).await?;
     let deadline = deadline.min(identity.expires_at());
@@ -106,12 +107,12 @@ pub(super) async fn acceptor(
         token_trust: Some(identity.offer_trust()),
         allow_anonymous_offers: true,
         server_ice: Some(server_ice),
-        max_sessions: VISITOR_LIMIT,
-        max_pending: VISITOR_LIMIT,
-        max_pending_per_network_id: VISITOR_LIMIT,
+        max_sessions: visitor_limit,
+        max_pending: visitor_limit,
+        max_pending_per_network_id: visitor_limit,
         ..Default::default()
     };
-    let limit = NonZeroUsize::new(VISITOR_LIMIT).expect("one visitor capacity");
+    let limit = NonZeroUsize::new(visitor_limit).ok_or_else(unavailable)?;
     let signaling = CallerServerSignalingConfig {
         max_routes: limit,
         max_routes_per_sender: limit,

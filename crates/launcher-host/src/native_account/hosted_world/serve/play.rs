@@ -3,7 +3,8 @@
 pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
 mod step;
-use step::{Phase, Step};
+use step::Phase;
+pub(in crate::native_account::hosted_world) use step::Step;
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
 use bedrock_client::server::session::AcceptedSession;
@@ -42,6 +43,10 @@ pub struct ClosingHostedPeer {
 }
 
 impl NativeHostedPeer {
+    /// Borrows only this actual typed Initialized session's original title approval.
+    pub(in crate::native_account::hosted_world) fn approval(&self) -> &HostedApproval {
+        &self.accepted.grant().approval
+    }
     /// Takes only the actual typed initialization and both corresponding live IO owners.
     pub(super) fn new(
         wire: NativeAcceptingIo,
@@ -67,7 +72,16 @@ impl NativeHostedPeer {
         host: &mut NativeHostedWorld,
     ) -> (ClosingHostedPeer, io::Result<()>) {
         let result = self.play(host).await;
-        let mut closing = self.begin_close(cleanup_deadline());
+        self.into_closing(result, cleanup_deadline())
+    }
+
+    /// Moves the same peer into explicit retirement, retaining its first play failure and caller cutoff.
+    pub(in crate::native_account::hosted_world) fn into_closing(
+        self,
+        result: io::Result<()>,
+        deadline: Instant,
+    ) -> (ClosingHostedPeer, io::Result<()>) {
+        let mut closing = self.begin_close(deadline);
         let result = match result {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -219,7 +233,7 @@ impl ClosingHostedPeer {
 }
 
 /// One finite edge operation budget; idle play never uses this deadline.
-fn cleanup_deadline() -> Instant {
+pub(in crate::native_account::hosted_world) fn cleanup_deadline() -> Instant {
     Instant::now() + Duration::from_millis(u64::from(CLOSE_MILLIS))
 }
 

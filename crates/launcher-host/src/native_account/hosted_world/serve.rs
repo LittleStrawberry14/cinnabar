@@ -162,7 +162,10 @@ impl NativeHostedWorld {
         deadline: Option<Instant>,
         future: impl std::future::Future<Output = io::Result<T>>,
     ) -> io::Result<T> {
-        self.directory_mut()?.peer_io(deadline, future).await
+        let directory = self.directory.as_mut().ok_or_else(super::closed)?;
+        directory
+            .peer_io(deadline, future, Some(&mut self.peers))
+            .await
     }
 
     /// Executes only the reusable typed accepting handshake, with exact flush continuations.

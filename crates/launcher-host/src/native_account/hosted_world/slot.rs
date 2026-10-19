@@ -33,6 +33,7 @@ impl HostSlot {
         Ok(NativeHostedWorld {
             slot: Some(self.clone()),
             directory: Some(directory),
+            peers: Default::default(),
         })
     }
 
@@ -52,6 +53,7 @@ impl HostSlot {
         Ok(Some(NativeHostedWorld {
             slot: Some(self.clone()),
             directory: Some(directory),
+            peers: Default::default(),
         }))
     }
 

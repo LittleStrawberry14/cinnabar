@@ -61,7 +61,8 @@ impl HostDirectory {
 
     /// Applies ready RTA changes and complete refreshes before the caller's next admission check.
     pub(super) async fn service_barrier(&mut self, deadline: Option<Instant>) -> io::Result<()> {
-        self.peer_io(deadline, std::future::ready(Ok(()))).await
+        self.peer_io(deadline, std::future::ready(Ok(())), None)
+            .await
     }
 
     /// Keeps one actual peer future pinned while the sole RTA owner refreshes complete snapshots.
@@ -70,6 +71,7 @@ impl HostDirectory {
         &mut self,
         deadline: Option<Instant>,
         future: impl std::future::Future<Output = io::Result<T>>,
+        mut peers: Option<&mut super::active::peers::Peers>,
     ) -> io::Result<T> {
         tokio::pin!(future);
         let mut completed = None;
@@ -79,6 +81,7 @@ impl HostDirectory {
                 check_deadline(deadline)?;
             }
             self.changed |= self.session.as_ref().is_some_and(mpsd::Session::needs_sync);
+            let mut serviced = false;
             if self.changed {
                 let refresh_deadline = *self
                     .refresh_deadline
@@ -88,10 +91,32 @@ impl HostDirectory {
                 while self.changed {
                     self.refresh(refresh_deadline).await?;
                 }
+                serviced = true;
+            }
+            if peers.is_some()
+                && self.advertisement.is_some()
+                && self
+                    .approvals
+                    .as_ref()
+                    .is_some_and(|approvals| !approvals.acknowledged())
+            {
+                let first = *self
+                    .refresh_deadline
+                    .get_or_insert_with(|| Instant::now() + super::super::ACQUISITION_TIMEOUT);
+                let cutoff = deadline.map_or(first, |deadline| first.min(deadline));
+                self.publish_approvals(cutoff).await?;
+                serviced = true;
+            }
+            if serviced {
                 self.refresh_deadline = None;
+                if let Some(peers) = &peers {
+                    peers.changed();
+                }
             }
             self.validate_session()?;
             let busy = matches!(self.account_authority()?, Authority::Busy);
+            let peer_deadline = peers.as_ref().and_then(|peers| peers.ready_deadline());
+            let advance = peers.as_ref().is_some_and(|peers| peers.can_advance(busy));
             let socket = self
                 .socket
                 .as_mut()
@@ -106,8 +131,14 @@ impl HostDirectory {
                         .ok_or_else(|| invalid("host subscription is unavailable"))?,
                         &self.reference, &mut self.changed)?;
                 }
+                _ = async { match peer_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+                    None => std::future::pending::<()>().await,
+                }}, if !advance => {}
+                _ = std::future::ready(()), if advance => {
+                    peers.as_mut().expect("ready original peer set").advance(self);
+                }
                 _ = tokio::time::sleep(super::super::LEASE_RETRY), if busy || completed.is_some() => {}
-                result = &mut future, if completed.is_none() => { completed = Some(result); }
                 _ = std::future::ready(()), if !busy && completed.is_some() => {
                     match self.current() {
                         Ok(()) => {
@@ -118,6 +149,15 @@ impl HostDirectory {
                         Err(error) => return Err(error),
                     }
                 }
+                result = async {
+                    tokio::select! {
+                        result = &mut future, if completed.is_none() => Some(result),
+                        _ = async { match &mut peers {
+                            Some(peers) => peers.next().await,
+                            None => std::future::pending::<()>().await,
+                        }} => None,
+                    }
+                } => { if let Some(result) = result { completed = Some(result); } }
             }
         }
     }

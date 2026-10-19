@@ -96,6 +96,15 @@ Dragonfly-world fixture pass: actual Login, verified packs, spawn, terrain, a li
 chunk-radius response and original transport/process/membership cleanup. This
 isolated path does not advertise a native world or send invitations.
 
+The active-host source now retains a bounded set of independent initialized peer
+continuations alongside one finite typed accepting setup. The original directory
+services RTA before each retained-capacity commit; backend packets and receipts
+stay on their original peer. Occupancy and transport capacity use the captured
+process limit and remain held through explicit retirement. This source refactor
+requires compiler checks and the real two-visitor world control; its fixed SDK
+fixture extension and credential renewal remain incomplete. It does not qualify
+native hosting activation or change the default.
+
 The opt-in native local-player path captures the original running Dragonfly opening
 and numeric loopback endpoint from the existing world manager. It bypasses the Go
 connection/report route while reusing native Login, pack transfer, spawn and play.
