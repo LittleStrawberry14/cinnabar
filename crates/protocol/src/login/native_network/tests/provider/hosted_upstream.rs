@@ -695,3 +695,186 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
     };
     ready
 }
+
+/// The actual public local handoff charges and owns only its retained startup bytes.
+#[tokio::test]
+async fn local_bds_startup_detaches_from_a_discarded_secondary_batch_sibling() {
+    tokio::time::timeout(TIMEOUT, async {
+        const PADDING_BYTES: usize = 16 * 1024;
+        let FixtureRoute {
+            mut listener,
+            target,
+            http,
+            approval,
+            ..
+        } = fixture_route(Route::LocalHttp).await;
+        assert!(approval.is_none());
+        let tiny = packets::SetTime {
+            time: wire::ZigZag32(1),
+        };
+        let start = packets::StartGame {
+            runtime_id: ActorRuntimeID(42),
+            ..Default::default()
+        };
+        let after = packets::SetTime {
+            time: wire::ZigZag32(2),
+        };
+        let server = async {
+            let mut peer = listener.accept().await.unwrap();
+            let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::RequestNetworkSettings(_)
+            ));
+            send(
+                &peer,
+                &codec,
+                &[crate::Packet::new(packets::NetworkSettings {
+                    compression_threshold: wire::U16LE(u16::MAX),
+                    ..Default::default()
+                })],
+            )
+            .await;
+            let codec = codec.negotiate(CompressionSettings {
+                algorithm: CompressionAlgorithm::Deflate,
+                threshold: u16::MAX,
+            });
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::Login(_)
+            ));
+            send(
+                &peer,
+                &codec,
+                &[
+                    crate::Packet::new(packets::PlayStatus {
+                        status: PlayStatusType::Loginsuccess,
+                    }),
+                    crate::Packet::new(packets::ResourcePacksInfo::default()),
+                ],
+            )
+            .await;
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::ClientCacheStatus(_)
+            ));
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::ResourcePackClientResponse(_)
+            ));
+            send(
+                &peer,
+                &codec,
+                &[crate::Packet::new(packets::ResourcePackStack::default())],
+            )
+            .await;
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::ResourcePackClientResponse(_)
+            ));
+            let mut secondary = crate::Packet::new(packets::Transfer {
+                server_address: "x".repeat(PADDING_BYTES).into(),
+                server_port: wire::U16LE(0),
+                ..Default::default()
+            });
+            secondary.header.from_subclient = 1;
+            send(
+                &peer,
+                &codec,
+                &[crate::Packet::new(tiny.clone()), secondary],
+            )
+            .await;
+            send(
+                &peer,
+                &codec,
+                &[
+                    crate::Packet::new(start.clone()),
+                    crate::Packet::new(after.clone()),
+                ],
+            )
+            .await;
+            peer.session.closed().await;
+        };
+        let client = async {
+            let raw = RawValue::from_string(
+                r#"{"ThirdPartyName":"untrusted","Nonce":"original"}"#.into(),
+            )
+            .unwrap();
+            let request = encode_authenticated_request(
+                &key(),
+                &signed(claims(), "synthetic"),
+                &raw,
+                BatchLimits::default().max_decoded_bytes,
+            )
+            .unwrap();
+            let login = bedrock_net::login::verify_authenticated_request(
+                &request,
+                &verifier(),
+                UNIX_EPOCH + Duration::from_secs(SERVICE_SECONDS),
+                BatchLimits::default().max_decoded_bytes,
+            )
+            .unwrap();
+            let observations = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let deadline = Instant::now() + TIMEOUT;
+            let mut upstream = crate::login::native_network::connection::OBSERVE_BATCHES
+                .scope(
+                    Arc::clone(&observations),
+                    NativeHostedUpstream::connect(&target, &login, false, deadline),
+                )
+                .await
+                .unwrap();
+            let large = {
+                let observed = observations.lock().unwrap();
+                assert_eq!(
+                    observed
+                        .iter()
+                        .filter(|(size, _)| *size > PADDING_BYTES)
+                        .count(),
+                    1,
+                    "fixture must observe exactly one original larger socket batch"
+                );
+                observed
+                    .iter()
+                    .find(|(size, _)| *size > PADDING_BYTES)
+                    .unwrap()
+                    .1
+                    .clone()
+            };
+            // The actual tiny startup remains in the original FIFO while its discarded sibling retires.
+            let released_at_handoff = large.upgrade().is_none();
+            for expected in [
+                raw_packet(tiny.clone().into()),
+                raw_packet(start.clone().into()),
+                raw_packet(after.clone().into()),
+            ] {
+                assert_eq!(
+                    upstream.receive().await.unwrap(),
+                    expected,
+                    "storage detachment changed original raw startup or unread sibling order"
+                );
+            }
+            let mut closing = upstream.begin_close(deadline);
+            closing.finish_close().await.unwrap();
+            drop(closing);
+            assert!(
+                large.upgrade().is_none(),
+                "original consumed transport input did not retire"
+            );
+            released_at_handoff
+        };
+        let (_, released_at_handoff) = tokio::join!(server, client);
+        listener.close().await.unwrap();
+        drop(listener);
+        Arc::try_unwrap(http.unwrap())
+            .ok()
+            .expect("original HTTP listener leaked")
+            .shutdown()
+            .await;
+        assert!(
+            released_at_handoff,
+            "tiny retained BDS startup pinned the discarded secondary batch backing"
+        );
+    })
+    .await
+    .expect("finite actual BDS startup backing fixture stalled");
+}

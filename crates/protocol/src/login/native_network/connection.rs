@@ -59,6 +59,12 @@ pub(crate) struct Connection {
 #[cfg(test)]
 type BatchLifetimes = std::sync::Arc<std::sync::Mutex<Vec<(usize, std::sync::Weak<()>)>>>;
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Scopes existing weak batch observations to an actual public connection future.
+    pub(super) static OBSERVE_BATCHES: BatchLifetimes;
+}
+
 /// Field order releases the real input allocation before its observation becomes expired.
 #[cfg(test)]
 struct ObservedBatch {
@@ -110,7 +116,7 @@ impl Connection {
             primary_only: false,
             identity: None,
             #[cfg(test)]
-            observed_batches: None,
+            observed_batches: OBSERVE_BATCHES.try_with(std::sync::Arc::clone).ok(),
         }
     }
 
