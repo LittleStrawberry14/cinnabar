@@ -576,7 +576,6 @@ impl PacketConnection for Connection {
                 Err(_) if accepted != 0 => break,
                 Err(error) => return Err(error),
             }
-            let packet = self.pending.front().expect("validated original front");
             let checkpoint = body.len();
             let limit = if accepted == 0 && matches!(self.codec(), Codec::Negotiated(_)) {
                 self.incoming_decoded_limit
@@ -584,6 +583,7 @@ impl PacketConnection for Connection {
                 self.limits.max_decoded_bytes
             };
             let remaining = limit.saturating_sub(checkpoint);
+            let packet = self.pending.front().expect("validated original front");
             let result = wire::Writer::with_limit(&mut body, remaining).write_byte_slice(packet);
             if let Err(error) = result {
                 body.truncate(checkpoint);
