@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "native-networking")]
 pub(crate) mod friend;
+#[cfg(feature = "native-networking")]
+pub(crate) mod local_world;
 mod preparation;
 pub(crate) use preparation::Preparation;
 
@@ -31,6 +33,9 @@ pub struct NetworkConfig {
     /// Original account-bound featured selection; allocation is explicit and never inferred from its card.
     #[cfg(feature = "native-networking")]
     pub native_gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
+    /// Original local process selection and its optional selected account.
+    #[cfg(feature = "native-networking")]
+    pub native_local_world: Option<local_world::WorldConnectionRequest>,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -76,6 +81,7 @@ pub fn spawn_network(
     if usize::from(config.native_account.is_some())
         + usize::from(config.native_friend.is_some())
         + usize::from(config.native_gathering.is_some())
+        + usize::from(config.native_local_world.is_some())
         > 1
     {
         return Err(std::io::Error::new(
@@ -85,6 +91,18 @@ pub fn spawn_network(
     }
     #[cfg(feature = "native-networking")]
     let friend = config.native_friend.map(|request| {
+        request.into_companion(
+            protocol::login_client_data(
+                &config.display_name,
+                config.client_random_id,
+                Some(&player_skin),
+                &config.login_settings,
+            ),
+            config.client_random_id,
+        )
+    });
+    #[cfg(feature = "native-networking")]
+    let local_world = config.native_local_world.map(|request| {
         request.into_companion(
             protocol::login_client_data(
                 &config.display_name,
@@ -168,11 +186,15 @@ pub fn spawn_network(
         fast_transfer_action_marker: Some(client_ui::diagnostic_markers::FAST_TRANSFER_ACTION),
     };
     #[cfg(feature = "native-networking")]
-    let result = match friend {
-        Some(companion) => client_session::spawn_network_with_companion(
+    let result = match (friend, local_world) {
+        (Some(companion), None) => client_session::spawn_network_with_companion(
             domain, runtime, tasks, prepare, trace, companion,
         ),
-        None => client_session::spawn_network(domain, runtime, tasks, prepare, trace),
+        (None, Some(companion)) => client_session::spawn_network_with_companion(
+            domain, runtime, tasks, prepare, trace, companion,
+        ),
+        (None, None) => client_session::spawn_network(domain, runtime, tasks, prepare, trace),
+        (Some(_), Some(_)) => unreachable!("checked exclusive native connection owners"),
     };
     #[cfg(not(feature = "native-networking"))]
     let result = client_session::spawn_network(domain, runtime, tasks, prepare, trace);

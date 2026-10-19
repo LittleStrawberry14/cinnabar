@@ -10,6 +10,7 @@ pub(crate) struct HostOpening {
     instance: Weak<dyn Instance>,
     generation: u64,
     world: LocalWorldInfo,
+    target: LocalTarget,
     max_players: u32,
 }
 
@@ -36,6 +37,7 @@ impl HostOpening {
                 game_mode: world.game_mode,
                 backend: world.backend,
             },
+            target: target_for(world, instance.as_ref()),
             max_players: instance
                 .max_players()
                 .unwrap_or(bridge::contract::HOSTED_WORLD_MAX_PLAYERS)
@@ -47,22 +49,41 @@ impl HostOpening {
     pub(crate) fn validate(&self) -> io::Result<()> {
         let manager = self.manager.upgrade().ok_or_else(unavailable)?;
         let life = lock(&manager.life);
-        let instance = life
-            .instance
-            .as_ref()
-            .filter(|_| life.state == WorldState::Running)
-            .ok_or_else(unavailable)?;
-        if life.generation != self.generation
-            || !self.instance.ptr_eq(&Arc::downgrade(instance))
-            || life
-                .world
-                .as_ref()
-                .is_none_or(|world| world.id != self.world.id)
-            || !matches!(instance.exited().try_recv(), Err(TryRecvError::Empty))
-        {
+        if !self.current(&manager, &life) {
             return Err(unavailable());
         }
         Ok(())
+    }
+
+    /// Shares the same exact original-instance predicate with lock-held local retirement.
+    fn current(&self, manager: &Arc<Inner>, life: &Life) -> bool {
+        let Some(instance) = life
+            .instance
+            .as_ref()
+            .filter(|_| life.state == WorldState::Running)
+        else {
+            return false;
+        };
+        self.manager.ptr_eq(&Arc::downgrade(manager))
+            && life.generation == self.generation
+            && self.instance.ptr_eq(&Arc::downgrade(instance))
+            && life
+                .world
+                .as_ref()
+                .is_some_and(|world| world.id == self.world.id)
+            && matches!(instance.exited().try_recv(), Err(TryRecvError::Empty))
+    }
+
+    /// Requests saving/stop only for this original still-running process, on the worlds worker.
+    pub(super) fn request_close(&self) {
+        let Some(inner) = self.manager.upgrade() else {
+            return;
+        };
+        let manager = Manager { inner };
+        let life = lock(&manager.inner.life);
+        if self.current(&manager.inner, &life) {
+            manager.close_locked(life);
+        }
     }
 
     /// Matches exact opening ownership without accepting display text as a locator.
@@ -75,6 +96,11 @@ impl HostOpening {
     /// Borrows the metadata captured from this same actual local-world opening.
     pub(crate) fn world(&self) -> &LocalWorldInfo {
         &self.world
+    }
+
+    /// Borrows the exact immutable endpoint captured with this original process generation.
+    pub(super) fn target(&self) -> &LocalTarget {
+        &self.target
     }
 
     /// Returns the running instance's finite supported player cap, including its local host.

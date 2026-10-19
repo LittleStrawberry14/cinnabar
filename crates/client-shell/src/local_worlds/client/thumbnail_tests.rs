@@ -18,7 +18,7 @@ fn queued_worlds(
         effects,
         events,
         revoked: Arc::new(Mutex::new(false)),
-        _core: core,
+        _core: Some(core),
     };
     let mut worlds = LocalWorlds::default();
     worlds.manager = Some(manager);

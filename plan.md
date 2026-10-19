@@ -96,6 +96,15 @@ Dragonfly-world fixture pass: actual Login, verified packs, spawn, terrain, a li
 chunk-radius response and original transport/process/membership cleanup. This
 isolated path does not advertise a native world or send invitations.
 
+The opt-in native local-player path captures the original running Dragonfly opening
+and numeric loopback endpoint from the existing world manager. It bypasses the Go
+connection/report route while reusing native Login, pack transfer, spawn and play.
+The existing worlds worker retains original-opening cleanup through session Drop,
+including account/worker replacement; cleanup cannot stop a newer process. The
+selected account remains optional for signed-out local play. Source controls use
+the actual process/pack/world fixture; coordinator execution is still required.
+BDS HTTP and BDS LAN local-player adapters remain incomplete and fail explicitly.
+
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the
 selected leased SDK owner, coalesces activity, retains each actual service future

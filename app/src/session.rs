@@ -38,8 +38,11 @@ mod native_account;
 mod native_friend;
 #[cfg(feature = "native-networking")]
 mod native_gathering;
+#[cfg(feature = "native-networking")]
+mod native_local_world;
 #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 mod native_transfer_tests;
+mod network;
 mod url_policy;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
@@ -80,6 +83,9 @@ pub(crate) struct SessionController {
     native_friend_session: bool,
     #[cfg(feature = "native-networking")]
     native_gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
+    #[cfg(feature = "native-networking")]
+    native_local_world:
+        Option<crate::runtime::network::session::local_world::WorldConnectionRequest>,
     #[cfg(feature = "native-networking")]
     friend_cleanup: crate::runtime::network::session::friend::FriendCleanupOwner,
     /// Polls the per-session core this join started for its server trust question.
@@ -152,6 +158,8 @@ impl SessionController {
             native_friend_session: false,
             #[cfg(feature = "native-networking")]
             native_gathering: None,
+            #[cfg(feature = "native-networking")]
+            native_local_world: None,
             #[cfg(feature = "native-networking")]
             friend_cleanup: Default::default(),
             trust: None,
@@ -239,6 +247,7 @@ impl SessionController {
             self.native_friend = None;
             self.native_friend_session = false;
             self.native_gathering = None;
+            self.native_local_world = None;
         }
         self.kept_packs.keep_for_rejoin();
     }
@@ -386,6 +395,7 @@ impl SessionResources<'_> {
             controller.native_friend = None;
             controller.native_friend_session = false;
             controller.native_gathering = None;
+            controller.native_local_world = None;
         }
         let generation = controller.next_generation();
         if let (Some(far), Some(stream)) = (
@@ -400,7 +410,7 @@ impl SessionResources<'_> {
 }
 
 /// Starts provisioning a fresh core and network session for one address,
-/// replacing any previous session; [`poll_join`] finishes it on later frames.
+/// replacing any previous session; [`network::poll_join`] finishes it on later frames.
 ///
 /// This is the single replacement-handoff path shared by user joins and
 /// automatic server-transfer follows: identity-checked session directory,
@@ -501,120 +511,6 @@ fn attempt_connect(
     menu.show_connecting();
 }
 
-/// Advances the pending join without blocking: starts its network session
-/// once the endpoint is ready, or fails it back to the menu.
-fn poll_join(
-    commands: &mut Commands,
-    menu: &mut MenuRuntime,
-    session: &mut SessionResources<'_>,
-    cache: &BlobCache,
-) {
-    let controller = &mut *session.controller;
-    if controller.join.is_none() {
-        return;
-    }
-    let client_random_id = match controller.poll_client_random_id() {
-        Ok(Some(id)) => id,
-        Ok(None) => return,
-        Err(message) => {
-            let join = controller.join.take();
-            controller.core.stop_detached(move || drop(join));
-            controller.fail_join(menu, message);
-            return;
-        }
-    };
-    let attempt = controller.join.take().expect("pending join");
-    #[cfg(feature = "native-networking")]
-    let native_auth_cache = attempt.auth_cache.clone();
-    use client_session::connection::JoinPoll;
-    match attempt.poll(controller.generation, controller.connecting, || {
-        controller.core.exit_status()
-    }) {
-        JoinPoll::Retired => {}
-        JoinPoll::Pending(attempt) => controller.join = Some(attempt),
-        JoinPoll::StartCore(mut attempt) => {
-            match controller.start_core(
-                menu,
-                cache,
-                &attempt.address,
-                attempt.auth_cache.as_deref(),
-                attempt.generation,
-            ) {
-                Ok(stage) => {
-                    attempt.stage = stage;
-                    controller.join = Some(attempt);
-                }
-                Err(message) => controller.fail_join(menu, message),
-            }
-        }
-        JoinPoll::Ready {
-            endpoint,
-            directory,
-        } => {
-            let owned_core = directory.is_some();
-            if let Some(directory) = directory {
-                controller.bind_directory(directory);
-            }
-            let login_settings = controller.login_settings(menu, session.input.as_deref());
-            #[cfg(feature = "native-networking")]
-            let native_account = if controller.native_friend.is_none()
-                && controller.native_gathering.is_none()
-                && matches!(endpoint, protocol::SessionEndpoint::Native(_))
-            {
-                native_auth_cache.map(|path| controller.native_account_for(menu, path))
-            } else {
-                None
-            };
-            #[cfg(feature = "native-networking")]
-            let native_friend = match controller
-                .native_friend
-                .take()
-                .map(|selection| controller.friend_cleanup.request(selection))
-                .transpose()
-            {
-                Ok(request) => request,
-                Err(error) => {
-                    controller.fail_join(menu, error.to_string());
-                    return;
-                }
-            };
-            if let Err(error) = start_network(
-                commands,
-                menu,
-                controller.generation,
-                cache,
-                endpoint,
-                #[cfg(feature = "native-networking")]
-                native_account,
-                #[cfg(feature = "native-networking")]
-                native_friend,
-                #[cfg(feature = "native-networking")]
-                controller.native_gathering.take(),
-                login_settings,
-                client_random_id,
-                session.actor_artwork.as_deref().map(|artwork| &artwork.0),
-                session.ui_catalog.as_deref(),
-                crate::runtime::network::session_registries::RegistryBase::new(
-                    &session.state.client_world.runtime_assets,
-                    &session.collisions,
-                ),
-            ) {
-                if owned_core {
-                    let directory = controller.directory.take();
-                    controller.core.stop_detached(move || drop(directory));
-                }
-                controller.fail_join(menu, format!("Could not connect: {error}"));
-            }
-        }
-        JoinPoll::Failed { message, directory } => {
-            if let Some(directory) = directory {
-                controller.core.stop_detached(move || drop(directory));
-            }
-            controller.fail_join(menu, message);
-        }
-    }
-}
-
 /// Captures the player's settings as the join starts, including a hidden-menu launch.
 pub(crate) fn login_settings(
     menu: &MenuRuntime,
@@ -636,70 +532,6 @@ pub(crate) fn login_settings(
         resource_pack_cache_dir: Some(menu.layout().resource_pack_cache_dir()),
         parallel_resource_pack_urls,
     }
-}
-
-/// Starts the network session against the core serving `socket_dir`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "joining forwards captured session inputs and optional presentation assets"
-)]
-fn start_network(
-    commands: &mut Commands,
-    menu: &MenuRuntime,
-    session_generation: u64,
-    cache: &BlobCache,
-    endpoint: protocol::SessionEndpoint,
-    #[cfg(feature = "native-networking")] native_account: Option<
-        std::sync::Arc<launcher_host::native_account::NativeAccount>,
-    >,
-    #[cfg(feature = "native-networking")] native_friend: Option<
-        crate::runtime::network::session::friend::FriendConnectionRequest,
-    >,
-    #[cfg(feature = "native-networking")] native_gathering: Option<
-        launcher_host::native_account::NativeGatheringSelection,
-    >,
-    login_settings: protocol::LoginSettings,
-    client_random_id: protocol::ClientRandomId,
-    actor_artwork: Option<&render_model::ActorArtworkPages>,
-    ui_catalog: Option<&crate::runtime::network::PackUiCatalog>,
-    registry_base: crate::runtime::network::session_registries::RegistryBase,
-) -> Result<(), String> {
-    bridge::join_profile::JoinProfile::current().mark("core_ready");
-    let (runtime, tasks) = menu.io_execution().map_err(|error| error.to_string())?;
-    let replacement = crate::runtime::network::session::spawn_network(
-        NetworkConfig {
-            registry_base,
-            session_generation: simulation_clock::identity::SessionGeneration::new(
-                session_generation,
-            ),
-            endpoint,
-            #[cfg(feature = "native-networking")]
-            native_account,
-            #[cfg(feature = "native-networking")]
-            native_friend,
-            #[cfg(feature = "native-networking")]
-            native_gathering,
-            display_name: menu.display_name().to_owned(),
-            client_random_id,
-            client_blob_cache: cache.cache(),
-            player_skin: menu.player_skin().clone(),
-            login_settings,
-            actor_artwork: actor_artwork.cloned(),
-            ui_catalog: ui_catalog.map(|base| base.0.clone()),
-            log_dir: menu.layout().log_dir(),
-            record_session: menu.settings_snapshot().0.record_network_session(),
-        },
-        runtime,
-        tasks,
-    )
-    .map_err(|error| error.to_string())?;
-    commands.insert_resource(
-        client_interaction::movement::MovementTicker::with_epoch_publisher(
-            replacement.physics_epoch_publisher(),
-        ),
-    );
-    commands.insert_resource(replacement);
-    Ok(())
 }
 
 /// Acts on the menu's session intents and advances the pending join.
@@ -796,7 +628,11 @@ fn drive_intents(
     if let Some(selection) = menu.take_native_gathering_intent() {
         native_gathering::begin(menu, session, selection);
     }
-    poll_join(commands, menu, session, cache);
+    #[cfg(feature = "native-networking")]
+    if let Some(intent) = menu.take_native_local_world_intent() {
+        native_local_world::begin(menu, session, intent);
+    }
+    network::poll_join(commands, menu, session, cache);
 }
 
 /// Returns a failed launcher session to the menu instead of ending the process.

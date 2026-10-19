@@ -24,6 +24,8 @@ use bevy::{
 use launcher::local_worlds::world::WorldThumbnail;
 use model::{Effect, Event, Input, Screen, WorldsMenu};
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use client::NativeLocalWorldRetirement;
 use client::WorldsClient;
 
 /// Shown for an import with no attached worker; one cut off by a detach never publishes.
@@ -36,6 +38,8 @@ pub struct LocalWorlds {
     /// Opened on the first attach and kept across core restarts.
     manager: Option<Manager>,
     client: Option<WorldsClient>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_playing: Option<launcher_host::local_worlds::NativeLocalWorldSelection>,
     playing: bool,
     focused: bool,
     pause_menu: bool,
@@ -52,6 +56,8 @@ impl Default for LocalWorlds {
             menu: WorldsMenu::default(),
             manager: None,
             client: None,
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            native_playing: None,
             playing: false,
             focused: true,
             pause_menu: false,
@@ -73,6 +79,74 @@ impl LocalWorlds {
     /// Opens the install's worlds, routes the core at `socket_dir` to the open one and requests
     /// the world list.
     pub fn attach(&mut self, socket_dir: PathBuf, layout: &InstallLayout) -> io::Result<()> {
+        let manager = self.attach_manager(layout)?;
+        self.client = Some(WorldsClient::spawn(manager, socket_dir)?);
+        self.playing = false;
+        self.menu = WorldsMenu::default();
+        self.input(Input::Refresh);
+        self.dispatch(vec![Effect::LoadPrefs]);
+        Ok(())
+    }
+
+    /// Selects native session routing while retaining the same manager/store/process worker.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn attach_native(&mut self, layout: &InstallLayout) -> io::Result<()> {
+        let manager = self.attach_manager(layout)?;
+        self.client = Some(WorldsClient::spawn_native(manager)?);
+        self.playing = false;
+        self.menu = WorldsMenu::default();
+        self.input(Input::Refresh);
+        self.dispatch(vec![Effect::LoadPrefs]);
+        Ok(())
+    }
+
+    /// Captures a real selected opening only from the actual native world worker.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn native_selection(
+        &mut self,
+        id: &str,
+    ) -> io::Result<launcher_host::local_worlds::NativeLocalWorldSelection> {
+        if self.client.as_ref().is_none_or(|client| !client.native()) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "native world worker is unavailable",
+            ));
+        }
+        let selection = self
+            .manager
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "local world manager is unavailable",
+                )
+            })?
+            .native_local_world(id)?;
+        self.native_playing = Some(selection.clone());
+        Ok(selection)
+    }
+
+    /// Captures cleanup on the same native worker, never a mutable latest-world lookup.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn native_retirement(
+        &self,
+        selection: launcher_host::local_worlds::NativeLocalWorldSelection,
+    ) -> io::Result<NativeLocalWorldRetirement> {
+        let client = self
+            .client
+            .as_ref()
+            .filter(|client| client.native())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "native world worker is unavailable",
+                )
+            })?;
+        Ok(client.native_retirement(selection))
+    }
+
+    /// Preserves the existing manager across account-core attachment changes.
+    fn attach_manager(&mut self, layout: &InstallLayout) -> io::Result<Manager> {
         let manager = match &self.manager {
             Some(manager) => manager.clone(),
             None => {
@@ -85,16 +159,15 @@ impl LocalWorlds {
         if let Some(previous) = self.client.take() {
             previous.revoke();
         }
-        self.client = Some(WorldsClient::spawn(manager, socket_dir)?);
-        self.playing = false;
-        self.menu = WorldsMenu::default();
-        self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs]);
-        Ok(())
+        Ok(manager)
     }
 
     /// Drops the worker and closes the open world, whose route left with the old core.
     pub fn detach(&mut self) {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        {
+            self.native_playing = None;
+        }
         // Revoked first, so a request the worker already took cannot reopen the world.
         if let Some(client) = self.client.take() {
             client.revoke();
@@ -189,6 +262,13 @@ impl LocalWorlds {
     pub fn leave_world(&mut self) {
         self.playing = false;
         self.paused = false;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Some(client) = self.client.as_ref().filter(|client| client.native()) {
+            if let Some(selection) = self.native_playing.take() {
+                client.close_native(selection);
+            }
+            return;
+        }
         self.dispatch(vec![Effect::Close]);
     }
 

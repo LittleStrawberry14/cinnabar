@@ -251,10 +251,18 @@ impl LauncherCoreSlot {
             );
             self.presence_lifetime = Some(account.title_presence_lifetime());
             commands.insert_resource(LauncherAccount(account));
-            if let Some(worlds) = worlds
-                && let Err(error) = worlds.attach(core.socket_dir.clone(), &menu.layout)
-            {
-                bevy::log::warn!("local worlds unavailable: {error}");
+            if let Some(worlds) = worlds {
+                #[cfg(feature = "native-networking")]
+                let result = if menu.native_sign_in {
+                    worlds.attach_native(&menu.layout)
+                } else {
+                    worlds.attach(core.socket_dir.clone(), &menu.layout)
+                };
+                #[cfg(not(feature = "native-networking"))]
+                let result = worlds.attach(core.socket_dir.clone(), &menu.layout);
+                if let Err(error) = result {
+                    bevy::log::warn!("local worlds unavailable: {error}");
+                }
             }
         }
     }
