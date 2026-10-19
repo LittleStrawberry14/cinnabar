@@ -71,16 +71,13 @@ impl LauncherAccount {
         let descendants = tasks.clone();
         thread::spawn(crate::worker::tracked(
             move || {
-                feeds::poll_featured(
-                    &dir,
-                    &art,
+                let art = artwork::FeedArt::start(
+                    artwork::feed_images(&art),
                     wake,
-                    &shared,
-                    &until,
-                    &feed_changes,
-                    &executor,
-                    &descendants,
-                )
+                    executor.clone(),
+                    descendants,
+                );
+                feeds::poll_featured(&dir, &art, &shared, &until, &feed_changes, &executor)
             },
             &tasks,
         ));
@@ -90,16 +87,13 @@ impl LauncherAccount {
         let descendants = tasks.clone();
         thread::spawn(crate::worker::tracked(
             move || {
-                feeds::poll_home(
-                    &dir,
-                    &art,
+                let art = artwork::FeedArt::start(
+                    artwork::feed_images(&art),
                     wake,
-                    &shared,
-                    &until,
-                    &home_changes,
-                    &executor,
-                    &descendants,
-                )
+                    executor.clone(),
+                    descendants,
+                );
+                feeds::poll_home(&dir, &art, &shared, &until, &home_changes, &executor)
             },
             &tasks,
         ));

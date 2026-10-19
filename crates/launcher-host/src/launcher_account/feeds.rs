@@ -3,7 +3,7 @@
 use std::{collections::HashSet, path::Path, sync::Mutex};
 
 use bridge::{self, BridgeError, FeaturedServer, Friend, Home, Realm};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
 
 use super::artwork::{self, FeedArt};
 use super::{FEED_INTERVAL, FEED_RETRY, Snapshot, publish_account, settle};
@@ -59,23 +59,15 @@ impl FeedSource for CoreFeeds<'_> {
 /// Polls featured data independently so opening details never waits for Home or its reports.
 pub(super) fn poll_featured(
     socket_dir: &Path,
-    artwork_dir: &Path,
-    wake: Sender<()>,
+    art: &FeedArt,
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
     runtime: &tokio::runtime::Handle,
-    tasks: &tokio_util::task::TaskTracker,
 ) {
-    let art = FeedArt::start(
-        artwork::feed_images(artwork_dir),
-        wake,
-        runtime.clone(),
-        tasks.clone(),
-    );
     let feeds = CoreFeeds {
         socket_dir,
-        art: Some(&art),
+        art: Some(art),
     };
     loop {
         while changes.try_recv().is_ok() {}
@@ -93,24 +85,16 @@ pub(super) fn poll_featured(
 /// Polls Home and reports its impressions without blocking other screen feeds.
 pub(super) fn poll_home(
     socket_dir: &Path,
-    artwork_dir: &Path,
-    wake: Sender<()>,
+    art: &FeedArt,
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
     runtime: &tokio::runtime::Handle,
-    tasks: &tokio_util::task::TaskTracker,
 ) {
     let mut reported = HashSet::new();
-    let art = FeedArt::start(
-        artwork::feed_images(artwork_dir),
-        wake,
-        runtime.clone(),
-        tasks.clone(),
-    );
     let feeds = CoreFeeds {
         socket_dir,
-        art: Some(&art),
+        art: Some(art),
     };
     loop {
         while changes.try_recv().is_ok() {}

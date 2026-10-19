@@ -7,7 +7,7 @@ use std::future::Future;
 use tokio::{sync::watch, time::Instant as AsyncInstant};
 
 pub(super) enum Outcome {
-    Complete(Result<Loaded, Failure>, bool),
+    Complete(Result<Box<Loaded>, Failure>, bool),
     Retired,
     Stopped,
 }
@@ -71,7 +71,7 @@ pub(super) async fn run(
     }
     .await;
     match result {
-        Ok(profile) => Outcome::Complete(Ok(profile), queued_refresh),
+        Ok(profile) => Outcome::Complete(Ok(Box::new(profile)), queued_refresh),
         Err(Exit::Unavailable) => Outcome::Complete(Err(Failure::Unavailable), queued_refresh),
         Err(Exit::TimedOut) => Outcome::Complete(Err(Failure::TimedOut), queued_refresh),
         Err(Exit::Retired) => Outcome::Retired,
