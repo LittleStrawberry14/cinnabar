@@ -184,6 +184,8 @@ pub enum ArgsError {
         "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
+    #[error("native friend-world startup requires a verified friend selection")]
+    NativeFriendSelectionRequired,
     #[error("--native-networking must be addressed, raknet or nethernet-lan")]
     InvalidNativeTransport,
     #[error("--parallel-resource-pack-urls requires --native-networking")]
@@ -489,12 +491,17 @@ impl ClientArgs {
             if !self.socket_dir_explicit
                 && let Some(address) = &self.address
             {
-                return Ok(
-                    match crate::session::destination::native_target(address, transport, false) {
-                        Some(target) => protocol::SessionEndpoint::Native(target),
-                        None => protocol::SessionEndpoint::Core(directory),
-                    },
-                );
+                return match crate::session::destination::classify(address, transport, false) {
+                    crate::session::destination::Destination::Network(target) => {
+                        Ok(protocol::SessionEndpoint::Native(target))
+                    }
+                    crate::session::destination::Destination::FriendSelectionRequired => {
+                        Err(ArgsError::NativeFriendSelectionRequired)
+                    }
+                    crate::session::destination::Destination::LocalWorld => {
+                        Err(ArgsError::NativeNetworkingUnavailable)
+                    }
+                };
             }
             let _ = transport;
             return Err(ArgsError::NativeNetworkingUnavailable);

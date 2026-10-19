@@ -124,13 +124,16 @@ impl SessionController {
         }
     }
 
-    /// Local worlds and Go-owned service destinations retain their existing provisioning owner.
-    fn native_direct_enabled(&self, address: &str, local_world: bool) -> bool {
+    /// Keeps explicit native requests, including local refusals, out of Core provisioning.
+    fn native_provisioning_selected(&self, address: &str, local_world: bool) -> bool {
         #[cfg(feature = "native-networking")]
         {
-            self.native_transport
-                .and_then(|transport| destination::native_target(address, transport, local_world))
-                .is_some()
+            self.native_transport.is_some_and(|transport| {
+                !matches!(
+                    destination::classify(address, transport, local_world),
+                    destination::Destination::LocalWorld
+                )
+            })
         }
         #[cfg(not(feature = "native-networking"))]
         {
@@ -265,7 +268,7 @@ impl SessionController {
         self.kept_packs.keep_for_rejoin();
     }
 
-    /// Spawns a per-session core that dials `address` directly.
+    /// Provisions the selected native destination or starts its explicit Core owner.
     fn start_core(
         &mut self,
         menu: &MenuRuntime,
@@ -275,38 +278,45 @@ impl SessionController {
         generation: u64,
     ) -> Result<JoinStage, String> {
         #[cfg(feature = "native-networking")]
-        if let Some(mut target) = self
+        match self
             .native_transport
-            .and_then(|transport| destination::native_target(address, transport, self.local_world))
+            .map(|transport| destination::classify(address, transport, self.local_world))
         {
-            let service = launcher_host::native_account::is_realm_target(address)
-                || protocol::NativeRawTarget::recognizes(address)
-                || matches!(
-                    launcher_host::launcher_core::target_for(address),
-                    bridge::ConnectTarget::Gathering(_)
-                );
-            if service && auth_cache.is_none() {
-                return Err("Joining this service requires a verified native account.".into());
+            Some(destination::Destination::FriendSelectionRequired) => {
+                return Err(crate::args::ArgsError::NativeFriendSelectionRequired.to_string());
             }
-            if auth_cache.is_some()
-                && !matches!(
-                    target.transport,
-                    protocol::NativeTransport::RakNet
-                        | protocol::NativeTransport::Addressed
-                        | protocol::NativeTransport::NetherNetLan
-                )
-            {
-                return Err(
-                    "The selected native transport does not support account preparation.".into(),
-                );
+            Some(destination::Destination::LocalWorld) | None => {}
+            Some(destination::Destination::Network(mut target)) => {
+                let service = launcher_host::native_account::is_realm_target(address)
+                    || protocol::NativeRawTarget::recognizes(address)
+                    || matches!(
+                        launcher_host::launcher_core::target_for(address),
+                        bridge::ConnectTarget::Gathering(_)
+                    );
+                if service && auth_cache.is_none() {
+                    return Err("Joining this service requires a verified native account.".into());
+                }
+                if auth_cache.is_some()
+                    && !matches!(
+                        target.transport,
+                        protocol::NativeTransport::RakNet
+                            | protocol::NativeTransport::Addressed
+                            | protocol::NativeTransport::NetherNetLan
+                    )
+                {
+                    return Err(
+                        "The selected native transport does not support account preparation."
+                            .into(),
+                    );
+                }
+                if target.transport == protocol::NativeTransport::Addressed {
+                    let (selected, trust) = native_trust::bind(target, menu.layout())
+                        .map_err(|_| "Could not prepare native server trust.".to_owned())?;
+                    target = selected;
+                    self.trust = Some(Box::new(trust));
+                }
+                return Ok(JoinStage::Native(target));
             }
-            if target.transport == protocol::NativeTransport::Addressed {
-                let (selected, trust) = native_trust::bind(target, menu.layout())
-                    .map_err(|_| "Could not prepare native server trust.".to_owned())?;
-                target = selected;
-                self.trust = Some(Box::new(trust));
-            }
-            return Ok(JoinStage::Native(target));
         }
         // Namespaced by process id like the `--address` path: a bare
         // generation counter restarts at the same value every launch, so a
@@ -497,7 +507,7 @@ fn attempt_connect(
         .filter(|_| {
             !session
                 .controller
-                .native_direct_enabled(&address, local_world)
+                .native_provisioning_selected(&address, local_world)
         })
         .and_then(|slot| {
             slot.begin_join(
@@ -784,19 +794,19 @@ fn end_transfer_without_follow(
 mod tests {
     use super::*;
 
-    /// Native Gatherings retain their opaque selection while friend prefixes keep Core provisioning.
+    /// Native service provisioning and unverified friend refusals cannot select Core.
     #[cfg(feature = "native-networking")]
     #[test]
     fn native_routing_preserves_gathering_and_friend_provisioning_owners() {
         let controller = SessionController::default()
             .with_native_transport(Some(protocol::NativeTransport::RakNet));
-        assert!(controller.native_direct_enabled("play.example.net", false));
-        assert!(controller.native_direct_enabled(
+        assert!(controller.native_provisioning_selected("play.example.net", false));
+        assert!(controller.native_provisioning_selected(
             &format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
             false
         ));
-        assert!(!controller.native_direct_enabled("play.example.net", true));
-        assert!(!controller.native_direct_enabled(
+        assert!(!controller.native_provisioning_selected("play.example.net", true));
+        assert!(controller.native_provisioning_selected(
             &format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
             false
         ));
@@ -810,7 +820,7 @@ mod tests {
             bridge::ConnectTarget::Gathering(_)
         ));
         assert!(
-            controller.native_direct_enabled(&gathering, false),
+            controller.native_provisioning_selected(&gathering, false),
             "gathering destinations must reach their native account allocation owner"
         );
     }
@@ -874,6 +884,15 @@ mod tests {
             panic!("Realm keeps native account resolution");
         };
         assert_eq!(target.address, realm, "Realm locator is not a DNS endpoint");
+
+        let friend = format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX);
+        assert!(matches!(
+            controller.start_core(&menu, &cache, &friend, None, 1),
+            Err(message)
+                if message == crate::args::ArgsError::NativeFriendSelectionRequired.to_string()
+        ));
+        assert!(controller.directory.is_none());
+        assert!(controller.core.id().is_none());
     }
 
     #[test]
