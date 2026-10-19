@@ -832,7 +832,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=3948f878ac2c22570c9f6347c37a55f91b285330#3948f878ac2c22570c9f6347c37a55f91b285330"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=940c915aaac38ed4b992c11b583f484c84ab8597#940c915aaac38ed4b992c11b583f484c84ab8597"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -850,7 +850,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=3948f878ac2c22570c9f6347c37a55f91b285330#3948f878ac2c22570c9f6347c37a55f91b285330"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=940c915aaac38ed4b992c11b583f484c84ab8597#940c915aaac38ed4b992c11b583f484c84ab8597"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -878,7 +878,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=3948f878ac2c22570c9f6347c37a55f91b285330#3948f878ac2c22570c9f6347c37a55f91b285330"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=940c915aaac38ed4b992c11b583f484c84ab8597#940c915aaac38ed4b992c11b583f484c84ab8597"
 dependencies = [
  "serde",
  "serde_json",
@@ -920,7 +920,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=b8a8dd30c75d6676bb3c65193cd6a7223b908ea5#b8a8dd30c75d6676bb3c65193cd6a7223b908ea5"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=d77161f58b19c8f42df692f277cfa2f478af226f#d77161f58b19c8f42df692f277cfa2f478af226f"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -5849,6 +5849,7 @@ dependencies = [
  "crash-report",
  "crossbeam-channel",
  "ctrlc",
+ "futures",
  "futures-lite",
  "getrandom 0.3.4",
  "image",
@@ -5860,6 +5861,7 @@ dependencies = [
  "nethernet-tokio",
  "p384",
  "protocol",
+ "raknet",
  "rand",
  "reqwest 0.12.28",
  "resource-pack",
