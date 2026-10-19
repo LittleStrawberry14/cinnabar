@@ -18,7 +18,6 @@ enum Case {
     LargeOffer,
     LargeLive,
     Stack,
-    Live,
     MalformedHeader,
     MalformedSettings,
 }
@@ -28,6 +27,7 @@ enum Stage {
     Settings,
     Offer,
     Stack,
+    Live,
 }
 
 impl Case {
