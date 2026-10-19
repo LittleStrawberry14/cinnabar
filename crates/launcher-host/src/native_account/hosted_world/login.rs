@@ -92,7 +92,7 @@ impl LoginVerifier for NativeHostedLoginPolicy {
 /// Current hosted membership approval for one verified Login proof and original nonce.
 /// No Debug, Clone or serialization exposes its world/account/member identity.
 pub struct HostedLoginApproval {
-    approval: HostedApproval,
+    pub(super) approval: HostedApproval,
     public_key: VerifyingKey,
     deadline: Instant,
 }
