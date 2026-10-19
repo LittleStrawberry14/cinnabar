@@ -1,0 +1,724 @@
+//! Original fixture packs through planning and, with a GPU, through a whole frame.
+
+use super::loader::{build, class_sampler, runnable_programs, translate_config};
+use super::passes::{FrameIo, ViewState, record_frame};
+use super::pipelines::GpuContext;
+use super::plan::plan_frame;
+use super::plugin::JAVA_DIMENSIONS;
+use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
+use bevy::math::{Quat, Vec3};
+use render_scene::shaderpack::ShaderPackFrameInputs;
+use shaderpack::{PackSource, ProgramGroup, SamplerClass, ShaderPack};
+use std::sync::Arc;
+
+const PASS_VERTEX: &str = "#version 120
+varying vec2 texcoord;
+void main() {
+    gl_Position = ftransform();
+    texcoord = gl_MultiTexCoord0.xy;
+}
+";
+
+/// Inverts `colortex0` through texture coordinates.
+const INVERT: &str = "#version 120
+uniform sampler2D colortex0;
+varying vec2 texcoord;
+void main() {
+    gl_FragData[0] = vec4(1.0 - texture2D(colortex0, texcoord).rgb, 1.0);
+}
+";
+
+/// Copies `colortex0` to the screen through window coordinates.
+const FINAL: &str = "#version 120
+uniform sampler2D colortex0;
+uniform float viewWidth;
+uniform float viewHeight;
+void main() {
+    gl_FragColor = texture2D(colortex0, gl_FragCoord.xy / vec2(viewWidth, viewHeight));
+}
+";
+
+/// Writes `colortex3` and leaves `colortex0` alone.
+const FILL: &str = "#version 120
+void main() {
+/* DRAWBUFFERS:3 */
+    gl_FragData[0] = vec4(0.25);
+}
+";
+
+fn pack(files: &[(&str, &str)]) -> ShaderPack {
+    ShaderPack::new(PackSource::from_files(files.iter().copied()))
+}
+
+#[test]
+fn enabled_full_screen_programs_run_in_frame_order() {
+    let pack = pack(&[
+        (
+            "shaders.properties",
+            "program.composite1.enabled = WANT_BLUR\nflip.composite2.colortex3 = false\n",
+        ),
+        ("composite.vsh", PASS_VERTEX),
+        ("composite.fsh", INVERT),
+        ("composite1.vsh", PASS_VERTEX),
+        ("composite1.fsh", INVERT),
+        ("composite2.vsh", PASS_VERTEX),
+        ("composite2.fsh", FILL),
+        ("deferred.vsh", PASS_VERTEX),
+        ("deferred.fsh", INVERT),
+        ("final.vsh", PASS_VERTEX),
+        ("final.fsh", FINAL),
+        ("gbuffers_terrain.vsh", PASS_VERTEX),
+        ("gbuffers_terrain.fsh", FILL),
+    ]);
+    let translation = pack.translate(&translate_config(&pack, JAVA_DIMENSIONS[0]));
+    let (runnable, plans) = runnable_programs(&translation).expect("fixture programs translate");
+    let names: Vec<&str> = runnable.iter().map(|p| p.program.name.as_str()).collect();
+    assert_eq!(names, ["deferred", "composite", "composite2", "final"]);
+    let frame = plan_frame(&plans, &translation.properties.flips);
+    let writes: Vec<_> = frame.post.iter().map(|s| s.writes.clone()).collect();
+    assert_eq!(
+        writes,
+        [
+            vec![Some((0, true))],
+            vec![Some((0, false))],
+            vec![Some((3, true))],
+            vec![None],
+        ]
+    );
+    assert!(
+        frame.swap_back.is_empty(),
+        "composite2's flip is suppressed"
+    );
+    assert_eq!(plans[3].group, ProgramGroup::Final);
+}
+
+#[test]
+fn a_failed_required_program_fails_the_load() {
+    let pack = pack(&[
+        ("composite.vsh", PASS_VERTEX),
+        (
+            "composite.fsh",
+            "#version 120\nvoid main() { gl_FragData[0] = undefined_name; }\n",
+        ),
+    ]);
+    let translation = pack.translate(&translate_config(&pack, JAVA_DIMENSIONS[0]));
+    let error = runnable_programs(&translation).expect_err("composite fails");
+    assert!(error.contains("composite"), "{error}");
+}
+
+fn gpu() -> Option<GpuContext> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = bevy::tasks::block_on(instance.request_adapter(&Default::default())).ok()?;
+    let (device, queue) = bevy::tasks::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("shader pack frame fixture"),
+        required_features: adapter.features(),
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))
+    .ok()?;
+    Some(GpuContext {
+        device,
+        queue,
+        adapter,
+    })
+}
+
+/// Side of the fixture frame.
+const SIZE: [u32; 2] = [4, 4];
+
+/// Runs `files` over a scene whose top half is red and bottom half mid grey; returns the
+/// output rows top-down, 256 bytes apart.
+fn render(gpu: &GpuContext, files: &[(&str, &str)]) -> Vec<u8> {
+    render_frames(gpu, files, 1).1
+}
+
+/// [`render`] over `frames` frames of one view; also returns the loaded pack.
+fn render_frames(
+    gpu: &GpuContext,
+    files: &[(&str, &str)],
+    frames: usize,
+) -> (Arc<super::loader::PackGpu>, Vec<u8>) {
+    let pack = pack(files);
+    let pack = Arc::new(
+        build(
+            &pack,
+            "fixture",
+            JAVA_DIMENSIONS[0],
+            None,
+            gpu,
+            &Default::default(),
+        )
+        .expect("fixture loads"),
+    );
+    let size = SIZE;
+    let extent = wgpu::Extent3d {
+        width: size[0],
+        height: size[1],
+        depth_or_array_layers: 1,
+    };
+    let texture = |format, usage| {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let format = render_scene::SCENE_COLOR_FORMAT;
+    let scene = texture(
+        format,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
+    // Top half red, bottom half mid grey, rows top-down as wgpu stores them.
+    let pixels: Vec<u8> = (0..size[1])
+        .flat_map(|row| {
+            let colour = if row < 2 {
+                [255, 0, 0, 255]
+            } else {
+                [128, 128, 128, 255]
+            };
+            std::iter::repeat_n(colour, size[0] as usize).flatten()
+        })
+        .collect();
+    gpu.queue.write_texture(
+        scene.as_image_copy(),
+        &pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * size[0]),
+            rows_per_image: None,
+        },
+        extent,
+    );
+    let depth = texture(
+        wgpu::TextureFormat::Depth32Float,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+    );
+    let output = texture(
+        format,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let mut state = ViewState::new(&gpu.device, Arc::clone(&pack), size);
+    let game = ShaderPackFrameInputs::default();
+    let frame = FrameUniforms::new(
+        ViewCamera {
+            position: Vec3::new(0.0, 64.0, 0.0),
+            rotation: Quat::IDENTITY,
+            focal: [1.0, 1.0],
+            screen: size,
+        },
+        &game,
+        &pack.settings,
+        FrameClock {
+            delta_seconds: 0.016,
+        },
+        &mut state.history,
+    );
+    state.write_uniforms(&gpu.queue, &frame, 0.016);
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    let clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth.create_view(&Default::default()),
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.0),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    drop(clear);
+    let io = FrameIo {
+        scene_colour: &scene.create_view(&Default::default()),
+        scene_depth: &depth.create_view(&Default::default()),
+        scene_near: 0.1,
+        render_distance: game.render_distance,
+        fog_color: super::uniforms::sky_fog(&game, Quat::IDENTITY, Vec3::new(0.0, 64.0, 0.0)).fog,
+        destination: &output.create_view(&Default::default()),
+        destination_format: format,
+        timestamps: None,
+    };
+    for _ in 0..frames {
+        record_frame(&gpu.device, &gpu.queue, &mut encoder, &mut state, &io);
+    }
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 256 * u64::from(size[1]),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        output.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: None,
+            },
+        },
+        extent,
+    );
+    gpu.queue.submit([encoder.finish()]);
+    if let Some(error) = bevy::tasks::block_on(scope.pop()) {
+        panic!("validation error: {error}");
+    }
+    readback
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| result.unwrap());
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let bytes = readback.slice(..).get_mapped_range().unwrap().to_vec();
+    (pack, bytes)
+}
+
+fn assert_pixels(bytes: &[u8], expected: impl Fn(usize) -> [u8; 3]) {
+    for row in 0..SIZE[1] as usize {
+        for column in 0..SIZE[0] as usize {
+            let at = row * 256 + column * 4;
+            let pixel = &bytes[at..at + 4];
+            let expected = expected(row);
+            for c in 0..3 {
+                assert!(
+                    pixel[c].abs_diff(expected[c]) <= 1,
+                    "row {row} column {column}: {pixel:?} vs {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn composite_and_final_transform_the_scene_and_present_it_upright() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", INVERT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
+/// Adds a quarter to `colortex5`, which keeps its contents across frames.
+const ACCUMULATE: &str = "#version 120
+/* DRAWBUFFERS:5 */
+const bool colortex5Clear = false;
+uniform sampler2D colortex5;
+varying vec2 texcoord;
+void main() {
+    gl_FragData[0] = texture2D(colortex5, texcoord) + vec4(0.25);
+}
+";
+
+/// Presents `colortex5`.
+const SHOW_5: &str = "#version 120
+uniform sampler2D colortex5;
+varying vec2 texcoord;
+void main() {
+    gl_FragColor = texture2D(colortex5, texcoord);
+}
+";
+
+#[test]
+fn a_buffer_kept_across_frames_exchanges_its_sides_instead_of_copying_back() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let (pack, bytes) = render_frames(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", ACCUMULATE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", SHOW_5),
+        ],
+        3,
+    );
+    assert_eq!(pack.frame.exchange, [5]);
+    assert!(pack.frame.swap_back.is_empty());
+    assert_pixels(&bytes, |_| [191, 191, 191]);
+}
+
+/// Reads `colortex0` exactly on its top edge, where a repeating sampler would blend in the
+/// bottom row.
+const TOP_EDGE: &str = "#version 120
+uniform sampler2D colortex0;
+void main() {
+    gl_FragData[0] = texture2D(colortex0, vec2(0.5, 1.0));
+}
+";
+
+#[test]
+fn render_targets_clamp_at_their_edges() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", TOP_EDGE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 0, 0]);
+}
+
+/// Multiplies a 32-bit float `colortex0` by `depthtex0` (1.0 at the cleared far plane).
+const FLOAT_AND_DEPTH: &str = "#version 120
+/*
+const int colortex0Format = RGBA32F;
+*/
+uniform sampler2D colortex0;
+uniform sampler2D depthtex0;
+varying vec2 texcoord;
+void main() {
+    gl_FragData[0] = vec4(texture2D(colortex0, texcoord).rgb * texture2D(depthtex0, texcoord).r, 1.0);
+}
+";
+
+#[test]
+fn float32_targets_and_depth_bind_with_their_samplers() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", FLOAT_AND_DEPTH),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [255, 0, 0]
+        } else {
+            [128, 128, 128]
+        }
+    });
+}
+
+/// Reads `colortex0` through a 3D sampler, where the pack's 3D custom texture binds.
+const VOLUME: &str = "#version 120
+uniform sampler3D colortex0;
+void main() {
+/* DRAWBUFFERS:3 */
+    gl_FragData[0] = texture3D(colortex0, vec3(0.5));
+}
+";
+
+#[test]
+fn a_3d_custom_texture_leaves_2d_reads_of_its_name_on_the_buffer() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    // As Photon does: `colortex0` names both the scene buffer (sampler2D) and a 3D noise
+    // volume (sampler3D) in composite programs.
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "texture.composite.colortex0 = volume.dat TEXTURE_3D R8 2 2 2 RED UNSIGNED_BYTE\n",
+            ),
+            ("volume.dat", "ABCDEFGH"),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", VOLUME),
+            ("composite1.vsh", PASS_VERTEX),
+            ("composite1.fsh", INVERT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
+/// Inverts `colortex0` in place: samples it and writes `colorimg0`, the same texture.
+const INVERT_IN_PLACE: &str = "#version 430
+layout(local_size_x = 4, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+uniform sampler2D colortex0;
+layout(rgba8) uniform image2D colorimg0;
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    imageStore(colorimg0, p, vec4(1.0 - texelFetch(colortex0, p, 0).rgb, 1.0));
+}
+";
+
+#[test]
+fn a_buffer_sampled_and_written_as_an_image_reads_a_snapshot() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            ("composite.csh", INVERT_IN_PLACE),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |row| {
+        if row < 2 {
+            [0, 255, 255]
+        } else {
+            [127, 127, 127]
+        }
+    });
+}
+
+/// Solas's floodfill: each frame samples one custom image and writes the other, binding
+/// both images and both samplers either way. Here frame 0 inverts `pongSampler` (cleared
+/// to zero) into `ping`.
+const PING_PONG: &str = "#version 430
+layout(local_size_x = 1, local_size_y = 1) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+uniform int frameCounter;
+writeonly uniform image2D ping, pong;
+uniform sampler2D pingSampler, pongSampler;
+void main() {
+    if ((frameCounter & 1) == 0) {
+        imageStore(ping, ivec2(0), vec4(1.0 - texelFetch(pongSampler, ivec2(0), 0).rgb, 1.0));
+    } else {
+        imageStore(pong, ivec2(0), vec4(1.0 - texelFetch(pingSampler, ivec2(0), 0).rgb, 1.0));
+    }
+}
+";
+
+/// Writes `ping`'s texel to every pixel.
+const SHOW_PING: &str = "#version 430
+uniform sampler2D pingSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    gl_FragData[0] = vec4(texelFetch(pingSampler, ivec2(0), 0).rgb, 1.0);
+}
+";
+
+#[test]
+fn images_sampled_and_written_in_one_dispatch_read_snapshots() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.ping = pingSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n\
+                 image.pong = pongSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n",
+            ),
+            ("composite.csh", PING_PONG),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", SHOW_PING),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 255, 255]);
+}
+
+/// Counts its 16 invocations into an `r32ui` custom image with an image atomic.
+const COUNT_ATOMICALLY: &str = "#version 430
+layout(local_size_x = 4, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+layout(r32ui) uniform uimage2D counter;
+void main() {
+    imageAtomicAdd(counter, ivec2(0), 1u);
+}
+";
+
+/// Writes the counter's first texel, over 255, to red.
+const SHOW_COUNT: &str = "#version 430
+uniform usampler2D counterSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    uint count = texelFetch(counterSampler, ivec2(0), 0).r;
+    gl_FragData[0] = vec4(float(count) / 255.0, 0.0, 0.0, 1.0);
+}
+";
+
+#[test]
+fn image_atomics_count_into_a_custom_image() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    if !gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TEXTURE_ATOMIC)
+    {
+        eprintln!("missing fixture: a GPU with TEXTURE_ATOMIC for image atomics");
+        return;
+    }
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.counter = counterSampler RED_INTEGER R32UI UNSIGNED_INT true false 1 1\n",
+            ),
+            ("composite.csh", COUNT_ATOMICALLY),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", SHOW_COUNT),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [16, 0, 0]);
+}
+
+/// A pack's switched-off pass, as Noble's `deferred` is without a LOD mod: no output, and a
+/// target nothing else writes.
+const SWITCHED_OFF: &str = "#version 430
+/* RENDERTARGETS: 10 */
+void main() {}
+";
+
+/// Writes no colour buffer, only magenta into a custom image.
+const STORE_ONLY: &str = "#version 430
+writeonly uniform image2D marker;
+void main() {
+    imageStore(marker, ivec2(0), vec4(1.0, 0.0, 1.0, 1.0));
+}
+";
+
+/// Writes the marker's texel to every pixel.
+const SHOW_MARKER: &str = "#version 430
+uniform sampler2D markerSampler;
+void main() {
+/* DRAWBUFFERS:0 */
+    gl_FragData[0] = vec4(texelFetch(markerSampler, ivec2(0), 0).rgb, 1.0);
+}
+";
+
+#[test]
+fn programs_without_colour_outputs_load_and_keep_their_stores() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(
+        &gpu,
+        &[
+            (
+                "shaders.properties",
+                "image.marker = markerSampler RGBA RGBA8 UNSIGNED_BYTE true false 1 1\n",
+            ),
+            ("deferred.vsh", PASS_VERTEX),
+            ("deferred.fsh", SWITCHED_OFF),
+            ("composite.vsh", PASS_VERTEX),
+            ("composite.fsh", STORE_ONLY),
+            ("composite1.vsh", PASS_VERTEX),
+            ("composite1.fsh", SHOW_MARKER),
+            ("final.vsh", PASS_VERTEX),
+            ("final.fsh", FINAL),
+        ],
+    );
+    assert_pixels(&bytes, |_| [255, 0, 255]);
+}
+
+/// BSL's hash argument `dot(p, vec2(12.9898, 4.1414))` at large `p`, scaled so the red
+/// channel resolves the last bits of the dot product.
+const HASH_DOT: &str = "#version 120
+void main() {
+    float d = dot(floor(gl_FragCoord.xy) + 3000.0, vec2(12.9898, 4.1414));
+    gl_FragColor = vec4(fract(d * 64.0), 0.0, 0.0, 1.0);
+}
+";
+
+#[test]
+fn dot_rounds_like_the_reference_opengl_driver() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    let bytes = render(&gpu, &[("final.vsh", PASS_VERTEX), ("final.fsh", HASH_DOT)]);
+    let red = |d: f32| ((f64::from(d) * 64.0).fract() * 255.0).round() as f32;
+    let mut discriminating = 0;
+    for row in 0..SIZE[1] as usize {
+        for column in 0..SIZE[0] as usize {
+            // Rows come back top-down; gl_FragCoord.y counts from the bottom.
+            let x = column as f32 + 3000.0;
+            let y = (SIZE[1] as usize - 1 - row) as f32 + 3000.0;
+            let reference = y.mul_add(4.1414, x * 12.9898);
+            let other = x.mul_add(12.9898, y * 4.1414);
+            if (red(reference) - red(other)).abs() > 2.0 {
+                discriminating += 1;
+            }
+            let got = f32::from(bytes[row * 256 + column * 4]);
+            assert!(
+                (got - red(reference)).abs() <= 1.0,
+                "row {row} column {column}: red {got}, reference {}, other order {} ({:?})",
+                red(reference),
+                red(other),
+                gpu.adapter.get_info().backend
+            );
+        }
+    }
+    assert!(discriminating > 0, "no pixel tells the two roundings apart");
+}
+
+#[test]
+fn sampler_classes_map_to_wrap_and_filter_modes() {
+    for (index, class) in SamplerClass::ALL.into_iter().enumerate() {
+        assert_eq!(
+            class as usize, index,
+            "PackGpu::filtering is indexed by class"
+        );
+        let d = class_sampler(class);
+        let wrap = if class.clamps() {
+            wgpu::AddressMode::ClampToEdge
+        } else {
+            wgpu::AddressMode::Repeat
+        };
+        assert_eq!(
+            [d.address_mode_u, d.address_mode_v, d.address_mode_w],
+            [wrap; 3]
+        );
+        let filter = if class.linear() {
+            wgpu::FilterMode::Linear
+        } else {
+            wgpu::FilterMode::Nearest
+        };
+        assert_eq!([d.mag_filter, d.min_filter], [filter; 2]);
+    }
+}
