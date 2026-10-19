@@ -30,6 +30,34 @@ enum Input {
 }
 
 impl Peer {
+    /// Refuses the real Login before StartGame, then drives the original peer through retirement.
+    pub(super) async fn refuse_login(mut self) {
+        let codec = BatchCodec::new(BatchHeader::RakNet, BatchLimits::default());
+        assert!(matches!(
+            self.packet(&codec).await,
+            Packet::RequestNetworkSettings(_)
+        ));
+        self.send(
+            &codec,
+            &[Packet::NetworkSettings(packets::NetworkSettings {
+                compression_threshold: wire::U16LE(u16::MAX),
+                ..Default::default()
+            })],
+        )
+        .await;
+        let codec = codec.negotiate(CompressionSettings {
+            algorithm: CompressionAlgorithm::Deflate,
+            threshold: u16::MAX,
+        });
+        assert!(matches!(self.packet(&codec).await, Packet::Login(_)));
+        self.send(&codec, &[Packet::Disconnect(Default::default())])
+            .await;
+        assert!(
+            matches!(self.next().await, Input::Closed),
+            "refused Login produced another application message"
+        );
+    }
+
     /// Creates only an actual loopback socket and the public unconnected endpoint.
     pub(super) async fn new() -> Self {
         let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

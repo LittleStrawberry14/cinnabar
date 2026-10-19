@@ -4,12 +4,12 @@ mod origin;
 mod upgrade;
 
 use super::{
-    control,
+    control, play,
     registry::{ConnectionPermit, Registry, RegistryDriver},
     session::closed,
     socket::Socket,
 };
-use bridge::contract::{RELAY_CONTROL_BYTES, RELAY_HELLO_SECONDS};
+use bridge::contract::RELAY_HELLO_SECONDS;
 use futures::{Stream, StreamExt, stream::FuturesUnordered};
 use std::{
     future::Future,
@@ -33,7 +33,7 @@ use tokio_rustls::{
 
 type Work = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
 
-/// Private until the remaining play-input, allocation and duplex gates are qualified.
+/// Caller-owned native listener edge; defaults and process configuration remain with its application.
 pub(super) struct Backend {
     registry: Arc<Registry>,
     tls: TlsAcceptor,
@@ -180,20 +180,19 @@ async fn serve(
     let upgrading = async {
         let stream = tls.accept(stream).await.map_err(failed)?;
         current(deadline)?;
-        upgrade::control(stream, &origins, deadline).await
+        upgrade::accept(stream, &origins, deadline).await
     };
     current(deadline)?;
-    let socket = tokio::select! { biased;
+    let (channel, socket) = tokio::select! { biased;
         () = registry.cancelled.cancelled() => return Err(closed()),
         result = tokio::time::timeout_at(deadline.into(), upgrading) => result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway upgrade timed out"))??,
     };
     current(deadline)?;
-    control::run(
-        &registry,
-        peer,
-        Socket::new(socket, RELAY_CONTROL_BYTES + size_of::<u32>()),
-    )
-    .await
+    let socket = Socket::new(socket, channel.message_limit());
+    match channel {
+        upgrade::Channel::Control => control::run(&registry, peer, socket).await,
+        upgrade::Channel::Play => play::run(&registry, socket).await,
+    }
 }
 
 /// Never returns certificate, HTTP input or peer details to an application stream.

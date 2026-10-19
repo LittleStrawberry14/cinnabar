@@ -202,7 +202,7 @@ async fn output(
 }
 
 /// Keeps the same bounded frame admission/flush future and original absolute join budget.
-async fn write(
+pub(super) async fn write(
     lease: &PlayLease,
     frames: &FrameQueue,
     frame: Bytes,
