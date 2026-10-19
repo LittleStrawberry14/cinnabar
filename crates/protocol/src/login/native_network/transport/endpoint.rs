@@ -35,10 +35,13 @@ async fn connect_resolved(
             candidates.push(async move {
                 match transport {
                     NativeTransport::RakNet => {
-                        let mut options = RakNetOptions::default();
-                        options.connect_timeout = options
-                            .connect_timeout
-                            .min(deadline.saturating_duration_since(Instant::now()));
+                        let defaults = RakNetOptions::default();
+                        let options = RakNetOptions {
+                            connect_timeout: defaults
+                                .connect_timeout
+                                .min(deadline.saturating_duration_since(Instant::now())),
+                            ..defaults
+                        };
                         RakNetConnection::connect(address, options)
                             .await
                             .map(RakNetTransport::new)
