@@ -7,7 +7,7 @@ import subprocess
 def declarations(root):
     """Keep process message identities, records and bounded flow in one source."""
     source = json.loads((root / "crates/bridge/data/host-world.json").read_text(encoding="utf-8"))
-    shared = json.loads((root / "crates/bridge/data/contract.json").read_text())
+    shared = json.loads((root / "crates/bridge/data/contract.json").read_text(encoding="utf-8"))
     control = next(row["value"] for row in shared["constants"]
                    if row["rust_name"] == "CONTROL_MAX_FRAME_LEN")
     constants = {"VERSION": source["version"], "MAX_CONTROL_BYTES": control,
