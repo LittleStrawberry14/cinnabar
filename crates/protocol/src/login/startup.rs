@@ -57,7 +57,7 @@ impl DeferredPackets {
 }
 
 /// Runs the spawn sequence: requests the radius once StartGame has arrived, then returns once the
-/// first item registry, the radius reply and PlayerSpawn have all arrived, leaving every deferred
+/// first item registry and PlayerSpawn have arrived, leaving every deferred
 /// packet ahead of unread ones. `on_startup` receives the first StartGame and item registry as soon
 /// as both have arrived, while the sequence keeps reading. Dropping the future cancels it.
 pub(super) async fn await_spawn<R: bridge::FrameRead>(
