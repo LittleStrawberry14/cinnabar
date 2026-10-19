@@ -63,7 +63,7 @@ zeroize = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-rsa.workspace = true
+rsa = { workspace = true, features = ["encoding"] }
 bedrock-services = { workspace = true, features = ["test-support"] }
 nethernet.workspace = true
 protocol = { path = "../protocol", features = ["test-support"] }
