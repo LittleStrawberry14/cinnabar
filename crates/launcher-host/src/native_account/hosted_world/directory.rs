@@ -271,6 +271,7 @@ impl HostDirectory {
                                 binding,
                                 member: mpsd::MemberData::default(),
                                 constants: None,
+                                max_members: None,
                                 properties: Some(properties),
                                 join: mpsd::Restriction::Local,
                                 read: mpsd::Restriction::Followed,
