@@ -22,6 +22,7 @@ pub(crate) struct AddressedRoute {
     address: String,
     pub(crate) host: String,
     pub(crate) port: Option<u16>,
+    pub(crate) ipv6: bool,
     pub(crate) trust: Arc<dyn NativeServerTrust>,
 }
 
@@ -45,25 +46,15 @@ impl NativeConnectionTarget {
         {
             return Err(invalid());
         }
-        let raw_ipv6 = address.parse::<std::net::Ipv6Addr>().is_ok();
-        let authority = if raw_ipv6 {
-            format!("[{address}]")
+        let (host, explicit, ipv6) = if let Some((host, port)) = ipv6_authority(&address)? {
+            (host.to_owned(), port, true)
         } else {
-            address.clone()
-        };
-        let url = url::Url::parse(&format!("http://{authority}")).map_err(|_| invalid())?;
-        let host = match url.host().ok_or_else(invalid)? {
-            url::Host::Ipv6(host) => host.to_string(),
-            host => host.to_string(),
-        };
-        let explicit = if raw_ipv6 {
-            None
-        } else if address.starts_with('[') {
-            address
-                .split_once(']')
-                .and_then(|(_, suffix)| suffix.strip_prefix(':'))
-        } else {
-            address.rsplit_once(':').map(|(_, port)| port)
+            let url = url::Url::parse(&format!("http://{address}")).map_err(|_| invalid())?;
+            (
+                url.host().ok_or_else(invalid)?.to_string(),
+                address.rsplit_once(':').map(|(_, port)| port),
+                false,
+            )
         };
         let port = explicit
             .map(str::parse::<u16>)
@@ -78,6 +69,7 @@ impl NativeConnectionTarget {
                 address,
                 host,
                 port,
+                ipv6,
                 trust,
             }),
         })
@@ -101,12 +93,39 @@ impl AddressedRoute {
     /// Builds the original explicit RakNet fallback without resolving or changing the route.
     pub(crate) fn raknet_target(&self) -> NativeConnectionTarget {
         let port = self.port.unwrap_or(bridge::contract::DEFAULT_BEDROCK_PORT);
-        let address = match self.host.parse::<std::net::Ipv6Addr>() {
-            Ok(host) => format!("[{host}]:{port}"),
-            Err(_) => format!("{}:{port}", self.host),
+        let address = if self.ipv6 {
+            format!("[{}]:{port}", self.host)
+        } else {
+            format!("{}:{port}", self.host)
         };
         NativeConnectionTarget::new(address, NativeTransport::RakNet)
     }
+}
+
+/// Retains a numeric IPv6 host's optional interface zone independently of HTTP URL syntax.
+fn ipv6_authority(address: &str) -> io::Result<Option<(&str, Option<&str>)>> {
+    if let Some(bracketed) = address.strip_prefix('[') {
+        let (host, suffix) = bracketed.split_once(']').ok_or_else(invalid)?;
+        if !ipv6_host(host) {
+            return Err(invalid());
+        }
+        let port = if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.strip_prefix(':').ok_or_else(invalid)?)
+        };
+        return Ok(Some((host, port)));
+    }
+    Ok(ipv6_host(address).then_some((address, None)))
+}
+
+/// Validates the numeric address while leaving a nonempty zone for the existing socket resolver.
+fn ipv6_host(host: &str) -> bool {
+    let (address, valid_zone) = match host.rsplit_once('%') {
+        Some((address, zone)) => (address, !zone.is_empty() && !zone.contains(['[', ']'])),
+        None => (host, true),
+    };
+    valid_zone && address.parse::<std::net::Ipv6Addr>().is_ok()
 }
 
 /// Keeps endpoint and policy values out of diagnostics.

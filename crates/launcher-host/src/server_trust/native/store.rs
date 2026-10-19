@@ -93,6 +93,12 @@ fn load(path: &Path) -> Option<Document> {
         if bytes.len() > limit {
             return Err(io::Error::other("server trust file exceeds limit"));
         }
+        if bytes.trim_ascii() != b"null" && !bytes.trim_ascii_start().starts_with(b"{") {
+            return Err(io::Error::other(
+                "server trust document must be an object or null",
+            ));
+        }
+        // Serde remains the sole grammar owner, including complete null and trailing-data checks.
         serde_json::from_slice::<Option<Document>>(&bytes)
             .map(Option::unwrap_or_default)
             .map_err(io::Error::other)
