@@ -148,8 +148,19 @@ impl ShaderPack {
     /// Translates every program of the configured folder, in parallel. Failures are per
     /// program; buffer formats in each reflection come from the whole pack's directives.
     pub fn translate(&self, config: &TranslateConfig) -> PackTranslation {
+        self.translate_reporting(config, |_, _| {})
+    }
+
+    /// [`Self::translate`], calling `progress(translated, programs)` once before any program
+    /// translates and again, from the worker that finished it, after each program.
+    pub fn translate_reporting(
+        &self,
+        config: &TranslateConfig,
+        progress: impl Fn(usize, usize) + Sync,
+    ) -> PackTranslation {
         let properties = self.properties(&config.environment, &config.options);
         let programs = self.programs(&config.folder, &config.environment);
+        progress(0, programs.len());
         let queue = Mutex::new(programs.iter().enumerate());
         let results: Mutex<Vec<(usize, ProgramTranslation)>> =
             Mutex::new(Vec::with_capacity(programs.len()));
@@ -163,10 +174,9 @@ impl ShaderPack {
                         let next = queue.lock().unwrap_or_else(|e| e.into_inner()).next();
                         let Some((i, program)) = next else { break };
                         let t = self.translate_one(program, config, &properties);
-                        results
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .push((i, t));
+                        let mut done = results.lock().unwrap_or_else(|e| e.into_inner());
+                        done.push((i, t));
+                        progress(done.len(), programs.len());
                     }
                 });
             }

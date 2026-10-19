@@ -26,6 +26,7 @@ use super::resources::{
 };
 use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
+use render_scene::shaderpack::LoadProgress;
 use sha2::{Digest, Sha256};
 use shaderpack::{
     BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
@@ -388,24 +389,25 @@ fn planned(
 }
 
 /// Opens, translates and builds `path` for `dimension` (a Java dimension id); `vanilla`
-/// answers the pack's `minecraft:` texture references.
+/// answers the pack's `minecraft:` texture references. Translation reports into `progress`.
 pub(crate) fn load(
     path: &Path,
     dimension: &str,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let pack = ShaderPack::open(path).map_err(|e| e.to_string())?;
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    build(&pack, &name, dimension, cache_dir, gpu, vanilla)
+    build(&pack, &name, dimension, cache_dir, gpu, vanilla, progress)
 }
 
-/// The enabled programs this host runs, in frame order, with their plans; an error names
-/// every such program that failed to translate.
+/// The enabled programs this host runs, in frame order, with their plans; an error has one
+/// line per such program that failed to translate, naming it with its first diagnostic.
 pub(crate) fn runnable_programs(
     translation: &shaderpack::PackTranslation,
 ) -> Result<(Vec<&ProgramTranslation>, Vec<PlannedProgram>), String> {
@@ -421,14 +423,29 @@ pub(crate) fn runnable_programs(
                 plans.push(planned(program, reflection, &translation.properties));
                 runnable.push(program);
             }
-            None => failed.push(program.program.name.clone()),
+            None => failed.push(failure_line(program)),
         }
     }
     if failed.is_empty() {
         Ok((runnable, plans))
     } else {
-        Err(format!("required programs failed: {}", failed.join(", ")))
+        Err(failed.join("\n"))
     }
+}
+
+/// `program: first diagnostic` on one line; the log carries every diagnostic.
+fn failure_line(program: &ProgramTranslation) -> String {
+    let mut line = format!("{}:", program.program.name);
+    match program.all_diagnostics().next() {
+        Some(diagnostic) => {
+            for word in diagnostic.to_string().split_whitespace() {
+                line.push(' ');
+                line.push_str(word);
+            }
+        }
+        None => line.push_str(" failed to translate"),
+    }
+    line
 }
 
 /// Translates and builds an opened pack.
@@ -439,10 +456,13 @@ pub(crate) fn build(
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let config = translate_config(pack, dimension);
     let started = std::time::Instant::now();
-    let translation = pack.translate(&config);
+    let translation = pack.translate_reporting(&config, |translated, programs| {
+        progress.record(translated, programs);
+    });
     for diagnostic in &translation.properties.diagnostics {
         bevy::log::debug!(
             target: "cinnabar::shaderpack",

@@ -35,7 +35,8 @@ use bevy::{
 use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
     ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
-    ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackIdMaps, ShaderPackLoadProgress, ShaderPackRendering, ShaderPackRequest,
+    ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -87,6 +88,7 @@ fn drive_loader(
     inputs: Res<ShaderPackFrameInputs>,
     mut status: ResMut<ShaderPackStatus>,
     mut loaded: ResMut<LoadedShaderPack>,
+    mut progress: ResMut<ShaderPackLoadProgress>,
     mut loader: ResMut<Loader>,
     gpu: MainWorldGpu,
     atmosphere: Option<Res<render_scene::AtmosphereTextureAssets>>,
@@ -124,11 +126,13 @@ fn drive_loader(
             .map(VanillaTextures::from_atmosphere)
             .unwrap_or_default();
         let (send, receive) = mpsc::channel();
+        let progress = progress.start();
         let spawned = std::thread::Builder::new()
             .name("shader pack load".into())
             .spawn(move || {
                 let id = JAVA_DIMENSIONS[dimension as usize];
-                let _ = send.send(load(&path, id, cache_dir.as_deref(), &gpu, &vanilla));
+                let outcome = load(&path, id, cache_dir.as_deref(), &gpu, &vanilla, &progress);
+                let _ = send.send(outcome);
             });
         match spawned {
             Ok(_) => loader.job = Some(Mutex::new(receive)),
@@ -617,6 +621,7 @@ pub(super) fn build(app: &mut App) {
     actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
+        .init_resource::<ShaderPackLoadProgress>()
         .init_resource::<ShaderPackFrameInputs>()
         .init_resource::<ShaderPackIdMaps>()
         .init_resource::<ShaderPackActorIds>()

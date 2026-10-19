@@ -103,7 +103,12 @@ fn a_failed_required_program_fails_the_load() {
     ]);
     let translation = pack.translate(&translate_config(&pack, JAVA_DIMENSIONS[0]));
     let error = runnable_programs(&translation).expect_err("composite fails");
-    assert!(error.contains("composite"), "{error}");
+    let lines: Vec<&str> = error.lines().collect();
+    assert_eq!(lines.len(), 1, "one line per failed program: {error}");
+    assert!(
+        lines[0].starts_with("composite: composite.fsh:") && lines[0].contains("undefined_name"),
+        "names the program and its first diagnostic: {error}"
+    );
 }
 
 fn gpu() -> Option<GpuContext> {
@@ -146,6 +151,7 @@ fn render_frames(
             JAVA_DIMENSIONS[0],
             None,
             gpu,
+            &Default::default(),
             &Default::default(),
         )
         .expect("fixture loads"),
@@ -690,6 +696,7 @@ fn a_draw_pipeline_the_device_rejects_drops_only_that_draw() {
         JAVA_DIMENSIONS[0],
         None,
         &gpu,
+        &Default::default(),
         &Default::default(),
     )
     .expect("one rejected draw does not reject the pack");
