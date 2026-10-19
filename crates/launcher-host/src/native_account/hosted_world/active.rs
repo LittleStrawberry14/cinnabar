@@ -8,7 +8,7 @@ use std::{future::Future, io, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
 /// The existing peer driver borrows the host for its lifetime, so it admits one visitor.
-const VISITOR_LIMIT: usize = 1;
+pub(super) const VISITOR_LIMIT: usize = 1;
 
 /// An invitation command cannot be retargeted to a replacement host incarnation.
 #[derive(Clone)]

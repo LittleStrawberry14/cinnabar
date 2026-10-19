@@ -20,7 +20,14 @@ async fn public_activation_publishes_original_route_activity_and_invitation_then
     };
     tokio::time::timeout(ACQUISITION_TIMEOUT * 2, async {
         let namespace = tempfile::tempdir().unwrap();
-        let cap = NonZeroU32::new(world.manager.status().max_players.unwrap()).unwrap();
+        let visitor_cap = u32::try_from(crate::native_account::hosted_world::active::VISITOR_LIMIT)
+            .unwrap()
+            .checked_add(1)
+            .unwrap();
+        let cap = NonZeroU32::new(
+            world.manager.status().max_players.unwrap().min(visitor_cap),
+        )
+        .unwrap();
         let config = minecraft::Config::desktop(
             protocol::GAME_VERSION,
             u32::try_from(protocol::PROTOCOL_VERSION).unwrap(),
