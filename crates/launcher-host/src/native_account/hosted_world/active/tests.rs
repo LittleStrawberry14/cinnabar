@@ -31,7 +31,7 @@ async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world
     let Some(world) = World::open() else {
         return;
     };
-    tokio::time::timeout(ACQUISITION_TIMEOUT * 3, async {
+    tokio::time::timeout(ACQUISITION_TIMEOUT * 3, Box::pin(async {
         let namespace = tempfile::tempdir().unwrap();
         let deadline = Instant::now() + ACQUISITION_TIMEOUT * 2;
         let cap = NonZeroU32::new(
@@ -179,5 +179,5 @@ async fn active_run_routes_two_signed_messaging_visitors_into_the_original_world
             assert!(packs.iter().any(|pack| pack.pack_id == world.pack && pack.archive == world.archive),
                 "original hash-verified final resource snapshot was lost");
         }
-    }).await.expect("finite original Active.run Messaging/world control stalled");
+    })).await.expect("finite original Active.run Messaging/world control stalled");
 }
