@@ -462,7 +462,9 @@ impl HostDirectory {
             scope: self.scope.as_ref().expect("current scope").clone(),
             reference: self.reference.clone(),
             xuid: owner.into(),
-            revision: approvals.revision(),
+            member_epoch: approvals
+                .member_epoch(owner)
+                .ok_or_else(|| invalid("host approval member departed"))?,
             nonce: Sha256::digest(nonce.as_bytes()).into(),
         })
     }
@@ -475,12 +477,11 @@ impl HostDirectory {
             .approvals
             .as_ref()
             .ok_or_else(|| invalid("host approval owner is unavailable"))?;
-        let member = approvals.rechecks(&approval.xuid, approval.revision, &approval.nonce)?;
         if !self.opening.same(&approval.opening)
             || scope.generation != approval.scope.generation
             || scope.xuid != approval.scope.xuid
             || !self.reference.same(&approval.reference)
-            || !member
+            || !approvals.rechecks(&approval.xuid, approval.member_epoch, &approval.nonce)?
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
