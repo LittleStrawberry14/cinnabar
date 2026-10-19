@@ -40,7 +40,7 @@ impl ArchiveCacheKey {
             || version.is_empty()
             || version.len() > bedrock_packs::MAX_PACK_VERSION_BYTES
             || size == 0
-            || size > bedrock_packs::MAX_ARCHIVE_BYTES as u64
+            || size > crate::MAX_LOCAL_ARCHIVE_BYTES as u64
         {
             return Err(invalid("invalid archive cache identity"));
         }

@@ -45,7 +45,7 @@ pub fn admit(files: &[(&str, u64)], cape: bool) -> Result<(), SkinImportError> {
             }
             render_api::MAX_SKIN_GEOMETRY_SOURCE_BYTES as u64
         } else if lower.ends_with(".mcpack") && !cape && files.len() == 1 {
-            bedrock_packs::MAX_ARCHIVE_BYTES as u64
+            resource_pack::MAX_LOCAL_ARCHIVE_BYTES as u64
         } else {
             return Err(SkinImportError::Unsupported);
         };

@@ -1,7 +1,7 @@
 //! Bounded source image and texture catalog preparation for pack subscribers.
 
 use assets::texture::policy::TexturePolicy;
-use bedrock_packs::jsonc::normalize_jsonc;
+use bedrock_packs::jsonc::parse_jsonc;
 use image::{ImageFormat, ImageReader, Limits};
 use resource_pack::LayeredPackView;
 use serde_json::Value;
@@ -234,9 +234,9 @@ fn decode_texture_set(
     }
 }
 
-/// Parses the normalized JSON-with-comments representation used by pack files.
+/// Parses pack JSON with comments, trailing commas and legacy text encoding.
 pub fn parse_pack_json(bytes: &[u8]) -> Option<Value> {
-    serde_json::from_slice(&normalize_jsonc(bytes)?).ok()
+    parse_jsonc(bytes).ok()
 }
 
 /// Decodes only images whose source, dimensions, and allocation fit the established limits.
