@@ -19,6 +19,7 @@ fn queued_worlds(
         events,
         revoked: Arc::new(Mutex::new(false)),
         _core: Some(core),
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         worker: None,
     };
     let mut worlds = LocalWorlds::default();

@@ -100,7 +100,7 @@ pub struct WorldsClient {
     /// Set once the client is detached; an open in progress finishes before it is set.
     revoked: Arc<Mutex<bool>>,
     _core: Option<CoreLink>,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -213,7 +213,7 @@ impl WorldsClient {
             events,
             revoked,
             _core: core,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
             worker: Some(_worker),
         })
     }
