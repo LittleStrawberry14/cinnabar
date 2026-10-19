@@ -104,7 +104,16 @@ async fn accepted_tls_play_refuses_a_newer_protocol_and_preserves_its_original_c
             .send(Bytes::from(serde_json::to_vec(&Request::SignOut).unwrap()))
             .await
             .unwrap();
-        let control_usable = matches!(event(&mut control).await, Event::Account { .. });
+        let mut idle_progress = true;
+        let control_usable = loop {
+            match event(&mut control).await {
+                Event::Account { .. } => break true,
+                Event::Connect { connect } => {
+                    idle_progress &= connect.stage == bridge::ConnectStage::Idle
+                }
+                _ => break false,
+            }
+        };
         let attachment = fixture
             .registry
             .open_play(&capability.resume, capability.generation, Instant::now())
@@ -139,7 +148,7 @@ async fn accepted_tls_play_refuses_a_newer_protocol_and_preserves_its_original_c
             "actual play must emit only its exact version refusal, without Handoff"
         );
         assert!(
-            control_usable && lease_released,
+            control_usable && idle_progress && lease_released,
             "actual play refusal retained its lease or retired the original control"
         );
     })
