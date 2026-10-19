@@ -236,7 +236,7 @@ impl WorldStream {
                 continue;
             };
             let snapshot = self.mesh_snapshot(key, center, light_halo);
-            self.mesh_jobs.pending.remove(&key);
+            self.mesh_jobs.remove_pending(&key);
             self.mesh_jobs.in_flight.insert(key, pending.revision);
             if pending.urgent {
                 self.urgent_mesh_in_flight.insert(key);
@@ -415,7 +415,7 @@ impl WorldStream {
                 }
                 None => None,
             };
-            self.mesh_jobs.pending.remove(&key);
+            self.mesh_jobs.remove_pending(&key);
             removed = true;
             let resident_air = self.resident.contains(&key)
                 && self

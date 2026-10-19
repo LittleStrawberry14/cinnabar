@@ -266,6 +266,7 @@ mod column_propagation;
 mod convergence;
 mod dependency_lifecycle;
 mod filter_dominance;
+mod mesh_fairness;
 mod mesh_light_dependencies;
 mod provenance;
 mod scheduling_priority;

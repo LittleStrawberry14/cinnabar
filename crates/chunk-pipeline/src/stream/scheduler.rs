@@ -4,15 +4,15 @@ pub(super) const NEAR_CAMERA_RADIUS: i32 = 4;
 /// Horizontal light halo around the directly prioritized mesh area.
 const NEAR_LIGHT_COLUMN_RADIUS: i32 = NEAR_CAMERA_RADIUS + 1;
 
-/// Longest wait, in startup ingress polls, before a still-blocked promoted job is rechecked.
+/// Longest wait, in ingress polls, before a still-blocked promoted job is rechecked.
 const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
 
-/// Ready work leads during ordinary streaming; startup also rechecks higher-priority deferred work.
+/// Ready work competes with bounded rechecks of higher-priority deferred work.
 #[derive(Default)]
 pub(super) struct Lane {
     pub(super) ready: BinaryHeap<PendingSchedulerCandidate>,
     pub(super) deferred: BinaryHeap<PendingSchedulerCandidate>,
-    /// Promoted startup revisions: attempts and the poll before which a blocked one stays deferred.
+    /// Promoted revisions: attempts and the poll before which a blocked one stays deferred.
     rechecks: HashMap<SubChunkKey, Recheck>,
     polls: u64,
     held: Vec<PendingSchedulerCandidate>, // cooldown scratch, reused across polls
@@ -175,11 +175,16 @@ impl<const L: usize> SchedulerRefresh<L> {
 
 /// A queued record superseded by a newer revision of its key.
 pub(super) trait PendingJob: Copy {
+    /// Whether ordinary streaming rechecks higher-priority deferred work as startup does.
+    const RECHECK_DEFERRED: bool;
+
     fn revision(&self) -> u64;
     fn urgent(&self) -> bool;
 }
 
 impl PendingJob for PendingLight {
+    const RECHECK_DEFERRED: bool = false;
+
     fn revision(&self) -> u64 {
         self.revision
     }
@@ -189,6 +194,8 @@ impl PendingJob for PendingLight {
 }
 
 impl PendingJob for PendingMesh {
+    const RECHECK_DEFERRED: bool = true;
+
     fn revision(&self) -> u64 {
         self.revision
     }
@@ -247,14 +254,23 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
         }
     }
 
+    /// Removes a pending job and its retry history, including lanes being refreshed.
+    pub(super) fn remove_pending(&mut self, key: &SubChunkKey) -> Option<P> {
+        for lane in self.lanes.iter_mut().chain(&mut self.refresh.previous) {
+            lane.rechecks.remove(key);
+        }
+        self.pending.remove(key)
+    }
+
     /// Drops queued work; dispatched jobs keep their records.
     pub(super) fn clear_queued(&mut self) {
         self.pending.clear();
         self.scan.clear();
         self.startup_scan.clear();
-        for lane in &mut self.lanes {
+        for lane in self.lanes.iter_mut().chain(&mut self.refresh.previous) {
             lane.ready.clear();
             lane.deferred.clear();
+            lane.rechecks.clear();
         }
     }
 
@@ -327,7 +343,7 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
             if lane.ready.is_empty() {
                 std::mem::swap(&mut lane.ready, &mut lane.deferred);
             }
-            if view.startup_center.is_some() {
+            if P::RECHECK_DEFERRED || view.startup_center.is_some() {
                 lane.prioritize_deferred(&mut deferred_budget, deadline, is_current);
             } else if !lane.rechecks.is_empty() {
                 lane.rechecks = HashMap::new();
@@ -576,6 +592,56 @@ mod tests {
         );
         assert!(before > after);
         assert_eq!(after, needed);
+    }
+
+    /// Ordinary mesh retries have a fixed work budget and never revive superseded revisions.
+    #[test]
+    fn ordinary_mesh_promotion_is_bounded_and_current() {
+        let view = SchedulerView {
+            position: [8.0; 3],
+            forward: Some([1.0, 0.0, 0.0]),
+            startup_center: None,
+        };
+        let mut jobs = KeyedJobs::<PendingMesh, u64, 1>::default();
+        jobs.refresh
+            .refresh(view, &mut jobs.lanes, None, |_, _| true);
+        let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
+        let now = Instant::now();
+        for x in 0..=count {
+            let key = SubChunkKey::new(1, x as i32, 0, 0);
+            jobs.pending.insert(
+                key,
+                PendingMesh {
+                    revision: 2,
+                    since: now,
+                    queued_at: now,
+                    urgent: false,
+                },
+            );
+            let candidate =
+                PendingSchedulerCandidate::new(key, if x == 0 { 1 } else { 2 }, view, false);
+            if x == count {
+                jobs.lanes[0].ready.push(candidate);
+            } else {
+                jobs.lanes[0].deferred.push(candidate);
+            }
+        }
+        jobs.ingress(view, None, |_, _, _| (0, false));
+        let lane = &jobs.lanes[0];
+        assert_eq!(
+            lane.deferred.len(),
+            count - MAX_PENDING_SCHEDULER_SCANS_PER_POLL
+        );
+        assert_eq!(lane.ready.len(), MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
+        assert!(lane.ready.iter().all(|candidate| candidate.revision == 2));
+        let best = lane.ready.peek().unwrap().key;
+        assert_eq!(best.x, 1);
+        assert!(jobs.lanes[0].rechecks.contains_key(&best));
+        jobs.remove_pending(&best);
+        assert!(!jobs.lanes[0].rechecks.contains_key(&best));
+        jobs.clear_queued();
+        assert!(jobs.lanes[0].is_empty());
+        assert!(jobs.lanes[0].rechecks.is_empty());
     }
 
     /// A blocked startup job cooling down costs no allocation however many polls it waits.
