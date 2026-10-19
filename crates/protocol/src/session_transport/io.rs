@@ -130,6 +130,7 @@ impl PacketSender {
     }
 
     /// Waits for admission and the accepted batch's actual write completion.
+    #[cfg(test)]
     pub(crate) async fn send(&self, body: Bytes) -> Result<(), ProtocolError> {
         self.accept(body).await?.await
     }
