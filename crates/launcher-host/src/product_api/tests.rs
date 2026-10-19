@@ -259,3 +259,27 @@ fn ownership_snapshots_replace_and_revoke_only_welcome_bound_grants() {
     let snapshot = unbound.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
     assert!(snapshot.ownership_xuid.is_empty() && snapshot.owned_cosmetics.is_empty());
 }
+
+/// A null string element reaches whole-snapshot revocation instead of hiding the ownership update.
+#[test]
+fn ownership_null_elements_revoke_the_whole_prior_snapshot() {
+    let now = Instant::now();
+    let mut observed = Vec::new();
+    for ids in [json!([null]), json!(["fixture:valid", null])] {
+        let mut players = Players::welcomed("11".into(), vec!["fixture:paid".into()]);
+        let mut revision = 0;
+        let prior = players.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
+        assert_eq!(prior.owned_cosmetics, ["fixture:paid"]);
+        let text = json!({"type":"cosmetic_ownership","owned_cosmetics":ids}).to_string();
+        if let Some(message) = Inbound::parse(&text) {
+            players.receive(message, now);
+        }
+        let snapshot = players.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
+        assert_eq!(snapshot.ownership_xuid, "11");
+        observed.push(snapshot.owned_cosmetics);
+    }
+    assert!(
+        observed.iter().all(|ids| ids.is_empty()),
+        "null ownership elements left earlier paid grants active: {observed:?}"
+    );
+}
