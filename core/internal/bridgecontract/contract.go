@@ -5,6 +5,8 @@ package bridgecontract
 const (
 	// MaxFrameLen: Largest session frame payload in bytes.
 	MaxFrameLen = 67108864
+	// MaxUpstreamDecompressedBatchBytes: Largest decoded upstream batch after NetworkSettings enables compression.
+	MaxUpstreamDecompressedBatchBytes = 268435456
 	// MaxControlFrameLen: Largest control request or response payload in bytes.
 	MaxControlFrameLen = 65536
 	// MaxPingTargets: Most server addresses admitted in one ping request.

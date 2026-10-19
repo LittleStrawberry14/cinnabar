@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Largest session frame payload in bytes.
 pub const MAX_FRAME_LEN: usize = 67108864;
 
+/// Largest decoded upstream batch after NetworkSettings enables compression.
+pub const MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES: usize = 268435456;
+
 /// Largest control request or response payload in bytes.
 pub(crate) const CONTROL_MAX_FRAME_LEN: usize = 65536;
 
