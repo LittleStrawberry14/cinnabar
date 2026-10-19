@@ -56,58 +56,58 @@ Vanilla behaviour is the default. Everything below is extra:
 
 ## How it works
 
-```text
-cinnabar (Rust, Bevy/wgpu)  ── local socket ──  bedrock-core (Go)
-                                                        ├─ RakNet ──── servers
-                                                        └─ NetherNet ─ Realms and friend worlds
-```
+The Rust client owns rendering, input and gameplay. The default backend still uses a local
+Go core for account and network services. An opt-in native backend connects the client directly
+to reusable Rust libraries. The target game version is pinned in `assets/bedrock-target.json`.
 
-The Rust client owns everything you see and play. By default, the Go core owns Xbox sign-in,
-encryption and the network transports. The target game version is pinned in `assets/bedrock-target.json`.
-
-Launch the menu with native RakNet enabled, then sign in or select a saved account and join a server:
+Launch the native menu, then sign in or select a saved account and join a server:
 
 ```sh
 cargo run -p cinnabar --features native-networking -- --native-networking raknet
 ```
 
-Native mode runs Microsoft device-code sign-in and saved-account validation in Rust through the
-existing account menu. Pending attempts keep the active account unchanged until Xbox identity
-verification and account commit complete. Failed or timed-out saved-account checks stop native
-joins with an authentication error. Hosted Xbox profile creation still requires the default
-Go mode. Native Realms browsing and RakNet resolution share the selected account with Login;
-Realms that advertise authenticated NetherNet fail explicitly until native signaling is ready.
-Friend-world browsing uses the same native account and existing cards. Native friend-world
-joining remains unavailable until signed NetherNet admission is ready. Realm invitation
-preview/acceptance, Xbox people/profile services, other account catalog sections and local
-worlds retain their current Go owners.
+Native mode uses the existing account menu for Microsoft device-code sign-in and saved-account
+validation. Pending sign-in leaves the active account unchanged until identity verification and
+account commit finish. Account changes, cancellation and expired credentials stop the original
+join; they do not trigger a signed-out retry. Refresh rotation and private derived-service
+checkpoints share the existing account-cache leases. Xbox profile creation still requires the
+default Go mode.
 
-Authenticated direct joins retain one native account owner across retries and transfers. Refresh
-rotation shares the existing account-cache leases with Go, and private checkpoints retain proof
-and refresh ownership. Persistent derived-service caches and live authenticated acceptance remain
-in progress. Acquired multiplayer credentials are checked against the configured provider's
-public keys and selected account/connection key. Their original hard validity remains in force
-through Login admission. Account acquisition errors return to the menu without a signed-out retry.
+Native account services include Realms and invitations, Xbox people and profiles, presence,
+featured-server discovery and world signaling. Realms can resolve RakNet or authenticated
+NetherNet. The session retains the selected account and connection key through Login, resource
+packs, startup and play, including retries and transfers.
 
-Signed-out direct connections can also opt in:
+Direct startup also uses the selected saved account when one is available:
 
 ```sh
 cargo run -p cinnabar --features native-networking -- --address HOST:PORT --native-networking raknet
 ```
 
-Use `nethernet-lan` with a peer's LAN discovery endpoint for directed IPv4 NetherNet.
-The native backend uses the existing Rust resource-pack presentation, spawn and play paths.
-Native Realms joins admit the service's RakNet transport. Friend worlds and hosting retain the
-Go backend. Authenticated native NetherNet is not yet supported. CDN/cache integration and
-broader acceptance remain in progress; the working Go backend remains the default.
+Without a selected account, direct connections can use an offline identity where the server
+permits it. `nethernet-lan` selects directed IPv4 LAN discovery. Selected local worlds keep their
+original HTTP or LAN route and process generation. Desktop pack acquisition supports CDN
+archives and a verified persistent cache before falling back to game-socket chunks.
+
+Friend-world admission and hosting have native implementations, including legacy and Player
+Messaging signaling, signed peer admission and original Dragonfly or BDS worlds. Their native
+menu join gate remains disabled while end-to-end acceptance is completed. Broader retail
+account, server, browser and platform compatibility also remains under validation; Go stays
+the default until that work passes. The native HTTPS/WebSocket relay has a separate operator;
+see [web/gateway/README.md](web/gateway/README.md) for configuration and current transport limits.
+
+The transport protocol cores are sans I/O. Runtime adapters own their sockets and timers;
+Tokio is an explicit adapter dependency rather than a requirement of the cores. The NetherNet
+repository also provides a Bevy adapter for caller-driven outbound sessions. Protocol/session,
+service and client-integration responsibilities stay in their owning libraries.
 
 Built on these libraries:
 
 | Library | Used for |
 | --- | --- |
-| [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Optional native batch framing, compression, encryption, Login and RakNet transport. |
-| [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Optional native account authentication and Minecraft multiplayer credentials. |
-| [nethernet](https://github.com/cinnabar-mc/nethernet) | Optional native LAN signaling, ICE, DTLS and SCTP transport. |
+| [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Native framing, compression, encryption, Login, resource packs and typed session lifecycle. |
+| [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Native Microsoft/Xbox authentication, Minecraft credentials, Realms, profiles, presence and signaling. |
+| [nethernet](https://github.com/cinnabar-mc/nethernet) | Sans-I/O ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
 | [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
