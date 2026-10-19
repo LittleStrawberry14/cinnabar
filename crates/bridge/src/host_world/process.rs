@@ -27,6 +27,22 @@ pub struct HostProcess {
     close_deadline: Option<Instant>,
 }
 
+/// One reserved Open after prior control output drained, before new admission.
+#[must_use = "check current application authority before admitting this Open"]
+pub struct PreparedBackendOpen<'a> {
+    process: &'a mut HostProcess,
+    open: Open,
+    deadline: Instant,
+}
+
+/// One admitted Open, retaining the original process borrow, peer ID and deadline.
+#[must_use = "finish this admitted Open or retain the process for bounded retirement"]
+pub struct OpeningBackendPeer<'a> {
+    process: &'a mut HostProcess,
+    peer: u64,
+    deadline: Instant,
+}
+
 impl PendingHostProcess {
     /// Takes edge-generated random entropy; this is a private IPC capability, never a player proof.
     pub async fn bind(
@@ -88,15 +104,15 @@ impl HostProcess {
         &self.snapshot
     }
 
-    /// Opens one bounded backend reservation for the actual authenticated projection.
-    /// Keep this future pinned. Canceling drops any accepted peer socket; an unaccepted child dial
-    /// retains its original finite deadline and capacity until it retires. Later calls drain its stale reply.
-    pub async fn open_peer(
+    /// Reserves the original Open and drains only previously admitted control output.
+    /// Recheck current application authority after this wait, before consuming begin_open.
+    /// Cancellation retains the original partial output/deadline and consumes the reserved peer ID.
+    pub async fn prepare_open(
         &mut self,
         identity: Identity,
         client_data: Box<serde_json::value::RawValue>,
         deadline: Instant,
-    ) -> io::Result<super::PendingBackendPeer> {
+    ) -> io::Result<PreparedBackendOpen<'_>> {
         if self.closing {
             return Err(invalid());
         }
@@ -122,35 +138,14 @@ impl HostProcess {
                 bounded(original, self.writer.flush()).await?;
                 self.control_deadline = None;
             }
-            self.control_deadline = Some(deadline);
-            send_json(&mut self.writer, Kind::Open, &open).await?;
-            self.control_deadline = None;
-            // The child waits for our mutual Hello before reporting Opened.
-            let incoming = accept(&self.listener, &self.bootstrap, peer, deadline);
-            tokio::pin!(incoming);
-            let mut socket = None;
-            let mut opened = false;
-            loop {
-                if opened && let Some((reader, writer)) = socket.take() {
-                    return Ok(super::PendingBackendPeer::new(reader, writer));
-                }
-                tokio::select! {
-                    result = &mut incoming, if socket.is_none() => { socket = Some(result?); }
-                    frame = self.reader.recv() => {
-                        let frame = frame?.ok_or_else(invalid)?;
-                        if !matches!(frame.kind, Kind::Opened | Kind::Rejected) { return Err(invalid()); }
-                        let result: PeerResult = parse(&frame.body)?;
-                        if result.peer < peer { continue; }
-                        if result.peer != peer { return Err(invalid()); }
-                        if frame.kind == Kind::Rejected || result.code != 0 {
-                            return Err(io::Error::new(io::ErrorKind::WouldBlock, "native world bridge admission refused"));
-                        }
-                        opened = true;
-                    }
-                }
-            }
+            Ok(())
         })
-        .await
+        .await?;
+        Ok(PreparedBackendOpen {
+            process: self,
+            open,
+            deadline,
+        })
     }
 
     /// Retires this exact child bridge and peers, independent of a later account/proof replacement.
@@ -182,6 +177,62 @@ impl HostProcess {
                         let _: PeerResult = parse(&frame.body)?;
                     }
                     _ => return Err(invalid()),
+                }
+            }
+        })
+        .await
+    }
+}
+
+impl<'a> PreparedBackendOpen<'a> {
+    /// Admits the original Open synchronously after the caller's current authority check.
+    pub fn begin_open(self) -> io::Result<OpeningBackendPeer<'a>> {
+        check_deadline(self.deadline)?;
+        self.process.control_deadline = Some(self.deadline);
+        admit_json(&mut self.process.writer, Kind::Open, &self.open)?;
+        Ok(OpeningBackendPeer {
+            process: self.process,
+            peer: self.open.peer,
+            deadline: self.deadline,
+        })
+    }
+}
+
+impl OpeningBackendPeer<'_> {
+    /// Finishes the admitted Open and original capability-bound peer exchange.
+    /// Keep this future pinned. Cancellation drops an accepted peer socket; an unaccepted child
+    /// dial retains its original finite budget, and later calls drain its stale reply.
+    pub async fn finish(self) -> io::Result<super::PendingBackendPeer> {
+        let Self {
+            process,
+            peer,
+            deadline,
+        } = self;
+        bounded(deadline, async {
+            process.writer.flush().await?;
+            process.control_deadline = None;
+            // The child waits for our mutual Hello before reporting Opened.
+            let incoming = accept(&process.listener, &process.bootstrap, peer, deadline);
+            tokio::pin!(incoming);
+            let mut socket = None;
+            let mut opened = false;
+            loop {
+                if opened && let Some((reader, writer)) = socket.take() {
+                    return Ok(super::PendingBackendPeer::new(reader, writer));
+                }
+                tokio::select! {
+                    result = &mut incoming, if socket.is_none() => { socket = Some(result?); }
+                    frame = process.reader.recv() => {
+                        let frame = frame?.ok_or_else(invalid)?;
+                        if !matches!(frame.kind, Kind::Opened | Kind::Rejected) { return Err(invalid()); }
+                        let result: PeerResult = parse(&frame.body)?;
+                        if result.peer < peer { continue; }
+                        if result.peer != peer { return Err(invalid()); }
+                        if frame.kind == Kind::Rejected || result.code != 0 {
+                            return Err(io::Error::new(io::ErrorKind::WouldBlock, "native world bridge admission refused"));
+                        }
+                        opened = true;
+                    }
                 }
             }
         })

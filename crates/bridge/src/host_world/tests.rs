@@ -120,7 +120,7 @@ async fn host_process_duplex_receipts_and_final_close_keep_the_same_payload_slot
         let data =
             serde_json::value::RawValue::from_string(r#"{ "opaque": 1e+2 }"#.into()).unwrap();
         let mut peer = process
-            .open_peer(
+            .prepare_open(
                 Identity {
                     xuid: "1".into(),
                     uuid: "fixture".into(),
@@ -131,6 +131,11 @@ async fn host_process_duplex_receipts_and_final_close_keep_the_same_payload_slot
                 data,
                 deadline,
             )
+            .await
+            .unwrap()
+            .begin_open()
+            .unwrap()
+            .finish()
             .await
             .unwrap();
         assert_eq!(peer.read_pack(0, 3, 2, deadline).await.unwrap(), b"ef"[..]);

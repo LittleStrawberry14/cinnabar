@@ -5,7 +5,7 @@ use bytes::Bytes;
 use nethernet_tokio::{AcceptedSession, Retired};
 use std::{io, time::Instant};
 
-pub(super) struct AcceptedTransport {
+pub(in crate::login::native_network) struct AcceptedTransport {
     state: Option<State>,
     inbox: Inbox,
 }

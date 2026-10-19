@@ -57,6 +57,33 @@ impl NativeHostedWorld {
         Ok(backend)
     }
 
+    /// Drains prior control, then applies current service authority before synchronous Open admission.
+    /// Verified Login metadata and the selected process owner remain with the caller.
+    pub(super) async fn open_backend(
+        &mut self,
+        approval: &HostedApproval,
+        process: &mut HostProcess,
+        identity: Identity,
+        client_data: Box<serde_json::value::RawValue>,
+        deadline: Instant,
+    ) -> io::Result<PendingBackendPeer> {
+        self.recheck_approval(approval)?;
+        let prepared = self
+            .peer_io(
+                Some(deadline),
+                process.prepare_open(identity, client_data, deadline),
+            )
+            .await?;
+        self.directory_mut()?
+            .service_barrier(Some(deadline))
+            .await?;
+        self.recheck_approval(approval)?;
+        let opening = prepared.begin_open()?;
+        let backend = self.peer_io(Some(deadline), opening.finish()).await?;
+        self.recheck_approval(approval)?;
+        Ok(backend)
+    }
+
     /// Pairs one actual established transport with this original acknowledged hosted opening.
     ///
     /// The caller owns the server's authenticated signaling/SDP policy and passes that exact
@@ -92,9 +119,12 @@ impl NativeHostedWorld {
         // RawValue owns the exact provider-verified object, including unused lexemes and fields.
         let data = ready.login().client_data().to_owned();
         let backend = self
-            .peer_io(
-                Some(deadline),
-                process.process.open_peer(identity, data, deadline),
+            .open_backend(
+                &ready.grant().approval,
+                &mut process.process,
+                identity,
+                data,
+                deadline,
             )
             .await?;
         self.recheck_login(ready.login(), &policy, ready.grant())?;

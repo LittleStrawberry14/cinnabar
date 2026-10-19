@@ -9,7 +9,7 @@ pub use peer::{
     ActiveBackendPeer, AttachingBackendPeer, BackendWorldReady, ClosingBackendPeer,
     InitializingBackendPeer, PendingBackendPeer,
 };
-pub use process::{HostProcess, PendingHostProcess};
+pub use process::{HostProcess, OpeningBackendPeer, PendingHostProcess, PreparedBackendOpen};
 pub use wire::{Frame, Reader, Writer, split};
 
 #[cfg(test)]

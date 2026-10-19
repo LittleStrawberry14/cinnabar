@@ -4,7 +4,7 @@ use super::{
     Frame, Reader, Writer,
     contract::*,
     invalid,
-    process::{admit_json, bounded, check_deadline, parse},
+    process::{admit_json, bounded, check_deadline},
 };
 use bytes::Bytes;
 use std::{io, time::Instant};
