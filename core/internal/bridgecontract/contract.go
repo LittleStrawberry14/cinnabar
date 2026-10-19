@@ -79,6 +79,8 @@ const (
 	RelayControlBytes = 4096
 	// RelayPlayMessageBytes: Largest WebSocket play message in bytes.
 	RelayPlayMessageBytes = 8388608
+	// GatewayEgressCandidates: Maximum resolved address candidates retained by native gateway egress.
+	GatewayEgressCandidates = 16
 	// QueuedFrames: Maximum queued reliable frames or browser receive chunks.
 	QueuedFrames = 16
 	// RelayQueuedFrameBytes: Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
