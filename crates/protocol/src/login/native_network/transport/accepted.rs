@@ -19,6 +19,13 @@ enum State {
 }
 
 impl AcceptedTransport {
+    /// Observes the original ready association without extending its transport lifetime.
+    pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
+        self.sender()
+            .ok()
+            .map(|sender| crate::RoundTripTime::nethernet(sender.observe_rtt()))
+    }
+
     /// Takes an existing Ready association; no new socket, dial or signaling route is created.
     pub(super) fn new(accepted: AcceptedSession) -> Self {
         Self {

@@ -36,6 +36,16 @@ pub(super) enum Transport {
 }
 
 impl Transport {
+    /// Observes the selected transport's original full round-trip estimate.
+    pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
+        match self {
+            Self::RakNet(transport) => transport.observe_rtt(),
+            Self::NetherNetLan(transport) => transport.observe_rtt(),
+            Self::Messaging(transport) => transport.observe_rtt(),
+            Self::Accepted(transport) | Self::Http(transport) => transport.observe_rtt(),
+        }
+    }
+
     /// Reuses the actual accepted IO driver for a fixture's ready signed client and original challenge.
     #[cfg(feature = "test-support")]
     pub(super) fn fixture_nether(client: NetherClient, nonce: String) -> Self {

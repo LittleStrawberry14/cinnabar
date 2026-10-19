@@ -114,6 +114,12 @@ impl<R: bridge::FrameRead> PlaySession<R> {
         self.transport.packet_delay()
     }
 
+    /// Observes the native transport's full RTT; Core/browser sessions have no native sample.
+    /// Reads return copied estimates without borrowing the transport or a lock.
+    pub fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
+        self.transport.observe_rtt()
+    }
+
     /// Drains accepted native writes and closes the peer before the host stops its runtime.
     /// Core sessions retain their host-owned endpoint lifecycle.
     pub async fn close(&mut self) -> Result<(), ProtocolError> {

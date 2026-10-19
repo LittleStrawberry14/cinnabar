@@ -381,6 +381,7 @@ pub struct NetworkHandle<P = ()> {
     unflushed: Mutex<frame_flush::FrameFlush>,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     packet_delay: packet_delay::Control,
+    connection_observation: observation::Observation,
 }
 
 impl<P> NetworkHandle<P> {
@@ -623,6 +624,7 @@ impl<P> NetworkHandle<P> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         self.packet_delay.clear();
         self.shutdown.send_replace(true);
+        self.connection_observation.clear();
         self.release_thread();
     }
 
@@ -666,6 +668,7 @@ fn empty_network_channels<P>() -> (
             thread: None,
             readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
             experience_gate: Arc::default(),
+            connection_observation: Default::default(),
             unflushed: Default::default(),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             packet_delay: Default::default(),
@@ -679,11 +682,13 @@ impl<P> Drop for NetworkHandle<P> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         self.packet_delay.clear();
         self.shutdown.send_replace(true);
+        self.connection_observation.clear();
         self.release_thread();
     }
 }
 
 pub(crate) mod execution;
+mod observation;
 mod start;
 pub use execution::{NetworkExecutor, SessionRead};
 #[cfg(not(target_arch = "wasm32"))]
