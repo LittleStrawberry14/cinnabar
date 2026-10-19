@@ -20,6 +20,7 @@ use tokio_util::codec::FramedRead;
 
 mod peer;
 mod semantic;
+mod terminal;
 mod upload;
 
 /// EOF on an empty upload retires the actual generation even while a native output write is blocked.
