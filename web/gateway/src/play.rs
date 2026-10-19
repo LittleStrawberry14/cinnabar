@@ -10,13 +10,15 @@ use bridge::{FrameQueue, FrameRead, contract::*};
 use bytes::Bytes;
 use futures::StreamExt;
 use protocol::{
-    ClientDataRefusal, NativeRelayConnecting, NativeRelayConnection, NativeRelayRetired,
-    RawClientData,
+    ClientDataRefusal, NativeRelayClosing, NativeRelayConnecting, NativeRelayDriver,
+    NativeRelayRetired, RawClientData,
     session_wire::{self, CoreMessage},
 };
-use std::{collections::VecDeque, io, sync::Arc, time::Instant};
+use std::{io, sync::Arc, time::Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
+
+mod duplex;
 
 #[cfg(test)]
 tokio::task_local! {
@@ -31,17 +33,9 @@ struct Playing {
 
 enum Socket {
     Connecting(NativeRelayConnecting),
-    Established(NativeRelayConnection),
+    Pumping(NativeRelayDriver),
+    Closing(NativeRelayClosing),
     Retired(NativeRelayRetired),
-}
-
-/// Retains bounded, already accepted upstream output while the actual downstream writer is blocked.
-#[derive(Default)]
-struct Output {
-    frames: VecDeque<(Bytes, bool)>,
-    bytes: usize,
-    ended: bool,
-    failure: Option<io::Error>,
 }
 
 /// Consumes the selected reliable play stream; account and transport drivers stay caller-owned.
@@ -87,6 +81,7 @@ where
             () = &mut writer => Err(closed()),
         }
     };
+    playing.begin_close();
     let cleanup = playing.close().await;
     result.and(cleanup)
 }
@@ -187,7 +182,7 @@ impl Playing {
     /// Negotiates the actual retained preconnected owner; it performs no replacement dial or admission.
     async fn negotiate(
         &mut self,
-        mut reader: impl FrameRead,
+        reader: impl FrameRead,
         frames: FrameQueue,
         claims: RawClientData,
         client_cache: bool,
@@ -226,149 +221,50 @@ impl Playing {
                 return Err(invalid(()));
             }
         };
-        self.socket = Some(Socket::Established(socket));
-        self.lease.current()?;
-        let mut output = Output::default();
-        self.write(
-            &frames,
-            session_wire::encode_core_message(&CoreMessage::Handoff(handoff.handoff))
-                .map_err(invalid)?,
-            &mut output,
-            Some(deadline),
-        )
-        .await?;
-        for (index, archive) in handoff.archives.into_iter().enumerate() {
-            let index = u32::try_from(index).map_err(invalid)?;
-            for chunk in archive.chunks(PACK_CHUNK_BYTES) {
-                self.lease.current()?;
-                let message = CoreMessage::PackData {
-                    index,
-                    data: Bytes::copy_from_slice(chunk),
-                };
-                self.write(
-                    &frames,
-                    session_wire::encode_core_message(&message).map_err(invalid)?,
-                    &mut output,
-                    Some(deadline),
-                )
-                .await?;
-            }
-        }
-        upstream::current(&self.lease, deadline)?;
-        self.lease.progress(progress(bridge::ConnectStage::Idle))?;
-        let mut send_failure = None;
-        let mut drain_deadline = None;
-        loop {
-            if let Some((frame, terminal)) = output.pop() {
-                self.write(&frames, frame, &mut output, None).await?;
-                if terminal {
-                    return Ok(());
-                }
-                continue;
-            }
-            if let Some(error) = output.failure.take() {
-                return Err(error);
-            }
-            let Some(Socket::Established(socket)) = self.socket.as_mut() else {
-                return Err(closed());
+        let (sender, incoming, driver) = socket.into_pump();
+        self.socket = Some(Socket::Pumping(driver));
+        let result = {
+            let Some(Socket::Pumping(driver)) = self.socket.as_mut() else {
+                unreachable!("same established driver")
             };
-            tokio::select! {
-                () = self.lease.cancel.cancelled() => return Err(closed()),
-                () = expires(drain_deadline), if drain_deadline.is_some() => return Err(send_failure.take().expect("failed send armed its original drain")),
-                message = socket.recv(), if !output.ended => output.push_result(message)?,
-                frame = reader.next(), if send_failure.is_none() => {
-                    let frame = frame.ok_or_else(closed)?.map_err(invalid)?;
-                    self.lease.current()?;
-                    let body = session_wire::batch_frame_body(&frame).ok_or_else(|| invalid(()))?;
-                    let Some(Socket::Established(socket)) = self.socket.as_mut() else { unreachable!("same play owner") };
-                    if let Err(error) = socket.send_body(body).await {
-                        send_failure = Some(error);
-                        drain_deadline = Some(Instant::now().checked_add(protocol::WRITE_FAILURE_DRAIN).ok_or_else(closed)?);
-                    }
-                    self.lease.current()?;
-                }
-            }
-        }
+            duplex::run(
+                &self.lease,
+                driver,
+                (sender, incoming),
+                reader,
+                frames,
+                handoff,
+                deadline,
+            )
+            .await
+        };
+        self.begin_close();
+        result
     }
 
-    /// Keeps the exact output future while bounded upstream prefix and terminal input arrive.
-    async fn write(
-        &mut self,
-        frames: &FrameQueue,
-        frame: Bytes,
-        output: &mut Output,
-        deadline: Option<Instant>,
-    ) -> io::Result<()> {
-        current(&self.lease, deadline)?;
-        let writing = frames.send(frame);
-        tokio::pin!(writing);
-        loop {
-            let Some(Socket::Established(socket)) = self.socket.as_mut() else {
-                return Err(closed());
-            };
-            tokio::select! { biased;
-                () = self.lease.cancel.cancelled() => return Err(closed()),
-                () = expires(deadline), if deadline.is_some() => return Err(elapsed()),
-                result = &mut writing => { result.map_err(invalid)?; return current(&self.lease, deadline); }
-                message = socket.recv(), if !output.ended && output.bytes < RELAY_QUEUED_FRAME_BYTES => output.push_result(message)?,
-            }
-        }
-    }
-
-    /// Installs retirement synchronously before awaiting the original finite transport close.
-    async fn close(&mut self) -> io::Result<()> {
+    /// Revokes admission and captures the first close budget before another await.
+    fn begin_close(&mut self) {
         let Some(socket) = self.socket.take() else {
-            return Ok(());
+            return;
         };
-        self.socket = Some(Socket::Retired(match socket {
-            Socket::Connecting(socket) => socket.begin_close(),
-            Socket::Established(socket) => socket.begin_close(),
-            Socket::Retired(socket) => socket,
-        }));
-        let Some(Socket::Retired(socket)) = self.socket.as_mut() else {
-            unreachable!("retained retirement")
-        };
-        socket.finish_close().await
+        self.socket = Some(match socket {
+            Socket::Connecting(socket) => Socket::Retired(socket.begin_close()),
+            Socket::Pumping(driver) => Socket::Closing(driver.begin_close()),
+            closing @ (Socket::Closing(_) | Socket::Retired(_)) => closing,
+        });
     }
-}
 
-impl Output {
-    /// Stages a transport cause behind every packet already accepted during output backpressure.
-    fn push_result(&mut self, result: io::Result<CoreMessage>) -> io::Result<()> {
-        match result {
-            Ok(message) => self.push(message),
-            Err(error) => {
-                self.ended = true;
-                self.failure = Some(error);
-                Ok(())
+    /// Retains the actual retirement owner and original deadline across canceled cleanup waits.
+    async fn close(&mut self) -> io::Result<()> {
+        self.begin_close();
+        match self.socket.as_mut() {
+            Some(Socket::Retired(socket)) => socket.finish_close().await,
+            Some(Socket::Closing(driver)) => driver.finish_close().await,
+            None => Ok(()),
+            Some(Socket::Connecting(_) | Socket::Pumping(_)) => {
+                unreachable!("synchronous consuming close")
             }
         }
-    }
-
-    /// Accepts one real already-bounded message; one last item may cross the byte threshold.
-    fn push(&mut self, message: CoreMessage) -> io::Result<()> {
-        if self.ended {
-            return Err(invalid(()));
-        }
-        let terminal = matches!(
-            message,
-            CoreMessage::Disconnect(_) | CoreMessage::Transfer(_)
-        );
-        let frame = session_wire::encode_core_message(&message).map_err(invalid)?;
-        self.bytes = self
-            .bytes
-            .checked_add(frame.len())
-            .ok_or_else(|| invalid(()))?;
-        self.ended = terminal;
-        self.frames.push_back((frame, terminal));
-        Ok(())
-    }
-
-    /// Releases only the actual front message, keeping the accepted terminal behind its prefix.
-    fn pop(&mut self) -> Option<(Bytes, bool)> {
-        let front = self.frames.pop_front()?;
-        self.bytes -= front.0.len();
-        Some(front)
     }
 }
 

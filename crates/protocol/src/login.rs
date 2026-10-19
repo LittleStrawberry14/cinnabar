@@ -39,8 +39,10 @@ pub use session_join::{JoinPreparation, SessionIo, SessionLogin};
 pub(crate) mod native_network;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use native_network::{
-    NativeAuthentication, NativeCredential, NativeProvider, NativeRelayConnecting,
-    NativeRelayConnection, NativeRelayHandoff, NativeRelayRetired, NativeTokenVerifier,
+    NativeAuthentication, NativeCredential, NativeProvider, NativeRelayClosing,
+    NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff,
+    NativeRelayInbound, NativeRelayRetired, NativeRelaySender, NativeRelayWritten,
+    NativeTokenVerifier,
 };
 mod unused_packets;
 mod web_handoff;

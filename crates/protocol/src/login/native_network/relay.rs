@@ -20,6 +20,12 @@ use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::io;
 
+mod pump;
+pub use pump::{
+    NativeRelayClosing, NativeRelayDriver, NativeRelayInbound, NativeRelaySender,
+    NativeRelayWritten,
+};
+
 /// An already-established RakNet socket retained through one caller-polled Login and pack attempt.
 ///
 /// The application must admit the exact socket address, account, controller and deadline before

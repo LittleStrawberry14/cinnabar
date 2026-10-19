@@ -193,8 +193,9 @@ pub use login::{
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use login::{
     ClientDataRefusal, NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
-    NativeRelayConnecting, NativeRelayConnection, NativeRelayHandoff, NativeRelayRetired,
-    NativeTokenVerifier, RawClientData, ValidatedClientData, relay_url_host,
+    NativeRelayClosing, NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver,
+    NativeRelayHandoff, NativeRelayInbound, NativeRelayRetired, NativeRelaySender,
+    NativeRelayWritten, NativeTokenVerifier, RawClientData, ValidatedClientData, relay_url_host,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,
