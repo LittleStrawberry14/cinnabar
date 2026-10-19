@@ -191,6 +191,8 @@ const (
 	MethodProfile = "profile.v1"
 	// MethodRealmMembership: Control method for realm membership.
 	MethodRealmMembership = "realm_membership.v1"
+	// RealmInviteInputBytes: Largest trimmed Realm invitation link or code input in bytes.
+	RealmInviteInputBytes = 255
 	// MethodPacketDelay: Control method for packet delay.
 	MethodPacketDelay = "packet_delay.v1"
 	// MethodPresence: Control method for presence.

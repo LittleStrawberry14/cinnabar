@@ -238,7 +238,7 @@ fn account_responses_from_before_sign_out_are_discarded() {
         socket_dir: PathBuf::new(),
         message_reports: crossbeam_channel::unbounded().0,
         invites: invites::Requests::disconnected(),
-        realm_membership: tokio::sync::mpsc::unbounded_channel().0,
+        realm_membership: realm_membership::Requests::disconnected(),
         cinnabar_rosters: crossbeam_channel::unbounded().0,
         presence_lifetime: TitlePresenceLifetime::new(),
     };

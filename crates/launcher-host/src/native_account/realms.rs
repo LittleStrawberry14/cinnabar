@@ -8,6 +8,8 @@ use std::num::NonZeroU64;
 
 const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(45);
 
+pub(super) mod membership;
+
 impl NativeAccount {
     /// Resolves a selected Realm and mints on the same mutable Minecraft owner, with no Go fallback.
     /// Direct targets retain their existing preparation; the returned target is the only endpoint dialled.
