@@ -60,18 +60,24 @@ fn native_cli_endpoint_normalizes_bare_host_and_ipv6_addresses() {
     }
 }
 
-/// Go-owned service locators retain an actual scoped Core endpoint despite native direct opt-in.
+/// Native Gatherings retain opaque selection; friend prefixes still own a scoped Core directory.
 #[cfg(feature = "native-networking")]
 #[test]
-fn native_cli_service_destinations_keep_core_directory_ownership() {
+fn native_cli_services_retain_native_gathering_and_core_friend_ownership() {
     let root = tempfile::tempdir().unwrap();
-    for address in [
-        format!(
-            "{}{}",
-            launcher::menu::EXPERIENCE_ADDRESS_PREFIX,
-            "00000000-0000-0000-0000-000000000007"
+    for (address, native) in [
+        (
+            format!(
+                "{}{}",
+                launcher::menu::EXPERIENCE_ADDRESS_PREFIX,
+                "00000000-0000-0000-0000-000000000007"
+            ),
+            true,
         ),
-        format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
+        (
+            format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
+            false,
+        ),
     ] {
         let parsed = run_args(&[
             "client",
@@ -82,11 +88,20 @@ fn native_cli_service_destinations_keep_core_directory_ownership() {
         ]);
         let directory = root.path().join(format!("direct-{}", std::process::id()));
         let endpoint = parsed.session_endpoint(directory.clone()).unwrap();
-        assert_eq!(endpoint.core_directory(), Some(directory.as_path()));
+        if native {
+            let protocol::SessionEndpoint::Native(target) = endpoint else {
+                panic!("Gathering selection lost its native account allocation owner");
+            };
+            assert_eq!(target.address, address);
+            assert_eq!(target.transport, protocol::NativeTransport::RakNet);
+        } else {
+            assert_eq!(endpoint.core_directory(), Some(directory.as_path()));
+        }
         let holder = bind_direct_session_directory(&parsed, directory.clone()).unwrap();
-        assert!(
+        assert_eq!(
             directory.is_dir(),
-            "Go provisioning requires its actual owned directory"
+            !native,
+            "only Core provisioning requires its actual owned directory"
         );
         drop(holder);
         assert!(

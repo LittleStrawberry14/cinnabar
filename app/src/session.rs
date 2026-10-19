@@ -755,10 +755,10 @@ fn end_transfer_without_follow(
 mod tests {
     use super::*;
 
-    /// Native opt-in retains the existing provisioning owner for non-direct destinations.
+    /// Native Gatherings retain their opaque selection while friend prefixes keep Core provisioning.
     #[cfg(feature = "native-networking")]
     #[test]
-    fn native_routing_preserves_go_gathering_and_friend_provisioning() {
+    fn native_routing_preserves_gathering_and_friend_provisioning_owners() {
         let controller = SessionController::default()
             .with_native_transport(Some(protocol::NativeTransport::RakNet));
         assert!(controller.native_direct_enabled("play.example.net", false));
@@ -781,8 +781,8 @@ mod tests {
             bridge::ConnectTarget::Gathering(_)
         ));
         assert!(
-            !controller.native_direct_enabled(&gathering, false),
-            "gathering destinations must reach the existing Go provisioning owner"
+            controller.native_direct_enabled(&gathering, false),
+            "gathering destinations must reach their native account allocation owner"
         );
     }
 
