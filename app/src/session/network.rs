@@ -14,6 +14,14 @@ pub(super) fn poll_join(
     if controller.join.is_none() {
         return;
     }
+    // Capture admitted mods even when a cold cache or transfer delays their preparation.
+    if session
+        .mod_registration
+        .as_ref()
+        .is_some_and(|watcher| watcher.preparing())
+    {
+        return;
+    }
     let client_random_id = match controller.poll_client_random_id() {
         Ok(Some(id)) => id,
         Ok(None) => return,
@@ -25,6 +33,7 @@ pub(super) fn poll_join(
         }
     };
     let attempt = controller.join.take().expect("pending join");
+    let server_address = attempt.address.clone();
     #[cfg(feature = "native-networking")]
     let native_auth_cache = attempt.auth_cache.clone();
     use client_session::connection::JoinPoll;
@@ -56,14 +65,17 @@ pub(super) fn poll_join(
             if let Some(directory) = directory {
                 controller.bind_directory(directory);
             }
-            let login_settings = controller.login_settings(menu, session.input.as_deref());
+            let mut login_settings = controller.login_settings(menu, session.input.as_deref());
+            login_settings.server_address = server_address;
             #[cfg(feature = "native-networking")]
             let native_account = if controller.native_friend.is_none()
                 && controller.native_gathering.is_none()
                 && controller.native_local_world.is_none()
                 && matches!(endpoint, protocol::SessionEndpoint::Native(_))
             {
-                native_auth_cache.map(|path| controller.native_account_for(menu, path))
+                controller.startup_account.take().or_else(|| {
+                    native_auth_cache.map(|path| controller.native_account_for(menu, path))
+                })
             } else {
                 None
             };
@@ -98,12 +110,16 @@ pub(super) fn poll_join(
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
                 session.ui_catalog.as_deref(),
+                session
+                    .packet_mods
+                    .as_ref()
+                    .and_then(|mods| mods.session_relay()),
                 crate::runtime::network::session_registries::RegistryBase::new(
                     &session.state.client_world.runtime_assets,
                     &session.collisions,
                 ),
             ) {
-                if owned_core {
+                if owned_core || controller.core.id().is_some() {
                     let directory = controller.directory.take();
                     controller.core.stop_detached(move || drop(directory));
                 }
@@ -146,6 +162,7 @@ fn start_network(
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
     ui_catalog: Option<&crate::runtime::network::PackUiCatalog>,
+    packet_relay: Option<std::sync::Arc<dyn protocol::PacketRelay>>,
     registry_base: crate::runtime::network::session_registries::RegistryBase,
 ) -> Result<(), String> {
     bridge::join_profile::JoinProfile::current().mark("core_ready");
@@ -177,6 +194,7 @@ fn start_network(
         },
         runtime,
         tasks,
+        packet_relay,
     )
     .map_err(|error| error.to_string())?;
     commands.insert_resource(
@@ -186,4 +204,106 @@ fn start_network(
     );
     commands.insert_resource(replacement);
     Ok(())
+}
+
+/// Starts provisioning a fresh core and network session for one address,
+/// replacing any previous session; [`network::poll_join`] finishes it on later frames.
+///
+/// This is the single replacement-handoff path shared by user joins and
+/// automatic server-transfer follows: identity-checked session directory,
+/// bounded core start wait, old-network shutdown, and a fresh session
+/// generation for every attempt. A running launcher core takes the join
+/// instead: it selects the target over `connect.v1` and the session dials it.
+pub(super) fn attempt_connect(
+    menu: &mut MenuRuntime,
+    session: &mut SessionResources<'_>,
+    cache: &BlobCache,
+    intent: JoinIntent,
+) {
+    let profile = bridge::join_profile::JoinProfile::current();
+    if profile.id().is_none() {
+        bridge::join_profile::JoinProfile::begin();
+    }
+    bridge::join_profile::JoinProfile::current().mark("session_controller");
+    let JoinIntent {
+        address,
+        auth_cache,
+        local_world,
+    } = intent;
+    menu.remember_retry_target(&address, auth_cache.as_deref(), local_world);
+    // A replacement owns no route back into the old session, even when
+    // provisioning the new endpoint fails before the connecting screen opens.
+    menu.show_home();
+    let generation = session.retire();
+    session.controller.trust = None;
+    session
+        .state
+        .runtime
+        .experiences
+        .select_destination(&address);
+    menu.begin_join_progress(&address, local_world);
+    let mut presence = presence_target(&address, local_world);
+    if local_world {
+        presence.join = menu.hosted_world_address();
+        presence.max_players = menu.hosted_world_max_players();
+    } else {
+        presence.badge = menu.featured_badge(&address);
+        presence.max_players = menu.destination_max_players(&address);
+    }
+    session.controller.presence = Some(presence);
+    session.controller.local_world = local_world;
+    session.controller.destination_identity = Some(
+        if let Some(id) = menu.local_world_identity().filter(|_| local_world) {
+            format!("local:{id}")
+        } else {
+            format!("remote:{}", address.trim().to_lowercase())
+        },
+    );
+    let launcher = session
+        .launcher
+        .as_deref()
+        .filter(|_| {
+            !session
+                .controller
+                .native_provisioning_selected(&address, local_world)
+        })
+        .and_then(|slot| {
+            slot.begin_join(
+                &address,
+                local_world,
+                auth_cache.is_some(),
+                menu.is_launcher(),
+            )
+        });
+    let controller = &mut *session.controller;
+    if let Err(message) = controller.prepare_client_random_id(menu.layout()) {
+        controller.fail_join(menu, message);
+        return;
+    }
+    let stage = match launcher {
+        Some(receiver) => JoinStage::Launcher(receiver),
+        // A local world exists only behind the launcher core.
+        None if local_world => {
+            controller.fail_join(menu, format!("Could not open {address}: no launcher core"));
+            return;
+        }
+        None => {
+            match controller.start_core(menu, cache, &address, auth_cache.as_deref(), generation) {
+                Ok(stage) => stage,
+                Err(message) => {
+                    controller.fail_join(menu, message);
+                    return;
+                }
+            }
+        }
+    };
+    controller.join = Some(JoinAttempt {
+        generation,
+        address,
+        auth_cache,
+        local_world,
+        stage,
+    });
+    controller.connecting = true;
+    menu.show_connecting();
 }

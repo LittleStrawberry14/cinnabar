@@ -2,7 +2,7 @@
 
 use super::super::{JoinPreparation, NativeJoinPreparation, PlaySession, SessionLogin};
 use super::negotiated::NegotiatedConnection;
-use crate::session_transport::{MAX_READ_AHEAD_BYTES, SessionTransport};
+use crate::session_transport::SessionTransport;
 use crate::{GameData, ProtocolError};
 use bedrock_packs::ResourcePackHandoff;
 
@@ -17,7 +17,36 @@ pub(super) async fn continue_join<P: Send + 'static>(
         packs,
     } = negotiated;
     let deferred = connection.take_deferred();
+    let packs = if let Some(relay) = &login.relay {
+        let startup: Vec<_> = deferred
+            .iter()
+            .map(|packet| packet.body().clone())
+            .collect();
+        let added = crate::packet_relay::start(
+            std::sync::Arc::clone(relay),
+            connection
+                .identity
+                .as_ref()
+                .expect("negotiation retains the actual Login identity")
+                .clone(),
+            super::super::client_data::login_client_data(
+                login.display_name,
+                login.client_random_id,
+                login.skin.as_ref(),
+                login.settings,
+            )
+            .to_string(),
+            &startup,
+        )
+        .await;
+        packs.with_relay_packs(added)
+    } else {
+        packs
+    };
     let mut transport = SessionTransport::from_native(connection).with_tap(login.tap);
+    if let Some(relay) = login.relay {
+        transport.set_relay(relay);
+    }
     transport.adopt_startup(deferred);
     let preparation = NativeJoinPreparation;
     let mut prepared_job = None;
@@ -32,11 +61,8 @@ pub(super) async fn continue_join<P: Send + 'static>(
     )
     .await?;
     let job = prepared_job.expect("spawn requires StartGame and item registry");
-    tokio::pin!(job);
-    let prepared = tokio::select! {
-        value = &mut job => value,
-        () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => job.await,
-    };
+    transport.finish_startup();
+    let prepared = super::super::session_join::prepare_with_read_ahead(&mut transport, job).await?;
     Ok((
         PlaySession::new(transport, login.cache, initialization),
         prepared,

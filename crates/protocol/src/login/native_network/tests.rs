@@ -15,6 +15,8 @@ async fn authenticated_lan_rejects_an_empty_target_before_discovery() {
             skin: None,
             settings: &settings,
             tap: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            relay: None,
             target: None,
         },
         authentication,
@@ -48,6 +50,8 @@ async fn selected_local_lan_refuses_an_online_handoff_before_discovery() {
             skin: None,
             settings: &settings,
             tap: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            relay: None,
             target: None,
         },
         provider::authentication(),

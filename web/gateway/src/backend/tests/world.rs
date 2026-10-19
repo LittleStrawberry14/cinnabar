@@ -90,6 +90,8 @@ async fn accepted_play_reaches_owned_bds_world() {
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    relay: None,
                     target: Some(bridge::ConnectTarget::RakNet(address.to_string())),
                 },
                 join,

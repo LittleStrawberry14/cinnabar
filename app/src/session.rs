@@ -46,6 +46,8 @@ mod native_transfer_tests;
 #[cfg(feature = "native-networking")]
 pub(crate) mod native_trust;
 mod network;
+use network::attempt_connect;
+mod startup;
 mod url_policy;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
@@ -82,6 +84,9 @@ pub(crate) struct SessionController {
     native_transport: Option<protocol::NativeTransport>,
     #[cfg(feature = "native-networking")]
     native_account: Option<native_account::SelectedAccount>,
+    /// The original startup selection retained while packet mods are admitted.
+    #[cfg(feature = "native-networking")]
+    startup_account: Option<std::sync::Arc<launcher_host::native_account::NativeAccount>>,
     #[cfg(feature = "native-networking")]
     native_friend: Option<launcher_host::native_account::NativeFriendSelection>,
     #[cfg(feature = "native-networking")]
@@ -161,6 +166,8 @@ impl SessionController {
             native_transport: None,
             #[cfg(feature = "native-networking")]
             native_account: None,
+            #[cfg(feature = "native-networking")]
+            startup_account: None,
             #[cfg(feature = "native-networking")]
             native_friend: None,
             #[cfg(feature = "native-networking")]
@@ -260,6 +267,7 @@ impl SessionController {
         self.connecting = false;
         #[cfg(feature = "native-networking")]
         {
+            self.startup_account = None;
             self.native_friend = None;
             self.native_friend_session = false;
             self.native_gathering = None;
@@ -388,7 +396,8 @@ impl SessionController {
         self.connecting = connecting;
     }
 
-    /// Borrows the original process owner for cleanup when initial worker startup fails.
+    /// Borrows the original process owner for cleanup fixtures.
+    #[cfg(test)]
     pub(crate) fn core_mut(&mut self) -> &mut CoreProcessGuard {
         &mut self.core
     }
@@ -405,6 +414,8 @@ pub(crate) struct SessionResources<'w> {
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,
     far_terrain: Option<ResMut<'w, crate::far_terrain::FarTerrain>>,
+    packet_mods: Option<Res<'w, crate::modding::packets::PacketMods>>,
+    mod_registration: Option<Res<'w, crate::modding::registration::Watcher>>,
 }
 
 impl SessionResources<'_> {
@@ -431,6 +442,7 @@ impl SessionResources<'_> {
         controller.local_world = false;
         #[cfg(feature = "native-networking")]
         {
+            controller.startup_account = None;
             controller.native_friend = None;
             controller.native_friend_session = false;
             controller.native_gathering = None;
@@ -448,108 +460,6 @@ impl SessionResources<'_> {
     }
 }
 
-/// Starts provisioning a fresh core and network session for one address,
-/// replacing any previous session; [`network::poll_join`] finishes it on later frames.
-///
-/// This is the single replacement-handoff path shared by user joins and
-/// automatic server-transfer follows: identity-checked session directory,
-/// bounded core start wait, old-network shutdown, and a fresh session
-/// generation for every attempt. A running launcher core takes the join
-/// instead: it selects the target over `connect.v1` and the session dials it.
-fn attempt_connect(
-    menu: &mut MenuRuntime,
-    session: &mut SessionResources<'_>,
-    cache: &BlobCache,
-    intent: JoinIntent,
-) {
-    let profile = bridge::join_profile::JoinProfile::current();
-    if profile.id().is_none() {
-        bridge::join_profile::JoinProfile::begin();
-    }
-    bridge::join_profile::JoinProfile::current().mark("session_controller");
-    let JoinIntent {
-        address,
-        auth_cache,
-        local_world,
-    } = intent;
-    menu.remember_retry_target(&address, auth_cache.as_deref(), local_world);
-    // A replacement owns no route back into the old session, even when
-    // provisioning the new endpoint fails before the connecting screen opens.
-    menu.show_home();
-    let generation = session.retire();
-    session.controller.trust = None;
-    session
-        .state
-        .runtime
-        .experiences
-        .select_destination(&address);
-    menu.begin_join_progress(&address, local_world);
-    let mut presence = presence_target(&address, local_world);
-    if local_world {
-        presence.join = menu.hosted_world_address();
-        presence.max_players = menu.hosted_world_max_players();
-    } else {
-        presence.badge = menu.featured_badge(&address);
-        presence.max_players = menu.destination_max_players(&address);
-    }
-    session.controller.presence = Some(presence);
-    session.controller.local_world = local_world;
-    session.controller.destination_identity = Some(
-        if let Some(id) = menu.local_world_identity().filter(|_| local_world) {
-            format!("local:{id}")
-        } else {
-            format!("remote:{}", address.trim().to_lowercase())
-        },
-    );
-    let launcher = session
-        .launcher
-        .as_deref()
-        .filter(|_| {
-            !session
-                .controller
-                .native_provisioning_selected(&address, local_world)
-        })
-        .and_then(|slot| {
-            slot.begin_join(
-                &address,
-                local_world,
-                auth_cache.is_some(),
-                menu.is_launcher(),
-            )
-        });
-    let controller = &mut *session.controller;
-    if let Err(message) = controller.prepare_client_random_id(menu.layout()) {
-        controller.fail_join(menu, message);
-        return;
-    }
-    let stage = match launcher {
-        Some(receiver) => JoinStage::Launcher(receiver),
-        // A local world exists only behind the launcher core.
-        None if local_world => {
-            controller.fail_join(menu, format!("Could not open {address}: no launcher core"));
-            return;
-        }
-        None => {
-            match controller.start_core(menu, cache, &address, auth_cache.as_deref(), generation) {
-                Ok(stage) => stage,
-                Err(message) => {
-                    controller.fail_join(menu, message);
-                    return;
-                }
-            }
-        }
-    };
-    controller.join = Some(JoinAttempt {
-        generation,
-        address,
-        auth_cache,
-        local_world,
-        stage,
-    });
-    controller.connecting = true;
-    menu.show_connecting();
-}
-
 /// Captures the player's settings as the join starts, including a hidden-menu launch.
 pub(crate) fn login_settings(
     menu: &MenuRuntime,
@@ -557,6 +467,7 @@ pub(crate) fn login_settings(
     parallel_resource_pack_urls: bool,
 ) -> protocol::LoginSettings {
     protocol::LoginSettings {
+        server_address: String::new(),
         language_code: pack_runtime::pack_language::active_language_code(),
         input_mode: input
             .and_then(|input| input.snapshot())

@@ -31,6 +31,9 @@ pub use session_endpoint::{NativeConnectionTarget, NativeTransport, SessionEndpo
 mod movement;
 mod nbt_tree;
 mod packet;
+mod packet_relay;
+pub use bedrock_packs::RelayPack;
+pub use packet_relay::{PacketRelay, RELAY_TICK, RelayOutput};
 pub mod packet_tap;
 mod particle;
 mod permissions;

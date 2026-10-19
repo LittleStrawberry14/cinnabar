@@ -17,6 +17,7 @@ pub fn spawn_network<P: Send + 'static>(
     + Send
     + 'static,
     observation: SessionTrace,
+    packet_relay: Option<Arc<dyn protocol::PacketRelay>>,
 ) -> Result<NetworkHandle<P>, std::io::Error> {
     spawn_network_with_companion(
         config,
@@ -24,6 +25,7 @@ pub fn spawn_network<P: Send + 'static>(
         tasks,
         prepare_presentation,
         observation,
+        packet_relay,
         (),
     )
 }
@@ -41,6 +43,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
     + Send
     + 'static,
     observation: SessionTrace,
+    packet_relay: Option<Arc<dyn protocol::PacketRelay>>,
     mut companion: impl SessionCompanion,
 ) -> Result<NetworkHandle<P>, std::io::Error> {
     let profile = bridge::join_profile::JoinProfile::current();
@@ -97,6 +100,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                         skin: Some(config.player_skin),
                         settings: &config.login_settings,
                         tap: Some(packet_tap),
+                        relay: packet_relay,
                         target: None,
                     };
                     #[cfg(feature = "native-networking")]

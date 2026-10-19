@@ -250,6 +250,8 @@ async fn native_provider_expired_handoff_cannot_start_a_connection() {
             skin: None,
             settings: &settings,
             tap: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            relay: None,
             target: None,
         },
         authentication_at(observed),
