@@ -9,10 +9,14 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 use super::{PacketSender, Reader, SessionTransport};
 use crate::login::native_network::{Connection, PacketConnection};
+
+mod budget;
+use budget::ByteBudget;
+pub(crate) use budget::ByteCredit;
 
 const QUEUED_BATCHES: usize = 4;
 pub(crate) const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,7 +27,7 @@ type PendingInput = Option<IncomingBody>;
 #[derive(Debug)]
 pub(crate) struct IncomingBody {
     pub(crate) body: io::Result<Bytes>,
-    pub(crate) permit: Option<OwnedSemaphorePermit>,
+    pub(crate) permit: Option<ByteCredit>,
 }
 
 /// Transfers the same uncommitted incoming tail after the actual transport close attempt.
@@ -257,26 +261,36 @@ pub(crate) fn prepare(connection: impl PacketConnection) -> PreparedPump {
 /// Prepares the same incoming owner; byte credit must be attached before FIFO commitment.
 pub(crate) fn prepare_with_byte_budget(
     mut connection: impl PacketConnection,
-    _byte_budget: Option<usize>,
+    byte_budget: Option<usize>,
 ) -> PreparedPump {
+    let mut budget = byte_budget.map(ByteBudget::new);
     let (sender, mut writes) = write_channel(QUEUED_BATCHES);
     let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
     let (stop, mut stopping) = oneshot::channel();
     let driver = Box::pin(async move {
         let mut pending: PendingInput = None;
+        let mut reservation: Option<budget::Reservation> = None;
         loop {
+            let allows_read =
+                pending.is_none() && budget.as_ref().is_none_or(ByteBudget::allows_read);
+            let ready_input = pending.is_some() && reservation.is_none();
             tokio::select! {
                 _ = &mut stopping => break,
                 _ = incoming.closed() => break,
-                permit = incoming.reserve(), if pending.is_some() => {
+                permit = incoming.reserve(), if ready_input => {
                     let Ok(permit) = permit else { break };
                     let item = pending.take().expect("pending input");
                     let ended = item.body.is_err();
                     permit.send(item);
                     if ended { break; }
                 }
+                credit = async { reservation.as_mut().expect("pending byte reservation").await }, if reservation.is_some() => {
+                    reservation = None;
+                    pending.as_mut().expect("reserved incoming body").permit = Some(credit);
+                }
+                _ = async { budget.as_mut().expect("read-gated byte budget").changed().await }, if pending.is_none() && !allows_read => {}
                 result = async {
-                    if pending.is_none() {
+                    if allows_read {
                         Some(connection.recv_body().await)
                     } else {
                         connection.maintain().await;
@@ -285,6 +299,9 @@ pub(crate) fn prepare_with_byte_budget(
                 } => {
                     if let Some(result) = result {
                         if result.is_err() { writes.fail(); }
+                        reservation = result.as_ref().ok().and_then(|body| {
+                            budget.as_ref().map(|budget| budget.reserve(body.len()))
+                        });
                         pending = Some(IncomingBody { body: result, permit: None });
                     }
                 }

@@ -1,7 +1,9 @@
 //! Concrete application capabilities around the same bounded desktop connection pump.
 
 use super::{NativeRelayConnection, packet_id, terminal};
-use crate::session_transport::native::{self, DriverEnd, IncomingBody, NativeSender, PreparedPump};
+use crate::session_transport::native::{
+    self, ByteCredit, DriverEnd, IncomingBody, NativeSender, PreparedPump,
+};
 use crate::session_wire::CoreMessage;
 use bedrock_protocol_1_26_51::{packets::PacketId, wire};
 use bytes::Bytes;
@@ -12,7 +14,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 type Completion = Result<(), Arc<io::Error>>;
 type Work = Pin<Box<dyn Future<Output = DriverEnd> + Send>>;
@@ -38,7 +40,7 @@ pub struct NativeRelayInbound {
     incoming: mpsc::Receiver<IncomingBody>,
     tail: Option<oneshot::Receiver<PendingInput>>,
     current: Option<wire::Frames>,
-    permit: Option<OwnedSemaphorePermit>,
+    permit: Option<ByteCredit>,
     ended: bool,
 }
 
@@ -63,6 +65,8 @@ pub struct NativeRelayClosing {
 impl NativeRelayConnection {
     /// Moves this exact established connection into the original bounded pump without spawning.
     /// The caller must continuously poll the unique driver beside its application I/O.
+    /// Input byte credit remains held through the active batch cursor. A valid body larger
+    /// than the queue budget occupies it alone; returned packet slices belong to the caller.
     pub fn into_pump(self) -> (NativeRelaySender, NativeRelayInbound, NativeRelayDriver) {
         split(
             native::prepare_with_byte_budget(
@@ -191,11 +195,15 @@ impl NativeRelayInbound {
                 continue;
             };
             let entry = entry.map_err(io::Error::other)?;
-            let mut reader = wire::Reader::from_shared(entry.frame());
-            reader.read_var_u32().map_err(io::Error::other)?;
-            let raw = entry.frame().slice(reader.position()..);
+            let raw = {
+                let mut reader = wire::Reader::from_shared(entry.frame());
+                reader.read_var_u32().map_err(io::Error::other)?;
+                entry.frame().slice(reader.position()..)
+            };
             if let Some(message) = terminal(&raw)? {
                 self.ended = true;
+                drop(raw);
+                drop(entry);
                 self.current = None;
                 self.permit = None;
                 return Ok(message);
