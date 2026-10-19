@@ -4,9 +4,9 @@ use crate::local_worlds::HostOpening;
 use protocol::NativeConnectionTarget;
 
 pub(in crate::native_account::hosted_world) enum HostedBackend {
-    Dragonfly(NativeHostedProcess),
+    Dragonfly(Box<NativeHostedProcess>),
     Bds {
-        opening: HostOpening,
+        opening: Box<HostOpening>,
         target: NativeConnectionTarget,
     },
 }
@@ -30,11 +30,15 @@ impl NativeHostedWorld {
             bridge::Backend::Dragonfly => self
                 .prepare_dragonfly_bridge(deadline)
                 .await
+                .map(Box::new)
                 .map(HostedBackend::Dragonfly),
             bridge::Backend::Bds => {
                 let target = opening.native_connection_target()?;
                 self.wait_process(&opening, deadline).await?;
-                Ok(HostedBackend::Bds { opening, target })
+                Ok(HostedBackend::Bds {
+                    opening: Box::new(opening),
+                    target,
+                })
             }
         }
     }
