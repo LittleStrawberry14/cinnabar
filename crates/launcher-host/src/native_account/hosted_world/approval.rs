@@ -3,6 +3,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bedrock_services::xbox::mpsd;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -203,6 +204,22 @@ impl Approvals {
             && self.desired.get(owner).is_some_and(|entry| {
                 entry.value.as_str() == nonce && self.members.get(owner) == Some(&entry.member)
             })
+    }
+
+    /// Rechecks the original captured member revision and nonce after current service authority.
+    pub(super) fn rechecks(
+        &self,
+        owner: &str,
+        revision: u64,
+        digest: &[u8; 32],
+    ) -> io::Result<bool> {
+        let document = self.document()?;
+        let nonce = document.get(owner).and_then(Value::as_str).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "host approval member departed")
+        })?;
+        Ok(self.revision() == revision
+            && self.accepts(owner, nonce)
+            && <[u8; 32]>::from(Sha256::digest(nonce.as_bytes())) == *digest)
     }
 }
 

@@ -475,18 +475,12 @@ impl HostDirectory {
             .approvals
             .as_ref()
             .ok_or_else(|| invalid("host approval owner is unavailable"))?;
-        let document = approvals.document()?;
-        let nonce = document
-            .get(&approval.xuid)
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("host approval member departed"))?;
+        let member = approvals.rechecks(&approval.xuid, approval.revision, &approval.nonce)?;
         if !self.opening.same(&approval.opening)
             || scope.generation != approval.scope.generation
             || scope.xuid != approval.scope.xuid
             || !self.reference.same(&approval.reference)
-            || approvals.revision() != approval.revision
-            || !approvals.accepts(&approval.xuid, nonce)
-            || <[u8; 32]>::from(Sha256::digest(nonce.as_bytes())) != approval.nonce
+            || !member
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
