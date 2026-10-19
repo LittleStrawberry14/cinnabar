@@ -16,6 +16,9 @@ pub(super) fn valid(address: &str) -> bool {
     let Some((host, port)) = address.rsplit_once(':') else {
         return false;
     };
+    if port.contains(['[', ']']) {
+        return false;
+    }
     if let Some(host) = host.strip_prefix('[') {
         let Some(host) = host.strip_suffix(']') else {
             return false;

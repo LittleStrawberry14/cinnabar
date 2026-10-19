@@ -5,8 +5,10 @@ use base64::{
     Engine as _, alphabet,
     engine::{GeneralPurpose, GeneralPurposeConfig},
 };
-use serde_json::{Value, value::RawValue};
+use serde_json::value::RawValue;
 use std::{borrow::Cow, io};
+
+mod json;
 
 const STANDARD: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,
@@ -165,9 +167,5 @@ fn decoded_object(data: &str) -> bool {
     let Some(decoded) = decode(data) else {
         return false;
     };
-    decoded.is_empty()
-        || matches!(
-            serde_json::from_slice::<Value>(&decoded),
-            Ok(Value::Null | Value::Object(_))
-        )
+    decoded.is_empty() || json::object_or_null(&decoded)
 }

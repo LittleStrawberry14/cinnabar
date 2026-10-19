@@ -9,6 +9,7 @@ use bridge::contract::{
 use std::{fmt, io};
 
 mod address;
+mod json_generated;
 mod locale;
 mod locale_generated;
 mod name;
