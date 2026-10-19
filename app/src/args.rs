@@ -184,6 +184,8 @@ pub enum ArgsError {
         "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
+    #[error("native friend-world startup requires a verified friend selection")]
+    NativeFriendSelectionRequired,
     #[error("--native-networking must be addressed, raknet or nethernet-lan")]
     InvalidNativeTransport,
     #[error("--parallel-resource-pack-urls requires --native-networking")]
@@ -489,12 +491,17 @@ impl ClientArgs {
             if !self.socket_dir_explicit
                 && let Some(address) = &self.address
             {
-                return Ok(
-                    match crate::session::destination::native_target(address, transport, false) {
-                        Some(target) => protocol::SessionEndpoint::Native(target),
-                        None => protocol::SessionEndpoint::Core(directory),
-                    },
-                );
+                return match crate::session::destination::classify(address, transport, false) {
+                    crate::session::destination::Destination::Network(target) => {
+                        Ok(protocol::SessionEndpoint::Native(target))
+                    }
+                    crate::session::destination::Destination::FriendSelectionRequired => {
+                        Err(ArgsError::NativeFriendSelectionRequired)
+                    }
+                    crate::session::destination::Destination::LocalWorld => {
+                        Err(ArgsError::NativeNetworkingUnavailable)
+                    }
+                };
             }
             let _ = transport;
             return Err(ArgsError::NativeNetworkingUnavailable);
@@ -577,6 +584,41 @@ mod tests {
             ClientArgs::parse_from(["client", "--native-networking", "unknown"]),
             Err(ArgsError::InvalidNativeTransport)
         ));
+    }
+
+    /// Explicit native CLI selection cannot turn a display-only friend address into a Go route.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    #[test]
+    fn explicit_native_friend_startup_never_selects_core_from_a_display_target() {
+        let address = format!("{}2535", bridge::contract::FRIEND_TARGET_PREFIX);
+        let directory = PathBuf::from("unused-friend-cli-endpoint");
+        let ParseOutcome::Run(go) =
+            ClientArgs::parse_from(["client", "--address", address.as_str()]).unwrap()
+        else {
+            panic!("explicit Go fixture arguments");
+        };
+        assert!(matches!(
+            go.session_endpoint(directory.clone()).unwrap(),
+            protocol::SessionEndpoint::Core(selected) if selected == directory
+        ));
+        let mut outcomes = Vec::new();
+        for mode in ["addressed", "raknet", "nethernet-lan"] {
+            let ParseOutcome::Run(native) = ClientArgs::parse_from([
+                "client",
+                "--address",
+                address.as_str(),
+                "--native-networking",
+                mode,
+            ])
+            .unwrap() else {
+                panic!("explicit native fixture arguments");
+            };
+            outcomes.push(native.session_endpoint(directory.clone()));
+        }
+        assert!(
+            outcomes.iter().all(Result::is_err),
+            "explicit native friend startup silently selected a Core endpoint"
+        );
     }
 
     #[test]

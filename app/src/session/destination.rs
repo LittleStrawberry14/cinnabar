@@ -2,19 +2,26 @@
 
 use protocol::{NativeConnectionTarget, NativeTransport};
 
+/// Distinguishes native provisioning from destinations requiring another owned selection.
+pub(crate) enum Destination {
+    Network(NativeConnectionTarget),
+    LocalWorld,
+    FriendSelectionRequired,
+}
+
 /// Keeps service-owned destinations on their provisioning path and normalizes only direct endpoints.
-pub(crate) fn native_target(
+pub(crate) fn classify(
     address: &str,
     transport: NativeTransport,
     local_world: bool,
-) -> Option<NativeConnectionTarget> {
+) -> Destination {
     if local_world {
-        return None;
+        return Destination::LocalWorld;
     }
     if launcher_host::native_account::is_realm_target(address)
         || protocol::NativeRawTarget::recognizes(address)
     {
-        return Some(NativeConnectionTarget::new(
+        return Destination::Network(NativeConnectionTarget::new(
             address.trim().to_owned(),
             NativeTransport::RakNet,
         ));
@@ -26,13 +33,15 @@ pub(crate) fn native_target(
             } else {
                 normalized
             };
-            Some(NativeConnectionTarget::new(address, transport))
+            Destination::Network(NativeConnectionTarget::new(address, transport))
         }
-        bridge::ConnectTarget::Gathering(_) => Some(NativeConnectionTarget::new(
-            address.trim().to_owned(),
-            NativeTransport::RakNet,
-        )),
-        bridge::ConnectTarget::Realm(_) | bridge::ConnectTarget::Friend(_) => None,
+        bridge::ConnectTarget::Gathering(_) | bridge::ConnectTarget::Realm(_) => {
+            Destination::Network(NativeConnectionTarget::new(
+                address.trim().to_owned(),
+                NativeTransport::RakNet,
+            ))
+        }
+        bridge::ConnectTarget::Friend(_) => Destination::FriendSelectionRequired,
     }
 }
 
@@ -51,8 +60,10 @@ mod tests {
             (bridge::contract::NETHERNET_SIGNALING_WEBSOCKET, "00042"),
         ] {
             let address = format!("{}{tag}/{id}", bridge::contract::NETHERNET_TARGET_PREFIX);
-            let target = native_target(&address, NativeTransport::RakNet, false)
-                .expect("explicit service route remained on Core");
+            let Destination::Network(target) = classify(&address, NativeTransport::RakNet, false)
+            else {
+                panic!("explicit service route remained on Core");
+            };
             assert_eq!(
                 target.address, address,
                 "service grammar was normalized as a DNS endpoint"

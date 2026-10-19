@@ -91,11 +91,12 @@ fn native_cli_endpoint_normalizes_bare_host_and_ipv6_addresses() {
     }
 }
 
-/// Native Gatherings retain opaque selection; friend prefixes still own a scoped Core directory.
+/// Native Gatherings keep their owner; unverified friends require an explicit Core selection.
 #[cfg(feature = "native-networking")]
 #[test]
 fn native_cli_services_retain_native_gathering_and_core_friend_ownership() {
     let root = tempfile::tempdir().unwrap();
+    let friend = format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX);
     for (address, native) in [
         (
             format!(
@@ -105,18 +106,13 @@ fn native_cli_services_retain_native_gathering_and_core_friend_ownership() {
             ),
             true,
         ),
-        (
-            format!("{}123", bridge::contract::FRIEND_TARGET_PREFIX),
-            false,
-        ),
+        (friend.clone(), false),
     ] {
-        let parsed = run_args(&[
-            "client",
-            "--address",
-            &address,
-            "--native-networking",
-            "raknet",
-        ]);
+        let mut arguments = vec!["client", "--address", address.as_str()];
+        if native {
+            arguments.extend(["--native-networking", "raknet"]);
+        }
+        let parsed = run_args(&arguments);
         let directory = root.path().join(format!("direct-{}", std::process::id()));
         let endpoint = parsed.session_endpoint(directory.clone()).unwrap();
         if native {
@@ -137,9 +133,33 @@ fn native_cli_services_retain_native_gathering_and_core_friend_ownership() {
         drop(holder);
         assert!(
             !directory.exists(),
-            "the fallback directory lost scoped cleanup"
+            "the Core directory lost scoped cleanup"
         );
     }
+
+    let parsed = run_args(&[
+        "client",
+        "--address",
+        &friend,
+        "--native-networking",
+        "raknet",
+    ]);
+    let directory = root.path().join(format!("direct-{}", std::process::id()));
+    assert!(matches!(
+        parsed.session_endpoint(directory.clone()),
+        Err(args::ArgsError::NativeFriendSelectionRequired)
+    ));
+    let Err(error) = bind_direct_session_directory(&parsed, directory.clone()) else {
+        panic!("unverified native friend bound a Core directory");
+    };
+    assert_eq!(
+        error.downcast_ref::<args::ArgsError>(),
+        Some(&args::ArgsError::NativeFriendSelectionRequired)
+    );
+    assert!(
+        !directory.exists(),
+        "native friend refusal created a Core directory"
+    );
 }
 
 /// Native preference alone starts the launcher without creating a fictitious connection directory.
