@@ -27,7 +27,7 @@ struct Open {
 
 enum State {
     Loading(Mutex<mpsc::Receiver<Result<OptionSession, String>>>),
-    Ready(Editor),
+    Ready(Box<Editor>),
     Failed(String),
 }
 
@@ -71,7 +71,7 @@ impl Open {
             .unwrap_or_else(|e| e.into_inner())
             .try_recv();
         self.state = match received {
-            Ok(Ok(session)) => State::Ready(Editor::new(session, &self.name)),
+            Ok(Ok(session)) => State::Ready(Box::new(Editor::new(session, &self.name))),
             Ok(Err(reason)) => State::Failed(reason),
             Err(mpsc::TryRecvError::Empty) => return false,
             Err(mpsc::TryRecvError::Disconnected) => {
