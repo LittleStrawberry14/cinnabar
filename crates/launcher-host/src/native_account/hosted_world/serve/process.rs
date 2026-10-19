@@ -60,7 +60,7 @@ impl NativeHostedWorld {
     }
 
     /// Rechecks the concrete prepared bridge before any peer is routed into its selected world.
-    pub(super) async fn check_bridge(
+    pub(in crate::native_account::hosted_world) async fn check_bridge(
         &mut self,
         process: &NativeHostedProcess,
         deadline: Instant,
@@ -71,8 +71,7 @@ impl NativeHostedWorld {
     /// Retains the original process/opening while unrelated account work temporarily owns its proof.
     async fn wait_process(&mut self, opening: &HostOpening, deadline: Instant) -> io::Result<()> {
         loop {
-            self.directory_mut()?
-                .service_barrier(Some(deadline))
+            self.peer_io(Some(deadline), std::future::ready(Ok(())))
                 .await?;
             match self.check_process(opening) {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
