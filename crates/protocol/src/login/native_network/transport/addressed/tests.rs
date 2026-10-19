@@ -1,4 +1,6 @@
 use super::*;
+
+const MAX_PROBE_REQUEST_BYTES: usize = 64 * 1024;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -14,7 +16,7 @@ async fn http_probe(listener: &TcpListener) -> TcpStream {
     let (mut http, _) = listener.accept().await.unwrap();
     let mut request = Vec::new();
     while !request.ends_with(b"\r\n\r\n") {
-        assert!(request.len() < bridge::contract::CONTROL_MAX_FRAME_LEN);
+        assert!(request.len() < MAX_PROBE_REQUEST_BYTES);
         request.push(http.read_u8().await.unwrap());
     }
     let first = std::str::from_utf8(&request)

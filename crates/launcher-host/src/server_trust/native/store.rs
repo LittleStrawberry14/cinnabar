@@ -8,6 +8,7 @@ use std::{
 };
 
 pub(super) const MAX_TRUSTED_KEYS: usize = 100;
+const MAX_STORE_BYTES: usize = 64 * 1024;
 
 #[derive(Default, Deserialize, Serialize)]
 struct Document {
@@ -87,7 +88,7 @@ fn load(path: &Path) -> Option<Document> {
             Err(error) => return Err(error),
         };
         let mut bytes = Vec::new();
-        let limit = bridge::contract::CONTROL_MAX_FRAME_LEN;
+        let limit = MAX_STORE_BYTES;
         file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > limit {
             return Err(io::Error::other("server trust file exceeds limit"));
