@@ -2,6 +2,15 @@
 
 ## Native direct networking (in progress)
 
+Current native application all-target and browser WebAssembly checks pass. Fresh
+renderer-free Linux BDS joins over RakNet and directed NetherNet loaded an original
+resource pack, reached spawn, received terrain and closed. The accepted native
+TLS/WebSocket gateway also passes protocol-refusal, upload-pacing, original-deadline
+and channel-mismatch regressions. Its actual BDS join exercises the shared Rust web
+consumer through required-pack verification, spawn, terrain, play-owner handback
+and control cleanup. This is separate from real-browser rendering and live-account
+acceptance. Final common-source Clippy, review and integration gates remain open.
+
 The optional native backend consumes reusable Login, pack and spawn negotiation
 and shared JSONC/archive handoffs. Cinnabar retains bounded CDN/cache I/O,
 installation and presentation. Owning protocol tests and strict protocol/host

@@ -4,7 +4,9 @@ The optional `native-networking` backend supports signed-out direct RakNet and
 directed NetherNet LAN connections. Selected-account RakNet joins acquire and
 validate credentials through the native Microsoft/Xbox and Minecraft services,
 retaining the original connection key through token mint, Login and key exchange.
-The working Go backend remains the default.
+The working Go backend remains the default. Renderer-free Linux joins over both
+transports have loaded an original resource pack, reached spawn, received terrain
+and closed. Live-account, device and wider server acceptance remain incomplete.
 
 The external bedrock-client crate owns generated-packet Login, resource-pack and
 spawn negotiation. Bedrock-packs owns shared JSONC parsing, archive handoffs and
@@ -26,8 +28,9 @@ The lifecycle consumer migration uses owned settings, Login and pack handoffs an
 retains the opaque startup-ready owner until presentation completes. Late Login
 controls stay with pack transfer; default Go and browser handoffs still observe
 the actual startup prerequisites. The codec accepts one consuming compression
-transition. This source migration awaits the matching library revisions, owning
-execution and final integration review; the published pins remain unchanged.
+transition. The matching reusable library revisions are pinned, and the native
+application compiles with all targets. Final integration review and live
+acceptance remain open.
 
 Native device-code sign-in and saved-account validation use the existing menu and
 account mutation worker. Interactive attempts release file leases while awaiting
@@ -81,7 +84,12 @@ reentry, unresolved writes and world replacement revoke approval. These APIs
 create no runtime, listener, activity, supported route or invitation. Existing
 Go local-world processes and hosting remain unchanged. Independent source review
 and owning host tests pass. Application service-cancellation and accepting
-transport integration remain incomplete.
+transport integration remain incomplete. Accepting sends now retain their original
+packet cursor, capacity wait and receipt through cancellation. Each new commit
+checks the original membership after service progress. Backend output retains its
+delivered obligation until the actual acknowledgment, including a rejected
+service postcheck. Owning boundary regressions pass; the complete signed
+Dragonfly-world path still needs execution.
 
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the
