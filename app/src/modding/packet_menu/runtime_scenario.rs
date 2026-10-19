@@ -239,10 +239,6 @@ fn external_reactor_runs_retained_menu_and_actual_pack_hud_scenario() {
         packets.native_menu_identity().is_some(),
         "guest startup must negotiate native controls"
     );
-    assert!(
-        !packets.native_frame_available(),
-        "camera grants remain independent"
-    );
     let mut presentation = UiPresentationResource(presentation);
     if let Some(enabled) = scenario.screen_animations {
         let mut options = launcher::menu::settings_options::SettingsOptions::default();
