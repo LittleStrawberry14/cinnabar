@@ -230,7 +230,8 @@ async fn two_signed_visitors_share_the_actual_world_and_retire_independently() {
         assert_eq!(second_retirement.2, Some(terminal));
         let first = first.expect("first actual visitor failed during the second setup");
         let second = second.expect("second actual visitor failed after the first retired");
-        assert!(first.0 != 0 && second.0 != 0 && first.0 != second.0);
+        // Dragonfly assigns self runtime IDs within each connection, independently of other visitors.
+        assert!(first.0 != 0 && second.0 != 0);
         assert!(
             first.1 && first.2 && second.1 && second.2,
             "original final resource snapshot or real Dragonfly terrain was lost"
