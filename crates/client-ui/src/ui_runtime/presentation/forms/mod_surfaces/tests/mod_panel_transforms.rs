@@ -41,7 +41,7 @@ fn transformed_panel(
         control
     };
     let mut panel = panel();
-    panel.surface = Some(Surface { collections: Default::default(), previews: Default::default(),
+    panel.surface = Some(Surface { collections: Default::default(), 
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
             "type":"screen","size":["100%","100%"],"controls":[
