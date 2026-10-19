@@ -9,10 +9,15 @@ import (
 )
 
 // serve owns the sole control stream and all of its bounded peer reservations.
-func (l *Listener) serve(parent context.Context, bootstrap hostcontract.Bootstrap, capability []byte) {
+func (l *Listener) serve(parent context.Context, bootstrap hostcontract.Bootstrap, lifetime *bridgeLifetime) {
 	ctx, cancel := context.WithCancel(parent)
 	var peers sync.WaitGroup
-	defer func() {
+	retired := false
+	retire := func() {
+		if retired {
+			return
+		}
+		retired = true
 		cancel()
 		peers.Wait()
 		l.mu.Lock()
@@ -26,8 +31,14 @@ func (l *Listener) serve(parent context.Context, bootstrap hostcontract.Bootstra
 		for _, c := range remaining {
 			_ = c.Close()
 		}
-	}()
-	control, err := connect(ctx, bootstrap, 0)
+		l.mu.Lock()
+		if l.bridge == lifetime {
+			l.bridge = nil
+		}
+		l.mu.Unlock()
+	}
+	defer retire()
+	control, err := connect(parent, bootstrap, 0)
 	if err != nil {
 		return
 	}
@@ -37,21 +48,12 @@ func (l *Listener) serve(parent context.Context, bootstrap hostcontract.Bootstra
 	go func() {
 		defer close(watchDone)
 		select {
-		case <-ctx.Done():
+		case <-parent.Done():
 			_ = control.Close()
 		case <-stopWatch:
 		}
 	}()
 	defer func() { close(stopWatch); <-watchDone }()
-	defer func() {
-		l.mu.Lock()
-		for _, c := range l.visitors {
-			if c != nil {
-				c.stop()
-			}
-		}
-		l.mu.Unlock()
-	}()
 	if control.json(hostcontract.KindSnapshot, l.resourceSnapshot()) != nil {
 		return
 	}
@@ -62,6 +64,7 @@ func (l *Listener) serve(parent context.Context, bootstrap hostcontract.Bootstra
 			return
 		}
 		if kind == hostcontract.KindClose && len(body) == 0 {
+			retire()
 			_ = control.write(hostcontract.KindClosed, nil)
 			return
 		}
