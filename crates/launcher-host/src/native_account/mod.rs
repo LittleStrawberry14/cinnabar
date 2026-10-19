@@ -6,6 +6,7 @@ mod catalog_worker;
 mod directory;
 mod friend_join;
 mod friends;
+mod home;
 mod hosted_world;
 mod messaging;
 mod metadata;
@@ -24,6 +25,7 @@ pub use friend_join::{
     FriendAdmission, FriendJoin, FriendSelection, JoinProgress, NativeFriendSelection,
 };
 pub use friends::NativeFriendWorld;
+pub(crate) use home::NativeHomeScope;
 pub(crate) use hosted_world::HostSlot;
 pub use hosted_world::{
     ClosingHostedPeer, HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy,

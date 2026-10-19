@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[derive(Clone)]
 pub(super) struct ReadIdentity {
     pub(super) account: Arc<NativeAccount>,
     pub(super) generation: String,
@@ -39,6 +40,17 @@ impl ReadIdentity {
         }
     }
 
+    /// Checks this same captured identity while its actual Operation still owns the protected lease.
+    pub(super) fn current_operation(&self, operation: &Operation) -> bool {
+        if operation.rejected || !Arc::ptr_eq(&self.account, &operation.account) {
+            return false;
+        }
+        let (Some(cached), Some(lease)) = (&operation.cached, &operation.lease) else {
+            return false;
+        };
+        self.current_owner(cached, lease)
+    }
+
     /// An unavailable lease or owner is not evidence that its verified identity was replaced.
     fn current_status(&self) -> Option<bool> {
         let lease = match self.account.store.try_native_lease() {
@@ -57,21 +69,25 @@ impl ReadIdentity {
         let Some(cached) = state.cached.as_ref() else {
             return Some(false);
         };
-        Some(
-            cached.generation == self.generation
-                && lease.generation() == self.generation
-                && cached.binding == lease.binding()
-                && lease
-                    .selected_id()
-                    .is_none_or(|selected| selected == self.xuid)
-                && self
-                    .account
-                    .selected_id
-                    .as_deref()
-                    .is_none_or(|selected| lease.selected_id() == Some(selected))
-                && cached.identity.as_ref().is_some_and(|identity| {
-                    identity.current_credential && identity.xuid == self.xuid
-                }),
-        )
+        Some(self.current_owner(cached, &lease))
+    }
+
+    /// Shares the exact lease/binding/XUID predicate between available and already-held owners.
+    fn current_owner(&self, cached: &Cached, lease: &NativeLease) -> bool {
+        cached.generation == self.generation
+            && lease.generation() == self.generation
+            && cached.binding == lease.binding()
+            && lease
+                .selected_id()
+                .is_none_or(|selected| selected == self.xuid)
+            && self
+                .account
+                .selected_id
+                .as_deref()
+                .is_none_or(|selected| lease.selected_id() == Some(selected))
+            && cached
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.current_credential && identity.xuid == self.xuid)
     }
 }

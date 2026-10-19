@@ -14,11 +14,13 @@ impl LauncherAccount {
         let (catalog_wake, catalog_changes) = bounded(1);
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
+        let (home_cancel, home_changed) = tokio::sync::watch::channel(home_feed::Wake::Account);
         let (profile_refresh, profile_requests) = profile_worker::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             catalog_wake: Some(catalog_wake),
             feed_wake: Some(feed_wake.clone()),
             home_wake: Some(home_wake.clone()),
+            home_cancel: Some(home_cancel),
             profile_wake: Some(profile_refresh.clone()),
             ..initial
         }));
@@ -27,10 +29,16 @@ impl LauncherAccount {
         let (alive, stop) = bounded(0);
         let message_reports = message_reports::start(
             socket_dir.clone(),
+            Arc::clone(&snapshot),
             stop.clone(),
+            home_changed.clone(),
             runtime.clone(),
             tasks.clone(),
         );
+        snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .home_reports = Some(message_reports.clone());
         let invites = invites::start(
             socket_dir.clone(),
             artwork.clone(),
@@ -93,7 +101,15 @@ impl LauncherAccount {
                     executor.clone(),
                     descendants,
                 );
-                feeds::poll_home(&dir, &art, &shared, &until, &home_changes, &executor)
+                feeds::poll_home(
+                    &dir,
+                    &art,
+                    &shared,
+                    &until,
+                    &home_changes,
+                    home_changed,
+                    &executor,
+                )
             },
             &tasks,
         ));

@@ -89,16 +89,18 @@ pub(super) fn poll_home(
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
+    mut changed: tokio::sync::watch::Receiver<super::home_feed::Wake>,
     runtime: &tokio::runtime::Handle,
 ) {
     let mut reported = HashSet::new();
+    let mut feed = super::home_feed::Feed::default();
     let feeds = CoreFeeds {
         socket_dir,
         art: Some(art),
     };
     loop {
         while changes.try_recv().is_ok() {}
-        let (home, failed) = runtime.block_on(home_round(&feeds, shared));
+        let (home, failed) = runtime.block_on(feed.round(&feeds, shared, &mut changed));
         if let Some(home) = home {
             super::report_impressions(runtime, socket_dir, &home, &mut reported);
         }
