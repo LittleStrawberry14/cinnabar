@@ -1,4 +1,8 @@
 use super::*;
+use std::{
+    future::Future,
+    task::{Context, Waker},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
@@ -46,15 +50,26 @@ async fn realm_membership_observation_retains_actual_dispatched_io_through_stop(
     drop(requests);
     retire(&wake);
     assert!(*wake.borrow() == Wake::Stop);
-    assert!(futures::poll!(&mut observing).is_pending());
     assert!(
-        futures::poll!(stream.read(&mut [0])).is_pending(),
+        observing
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    assert!(
+        {
+            let mut byte = [0];
+            let mut read = std::pin::pin!(stream.read(&mut byte));
+            read.as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        },
         "retirement dropped the dispatched operation's actual socket"
     );
     let response = serde_json::to_vec(&serde_json::json!({
         "jsonrpc":"2.0", "id":request["id"], "result":{
             "schema_version":bridge::contract::CONTROL_SCHEMA_VERSION,
-            "code":"fixture", "realm":{"name":"Fixture", "target":"realm_id/7", "member":true}
+            "code":"fixture", "realm":{"name":"Fixture", "state":"OPEN", "target":"realm_id/7", "member":true}
         }
     }))
     .unwrap();
@@ -69,7 +84,10 @@ async fn realm_membership_observation_retains_actual_dispatched_io_through_stop(
         .expect("the actual original RPC response was observed");
     assert!(pending.is_none());
     assert!(
-        futures::poll!(listener.accept()).is_pending(),
+        std::pin::pin!(listener.accept())
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
         "the original acceptance was resubmitted"
     );
 }
