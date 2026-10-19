@@ -59,6 +59,7 @@ base64 = { version = "0.22", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 bedrock-services = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

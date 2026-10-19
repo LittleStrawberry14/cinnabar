@@ -30,6 +30,9 @@ world = { path = "../world" }
 tokio-util = { workspace = true, features = ["rt"] }
 crash-report = { path = "../crash-report" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
 [dev-dependencies]
 protocol-ids = { path = "../protocol-ids" }
 test-alloc = { path = "../test-alloc" }
