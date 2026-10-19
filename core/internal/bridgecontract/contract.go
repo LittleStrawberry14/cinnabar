@@ -9,6 +9,10 @@ const (
 	MaxControlFrameLen = 65536
 	// MaxPingTargets: Most server addresses admitted in one ping request.
 	MaxPingTargets = 64
+	// PingWorkers: Maximum concurrent server-row ping attempts.
+	PingWorkers = 8
+	// PingTimeoutMillis: Original whole-attempt server-row ping deadline.
+	PingTimeoutMillis = 2000
 	// SessionKindConnect: Client session setup carrying JSON login data.
 	SessionKindConnect = 1
 	// SessionKindBatch: A batch of length-prefixed packets in either direction.

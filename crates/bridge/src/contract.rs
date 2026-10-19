@@ -9,7 +9,13 @@ pub const MAX_FRAME_LEN: usize = 67108864;
 pub(crate) const CONTROL_MAX_FRAME_LEN: usize = 65536;
 
 /// Most server addresses admitted in one ping request.
-pub(crate) const MAX_PING_TARGETS: usize = 64;
+pub const MAX_PING_TARGETS: usize = 64;
+
+/// Maximum concurrent server-row ping attempts.
+pub const PING_WORKERS: usize = 8;
+
+/// Original whole-attempt server-row ping deadline.
+pub const PING_TIMEOUT_MILLIS: u32 = 2000;
 
 /// Client session setup carrying JSON login data.
 pub const KIND_CONNECT: u8 = 1;

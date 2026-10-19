@@ -38,6 +38,8 @@ mod cinnabar_players;
 mod featured_feed;
 mod feeds;
 mod home_feed;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod server_ping;
 mod shared_players;
 mod workers;
 #[cfg(test)]
