@@ -88,8 +88,10 @@ transport integration remain incomplete. Accepting sends now retain their origin
 packet cursor, capacity wait and receipt through cancellation. Each new commit
 checks the original membership after service progress. Backend output retains its
 delivered obligation until the actual acknowledgment, including a rejected
-service postcheck. Owning boundary regressions pass; the complete signed
-Dragonfly-world path still needs execution.
+service postcheck. Owning boundary regressions and the complete signed
+Dragonfly-world fixture pass: actual Login, verified packs, spawn, terrain, a live
+chunk-radius response and original transport/process/membership cleanup. This
+isolated path does not advertise a native world or send invitations.
 
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the
@@ -115,25 +117,28 @@ retained overview using only the remaining original fetch budget. A cutoff keeps
 completed facets as partial; persona bytes are decoded before publication through
 the bounded atomic image cache. Retail selection/projection have shared Go/Rust
 conformance fixtures. The shared SDK APIs and optional image dependency resolve and
-compile; final source review and owning execution remain pending. Live profile acceptance
-remains open; the Go profile remains the default.
+compile; owning profile controls and native strict Clippy pass. Six anonymous Linux
+CPU fallback captures match the baseline renderer with identical fixture inputs.
+Live profile and artwork acceptance remain open; Go remains the default.
 
 The invite picker in native mode reads decorated friends through that same selected
 account, retains generation and verified identity through artwork, and rejects a
 retired result before publication. Its existing worker cancels actual pending I/O
 on account changes or shutdown; unrelated wakes retain the original request.
 The default picker and outgoing invitations keep the Go host owner. Shared display
-bounds and Go/Rust projection controls are authored; owning execution remains
-pending. Uncommon Unicode-version ordering and live picker acceptance remain open.
+bounds, Go/Rust projection controls, native/default cancellation regressions and
+strict host Clippy pass. Uncommon Unicode-version ordering and live picker
+acceptance remain open.
 Native invitation sending and inbox adoption need their concrete account/session
 consumers; a people row does not provide membership or invitation authority.
 
-Incomplete: native hosting transport and application adoption, remaining profile and
-invitation services, end-to-end signed Realm NetherNet acceptance, browser transport
-adoption, remote provider-key refresh, end-to-end service/transport cancellation, compiled
-UI captures, real-account/device/server/network acceptance and Go-baseline
-performance measurements. Source-based vanilla parity and full integration gates
-remain open. These results do not authorize changing the default or removing Go.
+Incomplete: advertised native hosting and its Messaging acceptor, invitation sending
+and inbox consumers, Realm membership UI and signed Realm NetherNet acceptance,
+remaining account-event/catalog consumers, real-browser rendering, remote provider-key
+refresh and broad service/transport cancellation acceptance. Real-account/device/server/
+network validation, comparative performance analysis, source-based vanilla parity and
+final current-base integration gates remain open. These results do not authorize
+changing the default or removing Go.
 
 ## Native extension UI and HUD support (in progress)
 

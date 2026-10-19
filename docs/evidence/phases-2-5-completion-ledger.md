@@ -9,7 +9,8 @@ TLS/WebSocket gateway also passes protocol-refusal, upload-pacing, original-dead
 and channel-mismatch regressions. Its actual BDS join exercises the shared Rust web
 consumer through required-pack verification, spawn, terrain, play-owner handback
 and control cleanup. This is separate from real-browser rendering and live-account
-acceptance. Final common-source Clippy, review and integration gates remain open.
+acceptance. Native app and gateway strict Clippy pass on the qualified snapshots;
+final review and current-base integration gates remain open.
 
 The optional native backend consumes reusable Login, pack and spawn negotiation
 and shared JSONC/archive handoffs. Cinnabar retains bounded CDN/cache I/O,
@@ -34,7 +35,19 @@ The unadvertised host directory and native account-lifetime presence owners pass
 the full 450-test host suite. Presence bridge and shell filters pass, including
 actual old-process retirement before policy replacement. Ambiguous updates retain
 the original cleanup authority even after a later successful removal. Live
-account/process handoff and accepting-host transport remain unqualified.
+account/process handoff and advertised hosting remain unqualified. The complete
+isolated signed Dragonfly-world fixture passes actual Login, pack verification,
+spawn, terrain, a live post-startup radius response and original transport/process/
+membership cleanup. Its real process uses the existing Go world backend; it does
+not establish a live Xbox advertised host or native invitation acceptance.
+
+Native invite-picker controls pass the actual default RPC, missing-native-owner
+refusal, account retirement, terminal cancellation and protected post-artwork lease
+checks. The Go/Rust projection corpus and existing profile regressions pass, with
+strict host Clippy. Six anonymous Linux CPU Profile fallback pairs are byte-identical
+to the baseline renderer with the same fixture inputs and have been visually
+inspected. These captures establish no live native account or artwork-download
+acceptance. Codec cross-wire checks pass; comparative performance remains open.
 
 ## Native protected checkpoint revisions (in progress)
 
