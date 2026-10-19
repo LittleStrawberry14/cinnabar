@@ -196,3 +196,6 @@ fn optional_uuid(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod limits_tests;
