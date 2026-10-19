@@ -2,6 +2,8 @@
 //!
 //! Vanilla leaves test six neighbours for depth and keep only one of the
 //! two coincident non-deep leaf faces, whose material disables backface culling.
+//! Java-style cutout leaves have no deep leaves, so every leaf is cutout, and each leaf
+//! keeps its own face toward a neighbouring leaf, as Java's cutout leaves draw both.
 
 use std::cell::Cell;
 
@@ -23,19 +25,24 @@ pub(crate) struct LeafOcclusion<'assets, 'chunks> {
     transparent: bool,
     known: [Cell<u64>; CACHE_WORDS],
     deep: [Cell<u64>; CACHE_WORDS],
+    cutout_only: bool,
 }
 
 impl<'assets, 'chunks> LeafOcclusion<'assets, 'chunks> {
     /// Captures the leaf mode so every face of this mesh uses one opacity policy.
+    /// `cutout_only` (Java's cutout leaves) outranks it: no leaf is deep and no face
+    /// between leaves is culled.
     pub(crate) fn new(
         bits: &'assets NeighbourhoodBlockBits<'assets, 'chunks>,
         transparent: bool,
+        cutout_only: bool,
     ) -> Self {
         Self {
             bits,
             transparent,
             known: std::array::from_fn(|_| Cell::new(0)),
             deep: std::array::from_fn(|_| Cell::new(0)),
+            cutout_only,
         }
     }
 
@@ -45,6 +52,9 @@ impl<'assets, 'chunks> LeafOcclusion<'assets, 'chunks> {
     }
 
     pub(crate) fn is_deep(&self, coordinate: [i32; 3]) -> bool {
+        if self.cutout_only {
+            return false;
+        }
         if !self.transparent {
             return self.primary(coordinate) & ENTRY_LEAF_VARIANT != 0;
         }
@@ -74,7 +84,7 @@ impl<'assets, 'chunks> LeafOcclusion<'assets, 'chunks> {
     pub(crate) fn culls_face(&self, coordinate: [usize; 3], face: Face) -> bool {
         let source = coordinate.map(|value| value as i32);
         let neighbour = adjacent(source, face);
-        if self.primary(neighbour) & ENTRY_LEAF == 0 {
+        if self.cutout_only || self.primary(neighbour) & ENTRY_LEAF == 0 {
             return false;
         }
         if !self.transparent {

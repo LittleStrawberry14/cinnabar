@@ -1401,6 +1401,21 @@ literal = "sign"
 reason = "GLSL built-in function name in the custom-uniform expression language, not a game identifier."
 
 [[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:seagrass"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
+
+[[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:kelp"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
+
+[[identifier_literal_exceptions]]
+path = "app/src/shader_pack_inputs.rs"
+literal = "minecraft:bubble_column"
+reason = "Java Edition's water-filled blocks (Java gives them a water fluid state; Bedrock's registry has no such fact), meshed without water faces toward them only for shader packs."
+
+[[identifier_literal_exceptions]]
 path = "tools/devtool/src/web.rs"
 literal = "web"
 reason = "wasm-bindgen's static browser output target, unrelated to a game identifier."

@@ -15,7 +15,7 @@ use far_terrain::{
     RetiringSession, SummaryBudget, TileView,
 };
 use render_api::far_terrain::{DeviceTier, far_reach_chunks, full_detail_chunks};
-use render_scene::FarTerrainScene;
+use render_scene::{FarTerrainScene, shaderpack::ShaderPackStatus};
 
 use crate::{runtime::world::ClientWorld, session::SessionController};
 
@@ -321,6 +321,7 @@ type WorldIdentity<D> = (D, Option<u64>, i32, (u64, u64), [u8; 32]);
 pub(crate) struct ActiveWorld(Option<WorldIdentity<String>>);
 
 /// Keeps extraction, the cache namespace, the loaded area and the drawn tiles current.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn feed_far_terrain(
     far: Option<ResMut<FarTerrain>>,
     world: Option<ResMut<ClientWorld>>,
@@ -328,6 +329,7 @@ pub(crate) fn feed_far_terrain(
     settings: Res<RuntimeSettings>,
     menu: Option<Res<client_shell::menu::MenuRuntime>>,
     scene: Option<ResMut<FarTerrainScene>>,
+    pack: Option<Res<ShaderPackStatus>>,
     mut active: Local<ActiveWorld>,
 ) {
     let (Some(mut far), Some(mut world), Some(mut scene)) = (far, world, scene) else {
@@ -344,10 +346,14 @@ pub(crate) fn feed_far_terrain(
         )
     });
     // Auto runs far terrain only past what this device meshes in full detail by default;
-    // below that nothing of it runs, exactly as with Off.
-    let wanted = video
-        .far_terrain
-        .enabled(u32::from(video.render_distance_chunks), tier);
+    // below that nothing of it runs, exactly as with Off. A loaded shader pack draws the
+    // world as Java does, without far terrain (its frames show sky past render distance), so
+    // none of it runs then either and near terrain meshes every loaded column.
+    let shader_pack = pack.as_deref().is_some_and(ShaderPackStatus::is_ready);
+    let wanted = !shader_pack
+        && video
+            .far_terrain
+            .enabled(u32::from(video.render_distance_chunks), tier);
     // A transfer or rejoin to the same address is a new session and so a fresh visit: the
     // lobby behind it may be another instance under the same identity.
     let destination = session
@@ -355,8 +361,9 @@ pub(crate) fn feed_far_terrain(
         .and_then(SessionController::destination_identity);
     let now = Instant::now();
     // Turned off, by the setting or by Auto, far terrain stays until near terrain has drawn
-    // every column it covered.
+    // every column it covered; a shader pack never shows it, so nothing waits for it then.
     let draining = !wanted
+        && !shader_pack
         && far.published.is_some()
         && world
             .stream

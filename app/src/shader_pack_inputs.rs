@@ -4,8 +4,8 @@
 
 use bevy::{
     prelude::{
-        App, DetectChangesMut, IntoScheduleConfigs, Plugin, Query, Res, ResMut, Resource, Time,
-        Transform, Update, Vec3, With,
+        App, DetectChangesMut, IntoScheduleConfigs, Local, Plugin, Query, Res, ResMut, Resource,
+        Time, Transform, Update, Vec3, With,
     },
     time::Real,
 };
@@ -22,7 +22,10 @@ use protocol::NetworkItemStack;
 use render_model::celestial;
 use render_scene::{
     ActorRenderFrame, AtmosphereFrame, WorldLighting,
-    shaderpack::{SKY_BIOME_SLOTS, ShaderPackActorIds, ShaderPackFrameInputs, ShaderPackIdMaps},
+    shaderpack::{
+        SKY_BIOME_SLOTS, ShaderPackActorIds, ShaderPackFrameInputs, ShaderPackIdMaps,
+        ShaderPackStatus,
+    },
 };
 
 use crate::{
@@ -72,8 +75,63 @@ impl Plugin for ShaderPackInputsPlugin {
                         .after(update_atmosphere_frame)
                         .after(LocalPlayerFrameSet::Interaction),
                     publish_actor_ids,
+                    mesh_like_java_for_shader_packs,
                 ),
             );
+    }
+}
+
+/// Bedrock blocks Java fills with water (`seagrass`, `kelp` and `kelp_plant`, `bubble_column`
+/// have a water fluid state), so Java draws no water faces toward them.
+const JAVA_WATER_FILLED: [&str; 3] = [
+    "minecraft:seagrass",
+    "minecraft:kelp",
+    "minecraft:bubble_column",
+];
+
+/// The water-filled network values last resolved, keyed by session and block-name revision.
+type ResolvedWaterFilled = ((u64, u64), std::sync::Arc<[u32]>);
+
+/// Meshes the way Java draws while a shader pack is loaded, as Iris renders it: leaves as
+/// Java's fancy leaves (every leaf cutout, none opaque) and no water faces toward the blocks
+/// Java fills with water; Bedrock's opaque deep leaves and water faces otherwise.
+fn mesh_like_java_for_shader_packs(
+    status: Option<Res<ShaderPackStatus>>,
+    mut client_world: ResMut<ClientWorld>,
+    mut resolved: Local<Option<ResolvedWaterFilled>>,
+) {
+    let ready = status.as_deref().is_some_and(ShaderPackStatus::is_ready);
+    let Some(stream) = client_world.stream.as_ref() else {
+        return;
+    };
+    let wanted = ready.then(|| {
+        let authority = stream.authority();
+        // The name index fills in after join, and a new session brings new ids.
+        let key = (
+            authority.actor_session_id(),
+            authority.block_name_revision(),
+        );
+        match &*resolved {
+            Some((resolved_key, ids)) if *resolved_key == key => ids.clone(),
+            _ => {
+                let mut ids: Vec<u32> = JAVA_WATER_FILLED
+                    .iter()
+                    .flat_map(|name| authority.block_ids_for_name(name))
+                    .copied()
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+                let ids: std::sync::Arc<[u32]> = ids.into();
+                *resolved = Some((key, ids.clone()));
+                ids
+            }
+        }
+    });
+    // Borrowed mutably only on a change, so the world is not marked changed every frame.
+    if stream.java_meshing() != wanted.as_deref()
+        && let Some(stream) = client_world.stream.as_mut()
+    {
+        stream.set_java_meshing(wanted);
     }
 }
 

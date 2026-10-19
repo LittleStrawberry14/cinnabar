@@ -128,4 +128,27 @@ impl WorldStream {
             self.mark_dirty_exact(key, now);
         }
     }
+
+    /// Meshes as Java does for a shader pack while `water_filled` (the sorted network values
+    /// of the blocks Java fills with water: seagrass, kelp, bubble columns) is set: every leaf
+    /// with its cutout, two-sided material, as Java's fancy leaves, and no water faces toward
+    /// water-filled blocks. `None` restores Bedrock's opaque deep leaves and water faces.
+    /// A change remeshes every resident sub-chunk.
+    pub fn set_java_meshing(&mut self, water_filled: Option<Arc<[u32]>>) {
+        if self.java_meshing == water_filled {
+            return;
+        }
+        self.java_meshing = water_filled;
+        let now = Instant::now();
+        let resident: Vec<_> = self.resident.iter().copied().collect();
+        for key in resident {
+            self.mark_dirty_exact(key, now);
+        }
+    }
+
+    /// The water-filled network values of Java meshing ([`Self::set_java_meshing`]), if on.
+    #[must_use]
+    pub fn java_meshing(&self) -> Option<&[u32]> {
+        self.java_meshing.as_deref()
+    }
 }

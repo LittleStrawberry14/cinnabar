@@ -156,6 +156,43 @@ fn deep_leaves_are_opaque_with_unchanged_fancy_texture_and_keep_faces_against_no
     }
 }
 
+/// Java fancy leaves (shader-pack mode) have no opaque deep leaves: an enclosed leaf keeps
+/// the cutout material like any other leaf, and every leaf draws its own face toward each
+/// neighbouring leaf, so a shared plane carries both leaves' faces.
+#[test]
+fn cutout_leaves_mesh_enclosed_leaves_cutout_with_both_faces_of_shared_planes() {
+    let assets = seasonal_leaf_fixture();
+    let origin = [8, 8, 8];
+    let mode = NetworkIdMode::Sequential;
+    let mut placements = vec![(origin, 1)];
+    placements.extend(Face::ALL.map(|face| (leaf_neighbour(origin, face), 1)));
+    let chunk = seasonal_leaf_chunk(mode, &placements);
+    let mesh = meshing::mesh_sub_chunk_in_neighbourhood_with_options(
+        &BlockClassifier::new(0),
+        &assets,
+        mode,
+        &MeshNeighbourhood::new(&chunk),
+        &meshing::lighting::FullBrightLightSampler,
+        meshing::MeshOptions {
+            cutout_leaves: true,
+            ..meshing::MeshOptions::default()
+        },
+    );
+    for cell in std::iter::once(origin).chain(Face::ALL.map(|face| leaf_neighbour(origin, face))) {
+        assert_leaf_layer(&mesh, &assets, cell, false);
+    }
+    // Seven leaves, none occluding: every leaf keeps all six faces.
+    for face in Face::ALL {
+        let faces: u32 = mesh
+            .cube_quads()
+            .iter()
+            .filter(|quad| quad.face() == face)
+            .map(|quad| u32::from(quad.width()) * u32::from(quad.height()))
+            .sum();
+        assert_eq!(faces, 7, "{face:?}");
+    }
+}
+
 #[test]
 fn deep_leaves_above_exception_is_top_snow_only_and_primary_layer_only() {
     let assets = seasonal_leaf_fixture();
