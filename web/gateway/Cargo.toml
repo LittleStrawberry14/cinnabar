@@ -33,7 +33,7 @@ raknet.workspace = true
 bedrock-protocol-1-26-51.workspace = true
 rcgen = "0.14"
 test-time = { path = "../../crates/test-time" }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tokio-websockets = { version = "0.13", default-features = false, features = ["client", "getrandom"] }
 
 [lints]
