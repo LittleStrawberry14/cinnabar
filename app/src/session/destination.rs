@@ -33,3 +33,29 @@ pub(crate) fn native_target(
         bridge::ConnectTarget::Realm(_) | bridge::ConnectTarget::Friend(_) => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Explicit service signaling survives classification until the selected account prepares it.
+    #[test]
+    fn native_raw_service_destination_retains_explicit_signaling_before_preparation() {
+        for (tag, id) in [
+            (
+                bridge::contract::NETHERNET_SIGNALING_JSONRPC,
+                "00000000-0000-0000-0000-000000000007",
+            ),
+            (bridge::contract::NETHERNET_SIGNALING_WEBSOCKET, "00042"),
+        ] {
+            let address = format!("{}{tag}/{id}", bridge::contract::NETHERNET_TARGET_PREFIX);
+            let target = native_target(&address, NativeTransport::RakNet, false)
+                .expect("explicit service route remained on Core");
+            assert_eq!(
+                target.address, address,
+                "service grammar was normalized as a DNS endpoint"
+            );
+            assert_eq!(target.transport, NativeTransport::RakNet);
+        }
+    }
+}
