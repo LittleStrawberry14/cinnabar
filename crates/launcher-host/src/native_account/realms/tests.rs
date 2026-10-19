@@ -15,7 +15,7 @@ fn transaction<T>(what: &str, mut perform: impl FnMut() -> io::Result<T>) -> T {
     completed.expect("transaction completed")
 }
 
-/// Service transport admission preserves IPv6 and distinguishes JSON-RPC UUIDs from unsupported protocols.
+/// Service transport admission preserves IPv6 and retains explicit rejection of unknown protocols.
 #[test]
 fn realm_transport_and_catalog_metadata_follow_the_service() {
     let address: RealmAddress = serde_json::from_str(
@@ -25,16 +25,14 @@ fn realm_transport_and_catalog_metadata_follow_the_service() {
     let target = resolved_route(address).unwrap().into_target();
     assert_eq!(target.address, "[2001:db8::8]:19132");
     assert_eq!(target.transport, protocol::NativeTransport::RakNet);
-    for protocol in ["NETHERNET", "FUTURE_PROTOCOL"] {
-        let address: RealmAddress = serde_json::from_value(
-            serde_json::json!({"address":"123", "networkProtocol": protocol}),
-        )
-        .unwrap();
-        assert_eq!(
-            resolved_route(address).err().unwrap().kind(),
-            io::ErrorKind::Unsupported
-        );
-    }
+    let unknown: RealmAddress = serde_json::from_value(
+        serde_json::json!({"address":"123", "networkProtocol":"FUTURE_PROTOCOL"}),
+    )
+    .unwrap();
+    assert_eq!(
+        resolved_route(unknown).err().unwrap().kind(),
+        io::ErrorKind::Unsupported
+    );
     let realm: Realm = serde_json::from_str(r#"{"id":7,"name":"  Synthetic Realm  ","owner":"  Synthetic Owner ","state":"CLOSED","maxPlayers":10,"daysLeft":-1,"expired":true,"member":true,"players":[{"online":true},{"online":false},{"online":true}]}"#).unwrap();
     let card = card(realm);
     assert_eq!(card.name, "Synthetic Realm");
@@ -73,7 +71,9 @@ fn realm_jsonrpc_retains_the_service_route_and_rejects_ambiguous_recipients() {
     }))
     .unwrap();
     let route = resolved_route(address).unwrap();
-    assert_eq!(route.route.messaging_peer, Some(peer));
+    assert!(
+        matches!(&route.route.recipient, Some(bedrock_net::messaging::Recipient::Messaging(route)) if *route == peer)
+    );
     assert!(route.response.pending_update);
     let region = route.response.session_region.as_ref().unwrap();
     assert_eq!(region.region_name, "synthetic-region");
@@ -100,6 +100,39 @@ fn realm_jsonrpc_retains_the_service_route_and_rejects_ambiguous_recipients() {
             io::ErrorKind::InvalidData
         );
     }
+}
+
+/// Legacy network strings remain service routes; they are never DNS targets, UUIDs or normalized integers.
+#[test]
+fn realm_legacy_preserves_the_exact_returned_network_route() {
+    for network in ["0007", "123", "actual-service-network"] {
+        let address: RealmAddress = serde_json::from_value(serde_json::json!({
+            "address": network, "networkProtocol": "NETHERNET", "pendingUpdate": true
+        }))
+        .unwrap();
+        let route = resolved_route(address).unwrap();
+        assert!(route.response.pending_update);
+        assert!(
+            matches!(&route.route.recipient, Some(bedrock_net::messaging::Recipient::Legacy(route)) if route == network)
+        );
+        let target = route.into_target();
+        assert_eq!(target.transport, protocol::NativeTransport::NetherNetLegacy);
+        assert_eq!(target.address, network);
+    }
+    let empty: RealmAddress =
+        serde_json::from_value(serde_json::json!({"address":"", "networkProtocol":"NETHERNET"}))
+            .unwrap();
+    assert_eq!(
+        resolved_route(empty).err().unwrap().kind(),
+        io::ErrorKind::InvalidData
+    );
+    let peer = uuid::Uuid::from_u128(0xabcdef);
+    let jsonrpc: RealmAddress = serde_json::from_value(serde_json::json!({"address":peer.to_string().to_uppercase(), "networkProtocol":"NETHERNET_JSONRPC"})).unwrap();
+    assert_eq!(
+        resolved_route(jsonrpc).unwrap().into_target().address,
+        peer.to_string(),
+        "existing UUID route normalization must remain unchanged"
+    );
 }
 
 /// Cancelled or expired Realm preparation cannot retire another in-flight account operation.

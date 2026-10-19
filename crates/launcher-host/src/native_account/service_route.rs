@@ -1,20 +1,21 @@
 //! Exact routes returned by authenticated Realm and Gathering joins.
 
 use super::*;
+use bedrock_net::messaging::Recipient;
 use bedrock_services::realms::NetworkProtocol;
 use prepare::check_preparation_deadline;
 
 pub(super) struct ResolvedServiceRoute {
     address: String,
-    pub(super) messaging_peer: Option<uuid::Uuid>,
+    pub(super) recipient: Option<Recipient>,
 }
 
 impl ResolvedServiceRoute {
     /// Consumes only the actual service response, never catalog display metadata.
     pub(super) fn new(protocol: NetworkProtocol, address: String) -> io::Result<Self> {
-        let messaging_peer = match protocol {
+        let recipient = match protocol {
             NetworkProtocol::Default if !address.trim().is_empty() => None,
-            NetworkProtocol::NetherNetJsonRpc => Some(
+            NetworkProtocol::NetherNetJsonRpc => Some(Recipient::Messaging(
                 uuid::Uuid::parse_str(&address)
                     .ok()
                     .filter(|peer| !peer.is_nil())
@@ -24,11 +25,14 @@ impl ResolvedServiceRoute {
                             "invalid service messaging recipient",
                         )
                     })?,
-            ),
+            )),
+            NetworkProtocol::NetherNet if !address.is_empty() => {
+                Some(Recipient::Legacy(address.clone()))
+            }
             NetworkProtocol::NetherNet => {
                 return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "native service WebSocket signaling is not supported",
+                    io::ErrorKind::InvalidData,
+                    "service returned no network route",
                 ));
             }
             NetworkProtocol::Default => {
@@ -44,10 +48,7 @@ impl ResolvedServiceRoute {
                 ));
             }
         };
-        Ok(Self {
-            address,
-            messaging_peer,
-        })
+        Ok(Self { address, recipient })
     }
 
     /// Finishes mint/socket acquisition on the same Operation that performed the service join.
@@ -63,7 +64,7 @@ impl ResolvedServiceRoute {
         protocol::NativeAuthentication,
     )> {
         check_preparation_deadline(deadline)?;
-        let authentication = if let Some(peer) = self.messaging_peer {
+        let authentication = if let Some(peer) = self.recipient.clone() {
             let (prepared, authentication) = account
                 .prepare_messaging_socket_borrowed(operation, peer, claims, random_id, deadline)
                 .await?;
@@ -79,14 +80,18 @@ impl ResolvedServiceRoute {
 
     /// Consumes the already-validated transport projection after its original response is retained.
     pub(super) fn into_target(self) -> protocol::NativeConnectionTarget {
-        protocol::NativeConnectionTarget {
-            address: self
-                .messaging_peer
-                .map_or(self.address, |peer| peer.to_string()),
-            transport: if self.messaging_peer.is_some() {
-                protocol::NativeTransport::NetherNetMessaging
-            } else {
-                protocol::NativeTransport::RakNet
+        match self.recipient {
+            Some(Recipient::Messaging(peer)) => protocol::NativeConnectionTarget {
+                address: peer.to_string(),
+                transport: protocol::NativeTransport::NetherNetMessaging,
+            },
+            Some(Recipient::Legacy(_)) => protocol::NativeConnectionTarget {
+                address: self.address,
+                transport: protocol::NativeTransport::NetherNetLegacy,
+            },
+            None => protocol::NativeConnectionTarget {
+                address: self.address,
+                transport: protocol::NativeTransport::RakNet,
             },
         }
     }

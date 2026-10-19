@@ -1,7 +1,7 @@
-//! Selected-account protected Player Messaging acquisition for an explicit joined session.
+//! Selected-account protected signaling acquisition for an explicit joined session.
 
 use super::*;
-use bedrock_net::messaging::PreparedMessaging;
+use bedrock_net::messaging::{PreparedMessaging, Recipient};
 use bedrock_services::signaling::websocket::{MessagingSocket, Options, SocketError};
 use prepare::check_preparation_deadline;
 
@@ -62,7 +62,13 @@ impl NativeAccount {
     )> {
         let peer = target.peer();
         let (prepared, authentication) = self
-            .prepare_messaging_socket_borrowed(operation, peer, claims, random_id, deadline)
+            .prepare_messaging_socket_borrowed(
+                operation,
+                Recipient::Messaging(peer),
+                claims,
+                random_id,
+                deadline,
+            )
             .await?;
         let endpoint = target.connection_target();
         let authentication = authentication.with_messaging(prepared, target)?;
@@ -74,7 +80,7 @@ impl NativeAccount {
     pub(super) async fn prepare_messaging_socket_borrowed(
         &self,
         operation: &mut Operation,
-        peer: uuid::Uuid,
+        peer: Recipient,
         claims: Value,
         random_id: protocol::ClientRandomId,
         deadline: tokio::time::Instant,
@@ -91,7 +97,9 @@ impl NativeAccount {
                 "native client data must be a JSON object",
             ));
         }
-        if peer.is_nil() {
+        if matches!(&peer, Recipient::Messaging(peer) if peer.is_nil())
+            || matches!(&peer, Recipient::Legacy(peer) if peer.is_empty())
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "native messaging recipient is absent",
@@ -102,16 +110,21 @@ impl NativeAccount {
         // that needs continuous heartbeat driving.
         let authentication = self.prepare_borrowed(operation, claims, random_id).await?;
         check_preparation_deadline(deadline)?;
-        let request = operation
-            .minecraft()?
-            .messaging_connection()
-            .await
-            .map_err(|_| messaging_error())?;
+        let network_id = rand::random();
+        let request = match &peer {
+            Recipient::Messaging(_) => operation.minecraft()?.messaging_connection().await,
+            Recipient::Legacy(_) => {
+                operation
+                    .minecraft()?
+                    .legacy_signaling_connection(network_id)
+                    .await
+            }
+        }
+        .map_err(|_| messaging_error())?;
         check_preparation_deadline(deadline)?;
         // Publish any credential rotation before awaiting an unrelated network upgrade.
         operation.persist()?;
         check_preparation_deadline(deadline)?;
-        let network_id = rand::random();
         let started = tokio::time::Instant::now();
         let options = Options::default();
         let upgrade_deadline = deadline
@@ -144,8 +157,11 @@ impl NativeAccount {
             }
         };
         check_preparation_deadline(upgrade_deadline)?;
-        let prepared =
-            PreparedMessaging::new(socket, network_id, peer).map_err(|_| messaging_error())?;
+        let prepared = match peer {
+            Recipient::Messaging(peer) => PreparedMessaging::new(socket, network_id, peer),
+            Recipient::Legacy(peer) => PreparedMessaging::new_legacy(socket, network_id, peer),
+        }
+        .map_err(|_| messaging_error())?;
         operation.persist()?;
         check_preparation_deadline(upgrade_deadline)?;
         Ok((prepared, authentication))

@@ -99,7 +99,10 @@ impl Transport {
                 "local HTTP requires its original Login proof",
             ));
         }
-        if target.transport == NativeTransport::NetherNetMessaging {
+        if matches!(
+            target.transport,
+            NativeTransport::NetherNetMessaging | NativeTransport::NetherNetLegacy
+        ) {
             return MessagingTransport::connect(target, messaging)
                 .await
                 .map(Box::new)
