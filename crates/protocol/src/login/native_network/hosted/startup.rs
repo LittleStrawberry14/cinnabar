@@ -57,9 +57,10 @@ impl<A> NativeHostedRelay<A> {
         if now >= deadline {
             return Err(expired());
         }
-        let relay = ready
-            .relay_world(verifier, now, utc)
-            .map_err(io::Error::other)?;
+        let relay = ready.relay_world(verifier, now, utc).map_err(|error| {
+            let (_owner, cause) = error.into_parts();
+            io::Error::other(cause)
+        })?;
         Ok(Self {
             wire,
             upstream,
@@ -314,7 +315,10 @@ impl<A> NativeHostedRelay<A> {
             .take()
             .ok_or_else(invalid)?
             .finish(verifier, now, utc)
-            .map_err(io::Error::other)?;
+            .map_err(|error| {
+                let (_owner, cause) = error.into_parts();
+                io::Error::other(cause)
+            })?;
         self.upstream.initialized = true;
         Ok((self.wire, self.upstream, accepted))
     }
