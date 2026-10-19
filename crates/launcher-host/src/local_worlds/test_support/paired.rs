@@ -18,10 +18,6 @@ pub(crate) struct World {
 
 impl World {
     /// Uses only a root-built exact localserver fixture; never builds or substitutes a fake runner.
-    #[expect(
-        clippy::print_stderr,
-        reason = "the test harness must name the missing optional localserver fixture"
-    )]
     pub(crate) fn open() -> Option<Self> {
         let Some(binary) = std::env::var_os(SERVER_ENV) else {
             eprintln!("missing fixture: {SERVER_ENV} (build tools/localserver)");
