@@ -23,7 +23,7 @@ pub fn native_host_packs(snapshot: &Snapshot) -> io::Result<ServerPackSnapshot> 
             .packs
             .len()
             .checked_add(builtins.len())
-            .is_none_or(|n| n > limits.max_packs)
+            .is_none_or(|n| limits.max_packs.is_some_and(|limit| n > limit))
     {
         return Err(invalid());
     }
@@ -34,8 +34,10 @@ pub fn native_host_packs(snapshot: &Snapshot) -> io::Result<ServerPackSnapshot> 
     for pack in &snapshot.packs {
         total = total.checked_add(pack.size).ok_or_else(invalid)?;
         if pack.size == 0
-            || pack.size > limits.max_archive_bytes
-            || total > limits.max_stack_bytes
+            || limits
+                .max_archive_bytes
+                .is_some_and(|limit| pack.size > limit)
+            || limits.max_stack_bytes.is_some_and(|limit| total > limit)
             || pack.version.is_empty()
             || pack.version.len() > limits.max_version_bytes
         {

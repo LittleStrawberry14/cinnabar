@@ -67,10 +67,7 @@ use {
         local_player::publish_local_player_frame,
         present_mode::{PresentModeRuntime, apply_present_mode},
         runtime::{
-            network::{
-                receive_network_events,
-                session::{NetworkConfig, spawn_network},
-            },
+            network::receive_network_events,
             shutdown::{
                 TerminalCause, exit_on_fatal_runtime_error, exit_on_window_close_requested,
             },
@@ -454,6 +451,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     ui_presentation
         .set_gui_models(&loaded_assets.runtime, &entity_runtime)
         .context("prepare native GUI model geometry and original texture pages")?;
+    ui_presentation.set_gui_particle_assets(particle_assets.clone());
     ui_presentation
         .set_gui_fire_texture(flame_texture)
         .context("prepare native HUD actor flame texture frames")?;
@@ -569,51 +567,14 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         .native_startup_account(&mut menu, endpoint.as_ref())
         .context("capture the initial native account selection")?;
     crate::runtime::network::await_overlay_texture_device();
-    let network = if let Some(endpoint) = endpoint {
-        match spawn_network(
-            NetworkConfig {
-                registry_base: crate::runtime::network::session_registries::RegistryBase::new(
-                    &runtime_assets,
-                    &collision_registries,
-                ),
-                session_generation: simulation_clock::identity::SessionGeneration::new(1),
-                endpoint,
-                #[cfg(feature = "native-networking")]
-                native_account,
-                #[cfg(feature = "native-networking")]
-                native_friend: None,
-                #[cfg(feature = "native-networking")]
-                native_gathering: None,
-                #[cfg(feature = "native-networking")]
-                native_local_world: None,
-                display_name: args.display_name.clone(),
-                client_random_id: client_random_id.expect("connection requested"),
-                client_blob_cache: client_blob_cache.cache(),
-                player_skin: local_player_skin.clone(),
-                login_settings: crate::session::login_settings(
-                    &menu,
-                    None,
-                    args.parallel_resource_pack_urls,
-                ),
-                actor_artwork: Some(actor_artwork.clone()),
-                ui_catalog: Some(ui_catalog.0.clone()),
-                log_dir: menu.layout().log_dir(),
-                record_session: menu.settings_snapshot().0.record_network_session(),
-            },
-            io.handle(),
-            io.tasks(),
-        )
-        .context("spawn Bedrock network worker")
-        {
-            Ok(network) => network,
-            Err(error) => {
-                launcher_host::core_process::stop_core_then(session_controller.core_mut(), |_| ());
-                return Err(error);
-            }
-        }
-    } else {
-        NetworkHandle::<PackApplication>::disconnected()
-    };
+    session_controller = session_controller.with_startup_endpoint(
+        endpoint,
+        args.address.as_deref(),
+        #[cfg(feature = "native-networking")]
+        native_account,
+    );
+    let packet_mods = crate::modding::packets::from_environment();
+    let network = NetworkHandle::<PackApplication>::disconnected();
     let movement_ticker = client_interaction::movement::MovementTicker::with_epoch_publisher(
         network.physics_epoch_publisher(),
     );
@@ -655,6 +616,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     let primary_window = crate::developer_control::primary_window(primary_window);
     // Rebind after the cleanup guards so app-owned processes stop before their directories drop.
     let mut app = app;
+    app.insert_resource(packet_mods);
     configure_client_frame_schedule(&mut app);
     let renderer = RendererSetup {
         data_root: renderer_data_root,

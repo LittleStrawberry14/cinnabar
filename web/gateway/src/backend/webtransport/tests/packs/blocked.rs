@@ -71,6 +71,8 @@ async fn canceling_play_resets_its_blocked_pack_uni_before_reusing_the_account()
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    relay: None,
                     target: Some(bridge::ConnectTarget::RakNet(address.to_string())),
                 },
                 join,

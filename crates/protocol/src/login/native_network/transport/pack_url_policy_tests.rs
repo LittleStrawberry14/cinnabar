@@ -225,6 +225,8 @@ async fn default_urls() {
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    relay: None,
                     target: None,
                 },
                 |packs, game| (packs.into_archives(), game.world.local_player_runtime_id),

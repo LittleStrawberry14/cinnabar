@@ -290,3 +290,47 @@ async fn native_delay_position_requires_the_original_completed_write() {
     .await
     .expect("physical write observation failed its finite fixture budget");
 }
+
+/// Relay output retains the same native body FIFO and immutable delay through cancelled reads.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn native_relay_preserves_the_delayed_front_and_original_body_writes() {
+    use crate::packet_relay::tests::FakeRelay;
+    let (mut transport, incoming, mut outgoing) = pair();
+    let relay = Arc::new(FakeRelay::default());
+    relay
+        .state()
+        .inbound_replies
+        .push_back(Some(body(7).to_vec()));
+    relay
+        .state()
+        .outbound_replies
+        .push_back(Some(body(8).to_vec()));
+    transport.set_relay(relay.clone());
+    transport.finish_startup();
+    let delay = transport.packet_delay().unwrap();
+    delay.bind(42);
+    delay.configure(200, false).unwrap();
+    incoming.send(body(1)).await.unwrap();
+    std::future::poll_fn(|cx| transport.poll_read_ahead_one(MAX_READ_AHEAD_BYTES, cx)).await;
+    {
+        let mut receive = std::pin::pin!(transport.recv());
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        assert!(receive.as_mut().poll(&mut cx).is_pending());
+    }
+    assert!(relay.state().inbound.is_empty());
+    tokio::time::advance(Duration::from_millis(200)).await;
+    assert_eq!(time(transport.recv().await.unwrap()), 7);
+    transport
+        .send(&[crate::Packet::new(packets::SetTime {
+            time: wire::ZigZag32(2),
+        })])
+        .await
+        .unwrap();
+    assert_eq!(outgoing.recv().await.unwrap(), body(8));
+    assert_eq!(relay.state().inbound, [body(1).to_vec()]);
+    assert_eq!(relay.state().outbound, [body(2).to_vec()]);
+    transport.close().await.unwrap();
+    drop(transport);
+    assert!(relay.state().stopped);
+}

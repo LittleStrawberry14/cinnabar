@@ -63,6 +63,8 @@ async fn decoded_terminal(kind: u8, body: &[u8]) -> protocol::ProtocolError {
             skin: None,
             settings: &settings,
             tap: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            relay: None,
             target: None,
         },
         &InlinePreparation,

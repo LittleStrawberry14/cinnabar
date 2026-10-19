@@ -182,6 +182,8 @@ async fn tapped_native_join() {
                 skin: None,
                 settings: &settings,
                 tap: Some(tap.clone()),
+                #[cfg(not(target_arch = "wasm32"))]
+                relay: None,
                 target: None,
             },
             |_, _| (),
