@@ -128,22 +128,20 @@ fn input(
     })
     .unwrap();
     let random = protocol::ClientRandomId::new(1).unwrap();
-    let mut client_data =
+    let client_data =
         protocol::login_client_data("Fixture", random, None, &protocol::LoginSettings::default());
-    client_data["FutureUploadData"] = serde_json::Value::String(String::new());
-    let mut request = session_wire::ConnectRequest {
+    let request = session_wire::ConnectRequest {
         protocol: protocol::PROTOCOL_VERSION.checked_add(1).unwrap(),
         join_profile_id: None,
         target: None,
         client_cache: false,
         client_data,
     };
-    let empty = session_wire::encode_connect(&request).unwrap();
-    let padding = upload
-        .checked_sub(empty.len().checked_add(4).unwrap())
-        .unwrap();
-    request.client_data["FutureUploadData"] = serde_json::Value::String("x".repeat(padding));
-    let connect = session_wire::encode_connect(&request).unwrap();
+    let mut connect = session_wire::encode_connect(&request).unwrap().to_vec();
+    let payload = upload.checked_sub(4).unwrap();
+    assert!(connect.len() < payload);
+    // Ordinary JSON whitespace counts as upload without enlarging the client-data object.
+    connect.resize(payload, b' ');
     assert_eq!(connect.len().checked_add(4).unwrap(), upload);
     assert!(connect.len() < bridge::MAX_FRAME_LEN);
     let decoded = session_wire::decode_native_connect(&connect).unwrap();
