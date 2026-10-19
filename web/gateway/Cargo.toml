@@ -34,9 +34,9 @@ hex = "0.4"
 subtle = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-h3 = { version = "=0.0.8", optional = true }
-h3-quinn = { version = "=0.0.10", features = ["datagram"], optional = true }
-h3-webtransport = { version = "=0.1.2", optional = true }
+h3 = { version = "=0.0.8", git = "https://github.com/cinnabar-mc/h3", rev = "8b9e402f1891e1a9b3dbb0c6d1df3ba63381b7e8", optional = true }
+h3-quinn = { version = "=0.0.10", git = "https://github.com/cinnabar-mc/h3", rev = "8b9e402f1891e1a9b3dbb0c6d1df3ba63381b7e8", features = ["datagram"], optional = true }
+h3-webtransport = { version = "=0.1.2", git = "https://github.com/cinnabar-mc/h3", rev = "8b9e402f1891e1a9b3dbb0c6d1df3ba63381b7e8", optional = true }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"], optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 tracing = { workspace = true, optional = true }
