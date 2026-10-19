@@ -101,7 +101,7 @@ impl Peer {
             self.packet(&codec).await,
             Packet::ResourcePackClientResponse(_)
         ));
-        // A finite valid payload exceeds the explicitly small browser TCP buffers.
+        // A bounded batch repeats valid text to exercise the real browser writer.
         let text = Packet::Text(packets::Text {
             body: TextData::MessageOnly {
                 message_type: TextPacketType::Raw,
@@ -111,8 +111,15 @@ impl Peer {
             },
             ..Default::default()
         });
+        let limits = BatchLimits::default();
+        let mut encoded = Vec::new();
+        text.encode_frame(wire::Peer::Server, 0, 0, &mut encoded)
+            .unwrap();
+        let count = (limits.max_decoded_bytes / 2 / encoded.len()).min(limits.max_packets);
+        assert!(count > 1, "fixture must offer repeated legal text packets");
+        let text = vec![text; count];
         for _ in 0..8 {
-            self.send(&codec, std::slice::from_ref(&text)).await;
+            self.send(&codec, &text).await;
         }
         loop {
             match self.next().await {
@@ -143,13 +150,16 @@ impl Peer {
 
     /// Frames generated server packets and submits them through the actual established core.
     async fn send<S: BatchPhase>(&mut self, codec: &BatchCodec<S>, packets: &[Packet]) {
+        let limits = BatchLimits::default();
+        assert!(packets.len() <= limits.max_packets);
         let mut body = Vec::new();
         for packet in packets {
             packet
                 .encode_frame(wire::Peer::Server, 0, 0, &mut body)
                 .unwrap();
         }
-        let entries = wire::Frames::new(Bytes::from(body), BatchLimits::default().max_packets)
+        assert!(body.len() <= limits.max_decoded_bytes);
+        let entries = wire::Frames::new(Bytes::from(body), limits.max_packets)
             .map(|entry| {
                 let entry = entry.unwrap();
                 let mut reader = wire::Reader::from_shared(entry.frame());
@@ -157,10 +167,12 @@ impl Peer {
                 entry.frame().slice(reader.position()..)
             })
             .collect::<Vec<_>>();
-        for message in codec.encode(&entries).unwrap() {
-            self.session
-                .as_mut()
-                .expect("actual established peer")
+        let messages = codec.encode(&entries).unwrap();
+        assert_eq!(messages.len(), 1, "fixture input must fit one real batch");
+        for message in messages {
+            let session = self.session.as_mut().expect("actual established peer");
+            assert!(message.len() <= session.max_message_len());
+            session
                 .send(
                     message.to_vec().into_boxed_slice(),
                     RakReliability::ReliableOrdered,
