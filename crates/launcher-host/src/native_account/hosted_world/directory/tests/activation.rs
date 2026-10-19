@@ -146,10 +146,14 @@ async fn public_activation_publishes_original_route_activity_and_invitation_then
             observed.rta,
             HostedSocketTerminal::Io(io::ErrorKind::UnexpectedEof)
         );
-        assert!(matches!(
-            observed.messaging,
-            HostedSocketTerminal::Close | HostedSocketTerminal::Eof
-        ));
+        assert!(
+            matches!(
+                observed.messaging,
+                HostedSocketTerminal::Close | HostedSocketTerminal::Eof
+            ),
+            "actual messaging socket terminal: {:?}",
+            observed.messaging
+        );
     })
     .await
     .expect("finite public host activation fixture stalled");
