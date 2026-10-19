@@ -1,6 +1,7 @@
 //! Focused native menu input for trusted packet mods; the guest owns menu behavior.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 /// Native menu JSON contract version.
@@ -29,12 +30,22 @@ pub struct Key {
     pub text: Option<String>,
 }
 
+/// Last painted bounds of one guest-requested inert gameplay HUD root.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HudGeometry {
+    pub rect: [f32; 4],
+    pub size: [f32; 2],
+}
+
 /// Optional version-one input facts explicitly accepted by a packet guest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputExtension {
     PointerState,
     ShiftState,
+    HudGeometry,
+    ControlPreviews,
 }
 
 /// A retained opt-in list; an empty list restores the original version-one input shape.
@@ -69,6 +80,10 @@ struct WireInput<'a> {
     pointer_cancelled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     shift_held: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hud_geometry: Option<&'a BTreeMap<String, HudGeometry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_sizes: Option<&'a BTreeMap<String, [f32; 2]>>,
 }
 
 impl Key {
@@ -100,6 +115,12 @@ pub struct Input {
     /// Available authored GUI units before optional reference-size fitting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<[f32; 2]>,
+    /// Available named HUD roots in the same GUI coordinate basis as the menu viewport.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hud_geometry: BTreeMap<String, HudGeometry>,
+    /// Intrinsic, untransformed pack-control preview dimensions in native-panel GUI units.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub preview_sizes: BTreeMap<String, [f32; 2]>,
     pub events: Vec<Event>,
     pub keys: Vec<Key>,
 }
@@ -113,6 +134,8 @@ impl Default for Input {
             pointer_cancelled: false,
             shift_held: false,
             viewport: None,
+            hud_geometry: BTreeMap::new(),
+            preview_sizes: BTreeMap::new(),
             events: Vec::new(),
             keys: Vec::new(),
         }
@@ -129,6 +152,8 @@ impl Input {
             pointer_cancelled,
             shift_held,
             viewport,
+            hud_geometry,
+            preview_sizes,
             events,
             keys,
         } = self;
@@ -141,6 +166,8 @@ impl Input {
             pointer_held: None,
             pointer_cancelled: None,
             shift_held: None,
+            hud_geometry: None,
+            preview_sizes: None,
         };
         for extension in &extensions.0 {
             match extension {
@@ -149,6 +176,8 @@ impl Input {
                     wire.pointer_cancelled = Some(*pointer_cancelled);
                 }
                 InputExtension::ShiftState => wire.shift_held = Some(*shift_held),
+                InputExtension::HudGeometry => wire.hud_geometry = Some(hud_geometry),
+                InputExtension::ControlPreviews => wire.preview_sizes = Some(preview_sizes),
             }
         }
         wire
@@ -163,6 +192,27 @@ impl Input {
             })
             && self.events.len() <= crate::MAX_CONTROL_KEYS
             && self.keys.len() <= crate::MAX_CONTROL_KEYS
+            && self.preview_sizes.len() <= crate::MAX_CONTROL_KEYS
+            && self.preview_sizes.iter().all(|(name, size)| {
+                !name.is_empty()
+                    && name.len() <= 96
+                    && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
+                    && size.iter().all(|value| value.is_finite() && *value > 0.0 && *value <= 1_000_000.0)
+            })
+            // The presenter bounds requested roots; the callback bounds serialized input bytes.
+            && self.hud_geometry.iter().all(|(name, geometry)| {
+                !name.is_empty()
+                    && name.len() <= 256
+                    && geometry
+                        .rect
+                        .iter()
+                        .chain(&geometry.size)
+                        .all(|value| value.is_finite())
+                    && geometry.rect[2..]
+                        .iter()
+                        .chain(&geometry.size)
+                        .all(|value| *value > 0.0)
+            })
             && self.events.iter().all(|event| {
                 !event.id.is_empty()
                     && event.id.len() <= 256
@@ -181,6 +231,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn control_preview_measurements_require_their_own_frozen_input_group() {
+        let input = Input {
+            preview_sizes: BTreeMap::from([("example".into(), [48.0, 28.0])]),
+            ..Default::default()
+        };
+        assert!(input.is_valid());
+        let legacy =
+            serde_json::to_value(input.with_extensions(&InputExtensions::default())).unwrap();
+        assert!(legacy.get("preview_sizes").is_none());
+        let opted = serde_json::to_value(
+            input.with_extensions(&InputExtensions(vec![InputExtension::ControlPreviews])),
+        )
+        .unwrap();
+        assert_eq!(
+            opted["preview_sizes"]["example"],
+            serde_json::json!([48.0, 28.0])
+        );
+        let mut invalid = input;
+        invalid
+            .preview_sizes
+            .insert("bad/name".into(), [48.0, 28.0]);
+        assert!(!invalid.is_valid());
+    }
+
+    #[test]
     fn legacy_wire_never_receives_unaccepted_extension_fields() {
         let input = Input {
             pointer_held: true,
@@ -194,11 +269,15 @@ mod tests {
             legacy,
             serde_json::json!({"version":1,"open":false,"events":[],"keys":[]})
         );
-        let extensions = InputExtensions(vec![InputExtension::PointerState]);
+        let extensions = InputExtensions(vec![
+            InputExtension::PointerState,
+            InputExtension::HudGeometry,
+        ]);
         assert!(extensions.validate().is_ok());
         let extended = serde_json::to_value(input.with_extensions(&extensions)).unwrap();
         assert_eq!(extended["pointer_held"], true);
         assert_eq!(extended["pointer_cancelled"], true);
+        assert_eq!(extended["hud_geometry"], serde_json::json!({}));
         assert!(extended.get("shift_held").is_none());
         let shifted = serde_json::to_value(
             input.with_extensions(&InputExtensions(vec![InputExtension::ShiftState])),
@@ -231,5 +310,23 @@ mod tests {
         assert_eq!(encoded["pointer_cancelled"], true);
         assert_eq!(encoded["shift_held"], true);
         assert!(input.is_valid());
+    }
+
+    #[test]
+    fn geometry_reports_do_not_share_the_unrelated_key_subscription_limit() {
+        let mut input = Input::default();
+        for index in 0..128 {
+            input.hud_geometry.insert(
+                format!("example.root{index}"),
+                HudGeometry {
+                    rect: [0.0, 0.0, 80.0, 27.0],
+                    size: [80.0, 27.0],
+                },
+            );
+        }
+        assert!(input.is_valid());
+        assert!(serde_json::to_vec(&input).unwrap().len() < MAX_INPUT_BYTES);
+        input.hud_geometry.get_mut("example.root0").unwrap().rect[0] = f32::NAN;
+        assert!(!input.is_valid());
     }
 }

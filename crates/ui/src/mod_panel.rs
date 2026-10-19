@@ -13,6 +13,7 @@ pub use axis::{AxisExtent, AxisRoute};
 pub use surface::{
     CollectionArt, CollectionDefinition, CollectionItem, MAX_SURFACE_NODES, MAX_TRANSITION_SECONDS,
     Surface, SurfaceCollection, SurfaceTransition, SurfaceValue, TransitionEasing, backdrop,
+    preview,
 };
 pub use update::{
     MAX_PANEL_BUNDLE_BYTES, MAX_PANEL_PATCH_BYTES, MAX_PANEL_SURFACES, PanelBundle, PanelPatch,
@@ -80,6 +81,10 @@ pub struct Panel {
     /// Lets a binding control receive Escape instead of dismissing the panel.
     #[serde(default)]
     pub capture_key: bool,
+    /// Keeps the resource-pack gameplay HUD visible behind this panel.
+    /// Hide HUD and death screens still apply; focused panels always hide the crosshair.
+    #[serde(default)]
+    pub show_gameplay_hud: bool,
     /// Opts into native hover/toggle easing and smooth discrete wheel scrolling.
     #[serde(default)]
     pub motion: bool,

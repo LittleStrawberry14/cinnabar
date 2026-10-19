@@ -331,7 +331,14 @@ impl UiPresentationRuntime {
                 metrics,
                 [content_width, content_height],
             );
-            self.append_mod_panel(runtime, &mut nodes, &mut next_id, metrics, content);
+            self.append_mod_panel(
+                player_runtime,
+                runtime,
+                &mut nodes,
+                &mut next_id,
+                metrics,
+                content,
+            );
             let mut debug_eligibility =
                 crate::ui_runtime::scene_stack::construction::DebugOverlayEligibility::default();
             for entry in stack.scenes() {

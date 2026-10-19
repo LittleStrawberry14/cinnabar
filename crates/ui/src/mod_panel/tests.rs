@@ -20,6 +20,7 @@ fn panel() -> Panel {
         }],
         sections: Vec::new(),
         capture_key: false,
+        show_gameplay_hud: false,
         motion: false,
     }
 }
@@ -33,6 +34,7 @@ fn finite_slider_and_physical_key_are_accepted() {
 fn relative_axis_extent_bindings_require_a_declared_positive_numeric_value() {
     let mut panel = panel();
     panel.surface = Some(Surface { collections: Default::default(),
+        previews: Default::default(),
 screen:"extent.root".into(),
         document:serde_json::json!({"namespace":"extent","root":{
             "type":"button","size":[10,10],"button_mappings":[{
@@ -674,6 +676,7 @@ fn resolved_template_routes_still_require_declared_panel_controls() {
 fn transformed(transform: serde_json::Value, child: &str) -> Surface {
     Surface {
         collections: Default::default(),
+        previews: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
         document: serde_json::json!({"namespace":"extension","screen":{
@@ -720,6 +723,7 @@ fn surfaces_reject_rotated_collection_viewports() {
     use super::{CollectionDefinition, SurfaceCollection};
 
     let template = Surface {
+        previews: Default::default(),
         screen: "extension.tile".into(),
         document: serde_json::json!({"namespace":"extension", "tile":{
             "type":"panel", "size":[20,20]
@@ -778,4 +782,24 @@ fn surfaces_reject_rotated_collection_viewports() {
         surface.resolved_document().is_err(),
         "rotated placeholder document admitted"
     );
+}
+
+/// Preview declarations belong to the immutable route definition, alongside collection data.
+#[test]
+fn surface_definition_tracks_previews_but_not_scalar_bindings() {
+    let mut original = surface("mod.control:0");
+    original.previews.insert(
+        "sample".into(),
+        preview::ControlPreview {
+            reference: "fixture.first".into(),
+            ..Default::default()
+        },
+    );
+    let mut changed = original.clone();
+    changed
+        .bindings
+        .insert("#value".into(), SurfaceValue::Number(2.));
+    assert!(original.same_definition(&changed));
+    changed.previews.get_mut("sample").unwrap().reference = "fixture.second".into();
+    assert!(!original.same_definition(&changed));
 }

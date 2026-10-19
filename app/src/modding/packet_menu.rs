@@ -17,6 +17,9 @@ pub(super) struct State {
     pub retained: Option<Arc<client_extensions::modding::packet_relay::MenuOutput>>,
 }
 
+#[cfg(test)]
+mod runtime_scenario;
+
 /// Applies each guest update once; unchanged polling never rebuilds a catalog or panel.
 pub(super) fn poll(
     packets: &mut PacketMods,
@@ -29,6 +32,7 @@ pub(super) fn poll(
         let owner = PanelUiOwner::PacketSession(packets.menu.relay.unwrap_or(0));
         let _ = presentation.mod_ui_mut().set_mod_panel(owner, None);
         presentation.mod_ui_mut().set_prepared_panel_ui(owner, None);
+        let _ = presentation.set_mod_hud_bindings(owner, None);
         packets.menu = State {
             session,
             relay,
@@ -41,6 +45,26 @@ pub(super) fn poll(
     let mut input = std::mem::take(&mut packets.menu.pending);
     input.open = packets.menu.owned && presentation.mod_ui().mod_panel_open();
     input.viewport = viewport;
+    input.preview_sizes = relay
+        .map(|relay| {
+            presentation.mod_control_preview_sizes(PanelUiOwner::PacketSession(relay), session)
+        })
+        .unwrap_or_default();
+    if let Some(requests) = packets
+        .menu
+        .retained
+        .as_ref()
+        .and_then(|output| output.output.hud_geometry.as_ref())
+    {
+        input.hud_geometry = presentation
+            .mod_hud_geometry(requests, session)
+            .into_iter()
+            .map(|(name, geometry)| {
+                let ui::mod_hud::HudGeometry { rect, size } = geometry;
+                (name, mod_api::native_menu::HudGeometry { rect, size })
+            })
+            .collect();
+    }
     if let Some(output) = packets.native_menu(input) {
         packets.menu.publish(presentation, output);
     }
@@ -76,7 +100,14 @@ impl State {
             merged.prepared.clone_from(&previous.prepared);
             output = Arc::new(merged);
         }
-
+        if let Some(bindings) = output.output.hud_bindings.as_ref()
+            && let Some(relay) = self.relay
+            && let Err(error) = presentation
+                .set_mod_hud_bindings(PanelUiOwner::PacketSession(relay), Some(bindings.clone()))
+        {
+            bevy::log::warn!(%error, "Packet HUD bindings rejected");
+            return;
+        }
         if output.output.open && output.output.panel.is_some() || self.owned {
             if output.output.open
                 && output.output.panel.is_some()
@@ -141,6 +172,8 @@ mod tests {
             output: mod_host::packet_mod::native_menu::Output {
                 open,
                 panel: Some(panel),
+                hud_bindings: None,
+                hud_geometry: None,
                 input_extensions: None,
                 keys: Vec::new(),
             },
@@ -195,6 +228,55 @@ mod tests {
         assert!(packets.menu.retained.is_none());
     }
 
+    #[test]
+    fn stopped_packet_session_retires_actual_hud_globals_and_preserves_other_owners() {
+        use ui::mod_hud::{HudBindings, HudGeometryRequests};
+        let mut presentation =
+            UiPresentationResource(client_ui::test_support::mini_engine_presentation());
+        presentation.set_server_ui_pack(&client_ui::ui_runtime::presentation::ServerUiPack {
+            ui_layers: vec![vec![("ui/_ui_defs.json".into(), br#"{"ui_defs":["ui/hud_screen.json"]}"#.to_vec()),
+                ("ui/hud_screen.json".into(), serde_json::json!({"namespace":"hud","hud_screen":{
+                    "type":"screen","controls":[{"fixture_root":{"type":"input_panel","size":[40,20],
+                        "anchor_from":"top_left","anchor_to":"top_left","bindings":[{
+                            "binding_name":"#mod_fixture_position","binding_name_override":"#offset"}]}}]
+                }}).to_string().into_bytes())]], ..Default::default()
+        });
+        let globals = |x| {
+            serde_json::from_value::<HudBindings>(
+                serde_json::json!({"#mod_fixture_position":[x,20]}),
+            )
+            .unwrap()
+        };
+        let root = |presentation: &mut UiPresentationResource| {
+            presentation
+                .build(
+                    &player_state::PlayerState::new(1),
+                    &client_ui::ui_runtime::UiRuntime::new(1),
+                    0,
+                    [1280, 800],
+                    ui::DpiScale::new(1.0).unwrap(),
+                )
+                .unwrap();
+            presentation.mod_hud_geometry(&HudGeometryRequests(vec!["fixture_root".into()]),1)["fixture_root"].clone()
+        };
+        presentation
+            .set_mod_hud_bindings(PanelUiOwner::Environment(1), Some(globals(10)))
+            .unwrap();
+        let other_owner = root(&mut presentation);
+        presentation
+            .set_mod_hud_bindings(PanelUiOwner::PacketSession(7), Some(globals(100)))
+            .unwrap();
+        assert!(root(&mut presentation).rect[0] > other_owner.rect[0]);
+        let mut packets = PacketMods::default();
+        packets.menu = State {
+            session: 1,
+            relay: Some(7),
+            ..Default::default()
+        };
+        poll(&mut packets, &mut presentation, 1, None);
+        assert_eq!(root(&mut presentation), other_owner);
+    }
+
     /// Uses the same worker-prepared catalog publication as the live packet menu.
     fn moving_output(
         screen: &str,
@@ -207,6 +289,7 @@ mod tests {
         let mut panel = mod_ui::test_support::sample_panel();
         panel.surface = Some(Surface {
             collections: Default::default(),
+            previews: Default::default(),
             screen: format!("temporal.{screen}"),
             document: serde_json::json!({"namespace":"temporal",screen:{
                 "type":"screen","size":["100%","100%"],"controls":[{"moving":{
@@ -246,6 +329,8 @@ mod tests {
             output: mod_host::packet_mod::native_menu::Output {
                 open,
                 panel: Some(panel),
+                hud_bindings: None,
+                hud_geometry: None,
                 input_extensions: None,
                 keys: Vec::new(),
             },

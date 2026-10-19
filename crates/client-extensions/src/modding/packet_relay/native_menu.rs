@@ -147,7 +147,11 @@ impl NativeMenu {
             state.pointer_barrier = 0;
             state.open = input.open;
             state.epoch = state.epoch.wrapping_add(1);
-            state.output = None;
+            state.output = state
+                .output
+                .take()
+                .and_then(|(_, output)| hud_only(&output, state.open))
+                .map(|output| (state.epoch, output));
         }
         let epoch = state.epoch;
         let output = state
@@ -180,6 +184,8 @@ impl NativeMenu {
             pending.pointer_cancelled |= input.pointer_cancelled;
             pending.shift_held = input.shift_held;
             pending.viewport = input.viewport;
+            pending.hud_geometry = input.hud_geometry;
+            pending.preview_sizes = input.preview_sizes;
             pending.events.extend(input.events);
             pending.keys.extend(input.keys);
         } else {
@@ -223,7 +229,11 @@ impl NativeMenu {
         if self.available()
             && let Some(output) = output
         {
-            let output = (state.epoch == input.epoch).then_some(output);
+            let output = if state.epoch == input.epoch {
+                Some(output)
+            } else {
+                hud_only(&output, state.open)
+            };
             if let Some(output) = output {
                 state.output = Some((state.epoch, output));
             }
@@ -279,6 +289,18 @@ fn coalesce_pointer_axes(
     before - pending.events.len()
 }
 
+/// Persistent HUD state is independent of visibility; stale menu controls never reopen it.
+fn hud_only(output: &Arc<MenuOutput>, open: bool) -> Option<Arc<MenuOutput>> {
+    if output.output.hud_bindings.is_none() && output.output.hud_geometry.is_none() {
+        return None;
+    }
+    let mut retained = (**output).clone();
+    retained.output.open = open;
+    retained.output.panel = None;
+    retained.prepared = None;
+    Some(Arc::new(retained))
+}
+
 /// Retains a matching static catalog while bindings and control values change.
 pub(super) fn prepare(
     mut output: Output,
@@ -288,11 +310,20 @@ pub(super) fn prepare(
         if output.panel.is_none() {
             output.panel.clone_from(&previous.output.panel);
         }
-
+        if output.hud_bindings.is_none() {
+            output
+                .hud_bindings
+                .clone_from(&previous.output.hud_bindings);
+        }
         if output.input_extensions.is_none() {
             output
                 .input_extensions
                 .clone_from(&previous.output.input_extensions);
+        }
+        if output.hud_geometry.is_none() {
+            output
+                .hud_geometry
+                .clone_from(&previous.output.hud_geometry);
         }
     }
     let prepared = match output.panel.as_ref() {
@@ -343,6 +374,8 @@ mod tests {
             Output {
                 open: true,
                 panel: Some(panel),
+                hud_bindings: None,
+                hud_geometry: None,
                 input_extensions: None,
                 keys: vec!["KeyR".into()],
             },
@@ -558,6 +591,50 @@ mod tests {
     }
 
     #[test]
+    fn ordered_edits_survive_coalescing_without_queuing_multiple_wakes() {
+        let (menu, _) = mailbox();
+        let mut first = Input {
+            viewport: Some([640.0, 400.0]),
+            pointer_held: true,
+            ..Default::default()
+        };
+        first.events.push(Event {
+            id: "toggle".into(),
+            value: 1.0,
+        });
+        first.hud_geometry.insert(
+            "example.root".into(),
+            mod_api::native_menu::HudGeometry {
+                rect: [1.0, 2.0, 80.0, 27.0],
+                size: [80.0, 27.0],
+            },
+        );
+        assert!(menu.exchange(first).unwrap().1);
+        let mut second = Input {
+            viewport: Some([427.0, 240.0]),
+            ..Default::default()
+        };
+        second.keys.push(Key {
+            key: "KeyR".into(),
+            text: None,
+        });
+        assert!(!menu.exchange(second).unwrap().1);
+        let input = menu.take_inputs().pop().unwrap();
+        assert_eq!(input.input.viewport, Some([427.0, 240.0]));
+        assert!(
+            input.input.hud_geometry.is_empty(),
+            "hidden HUD roots clear older geometry"
+        );
+        assert!(
+            !input.input.pointer_held,
+            "the latest release is retained without an edit"
+        );
+        assert_eq!(input.input.events[0].id, "toggle");
+        assert_eq!(input.input.keys[0].key, "KeyR");
+        assert!(menu.take_inputs().is_empty());
+    }
+
+    #[test]
     fn pointer_cancellation_is_latched_until_consumed_while_shift_follows_the_latest_sample() {
         let (menu, _) = mailbox();
         menu.exchange(Input {
@@ -714,6 +791,36 @@ mod tests {
     }
 
     #[test]
+    fn queued_phases_keep_original_epochs_so_old_panel_results_cannot_reopen_the_menu() {
+        let (menu, _) = mailbox();
+        menu.exchange(Input {
+            open: true,
+            events: vec![Event {
+                id: "edit".into(),
+                value: 1.0,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        menu.exchange(Input::default()).unwrap();
+        let phases = menu.take_inputs();
+        assert_eq!(phases.len(), 2);
+        menu.complete(&phases[0], Some(output()));
+        assert!(
+            menu.exchange(Input::default()).unwrap().0.is_none(),
+            "the earlier visible phase cannot publish a stale panel"
+        );
+        let mut persistent = (*output()).clone();
+        persistent.output.hud_bindings =
+            Some(serde_json::from_value(serde_json::json!({"#mod_position":[0.2,0.4]})).unwrap());
+        menu.complete(&phases[0], Some(Arc::new(persistent)));
+        let update = menu.exchange(Input::default()).unwrap().0.unwrap();
+        assert!(!update.output.open);
+        assert!(update.output.panel.is_none() && update.prepared.is_none());
+        assert!(update.output.hud_bindings.is_some());
+    }
+
+    #[test]
     fn queued_phase_and_combined_action_budgets_stop_and_clear_the_mailbox_on_overflow() {
         let (menu, _) = mailbox();
         let half = mod_api::MAX_CONTROL_KEYS / 2;
@@ -794,6 +901,34 @@ mod tests {
     }
 
     #[test]
+    fn persistent_hud_updates_survive_visibility_changes_without_replaying_the_menu() {
+        for close_before_completion in [false, true] {
+            let (menu, _) = mailbox();
+            menu.exchange(Input {
+                open: true,
+                ..Default::default()
+            })
+            .unwrap();
+            let input = menu.take_inputs().pop().unwrap();
+            let mut output = (*output()).clone();
+            output.output.hud_bindings = Some(
+                serde_json::from_value(serde_json::json!({
+                    "#mod_fixture_position":[0.4,0.6]
+                }))
+                .unwrap(),
+            );
+            if close_before_completion {
+                menu.exchange(Input::default()).unwrap();
+            }
+            menu.complete(&input, Some(Arc::new(output)));
+            let update = menu.exchange(Input::default()).unwrap().0.unwrap();
+            assert!(!update.output.open);
+            assert!(update.output.panel.is_none() && update.prepared.is_none());
+            assert!(update.output.hud_bindings.is_some());
+        }
+    }
+
+    #[test]
     fn unchanged_static_panels_reuse_the_prepared_catalog() {
         let first = output();
         let mut previous = Some(Arc::clone(&first));
@@ -803,6 +938,54 @@ mod tests {
         assert!(Arc::ptr_eq(
             first.prepared.as_ref().unwrap(),
             next.prepared.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn hud_only_updates_retain_an_existing_panel_without_preparing_a_catalog() {
+        let globals = || {
+            serde_json::from_value(serde_json::json!({
+                "#mod_fixture_position":[0.25,0.75]
+            }))
+            .unwrap()
+        };
+        let mut previous = None;
+        let first = prepare(
+            Output {
+                open: false,
+                panel: None,
+                hud_bindings: Some(globals()),
+                hud_geometry: Some(ui::mod_hud::HudGeometryRequests(vec![
+                    "example.root".into(),
+                ])),
+                input_extensions: None,
+                keys: Vec::new(),
+            },
+            &mut previous,
+        )
+        .unwrap();
+        assert!(first.prepared.is_none() && first.output.panel.is_none());
+
+        let panel = output();
+        let ready = prepare(panel.output.clone(), &mut previous).unwrap();
+        assert_eq!(ready.output.hud_bindings, first.output.hud_bindings);
+        assert_eq!(ready.output.hud_geometry, first.output.hud_geometry);
+        let closed = prepare(
+            Output {
+                open: false,
+                panel: None,
+                hud_bindings: Some(globals()),
+                hud_geometry: None,
+                input_extensions: None,
+                keys: Vec::new(),
+            },
+            &mut previous,
+        )
+        .unwrap();
+        assert_eq!(closed.output.panel, ready.output.panel);
+        assert!(Arc::ptr_eq(
+            closed.prepared.as_ref().unwrap(),
+            ready.prepared.as_ref().unwrap()
         ));
     }
 }

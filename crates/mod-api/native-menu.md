@@ -3,8 +3,7 @@
 A WASI preview 1 packet reactor may export `menu(i32, i32) -> i32` alongside
 `native-init(i32)`. The host sets capability bit `2` only when the mod has the
 controls grant. Reactors without these optional exports retain their existing
-packet ABI. Native-init and menu signatures are checked together before execution;
-export discovery requests permissions but never grants them.
+packet ABI. Export discovery requests permissions but never grants them.
 
 `menu` receives UTF-8 JSON bytes. Its return uses the same canonical
 `result<list<u8>, string>` layout as other packet callbacks: a four-byte
@@ -22,12 +21,13 @@ The optional `viewport` is the available authored GUI size before reference-size
 
 Version one starts with only these original fields, including for guests that
 reject unknown JSON fields. To accept additional facts, return optional output
-`input_extensions:["pointer_state","shift_state"]`. The next input includes only
-those groups: `pointer_state` adds `pointer_held` and `pointer_cancelled`, and
-`shift_state` adds `shift_held`. Omission retains the accepted groups; an empty
-array clears them. Requests must contain unique known groups. A new session starts
-with no extensions. Each group's version-one field set is frozen; future facts
-require a new opt-in group so existing strict decoders remain valid.
+`input_extensions:["pointer_state","shift_state","hud_geometry","control_previews"]`. The next
+input includes only those groups: `pointer_state` adds `pointer_held` and
+`pointer_cancelled`, `shift_state` adds `shift_held`, and `hud_geometry` adds its
+map. `control_previews` adds the `preview_sizes` map described below. Omission retains the accepted groups; an empty array clears them. Requests
+must contain unique known groups. A new session starts with no extensions.
+Each group's field set is frozen for version one. Future input facts require a
+new opt-in group so strict decoders that accepted an existing group remain valid.
 
 The host delivers native control IDs and values. Focused menu keys may carry
 composed text; native number and choice editors receive their keyboard input
@@ -49,9 +49,80 @@ Panel `motion` and authored surface transitions belong to the mod and remain
 independent of Cinnabar's built-in Screen animations setting. Mods implement their
 own motion preference by choosing `motion` and which transitions to declare.
 
-Omitting `panel` retains its previous document. A retained panel's static catalog
-is prepared on the packet worker; scalar updates reuse it. Closing or replacing
-a session retires its pending input and prepared presentation.
+Panel `show_gameplay_hud: true` keeps the resource-pack gameplay HUD visible behind
+an open panel, for example for a placement editor. It defaults to false and can
+change with full panel updates while retaining pointer capture. The player's Hide
+HUD setting and death screen still take priority; a focused panel always hides
+the crosshair. Other extensions' overlay cards remain suppressed during menus.
+
+Omitting `panel` retains its previous document, allowing HUD-only updates before or
+while the menu is closed. Optional `hud_bindings` supplies a bounded map of trusted
+resource-pack HUD globals: names begin with `#mod_`, values are booleans, finite
+numbers or numeric vectors of two to four components. An omitted map retains the
+previous values; an empty map removes them. The host overlays these values without
+mutating the shared server HUD data, and retires them with their packet session or
+grants. HUD overrides do not require the menu to be visible.
+
+Optional output `hud_geometry:["example_clock"]` requests the last painted bounds
+of up to 128 unique inert resource-pack HUD `input_panel` instance names. Names
+are opaque ASCII identifiers, at most 96 bytes; mapped controls are excluded.
+Omitting the list retains it, and an empty list clears it. After opting into the
+`hud_geometry` input extension, input returns a
+`hud_geometry` map, for example:
+
+```json
+{"example_clock":{"rect":[12,24,80,27],"size":[40,13.5]}}
+```
+
+`rect` contains x, y, width and height after composed ancestor paint transforms;
+`size` contains the root's layout width and height before paint transforms. Both
+use the native panel GUI coordinate basis with safe-area origin removed. Missing,
+hidden, ambiguous and stale-session roots are omitted. Geometry is a completed
+frame observation and can lag one frame behind updated bindings.
+Selectors match the engine's resolved instance name. For an authored literal
+name, underscores avoid JSON-UI interpreting a leading `namespace.` qualifier.
+
+An authored surface may declare `previews`, keyed by opaque preview ID. A
+noninteractive custom node with `renderer:"cinnabar_control_preview"` and literal
+`preview_id` contains the corresponding real pack control inside its rectangle:
+
+```json
+{"previews":{"example":{"reference":"example.actual_widget","variables":{"$compact":true},"globals":{"#example_text":"First line\nSecond line"},"collections":{},"size":[0,0]}}}
+```
+
+`reference` selects a qualified control in the current composed pack catalog.
+`variables` supplies root `$` overrides; `globals` supplies independent `#`
+bindings; `collections` maps collection names to arrays of `#`-keyed row objects.
+These values never update gameplay HUD bindings or settings. `size` supplies a
+reference canvas in GUI units; zero components measure content on a bounded
+canvas. The host uses the same text, image, native HUD, item and player renderers
+as the original control, preserves aspect ratio and clips to the destination.
+Preview focus, hits and actions are discarded, leaving the enclosing menu control
+as the input target. Nested filter/backdrop composites are not replayed.
+
+At most 32 previews and 128 KiB of aggregate fixture data are retained per
+surface. Fixture strings allow newlines and up to 16 KiB; ordinary surface
+scalar limits remain unchanged. Resolution, factory prototypes and expanded
+binding are bounded to the surface node budget. Missing or rejected controls
+produce no thumbnail. Declaration changes invalidate their prepared source and
+preview cache; sessions, owners, language, font and texture changes remain
+isolated. Closed surfaces retire the cache after their exit settles.
+
+After opting into `control_previews`, input includes
+`preview_sizes:{"example":[48,28]}` for successfully measured current previews.
+Dimensions cover the emitted artwork, including overflow beyond the root's
+layout rectangle, before contain fit or parent paint transform. They use the
+same native-panel GUI basis as `hud_geometry.size`. Texture transparency is not
+sampled when measuring conservative painted bounds. Missing or stale
+measurements are omitted. Measurements are delivered only to the packet session
+that owns the currently painted declarations; another owner's previews cannot
+be observed. This group's version-one field set is frozen like the others.
+
+Trusted HUD catalogs support `cinnabar_position:[x,y]` or its
+`#cinnabar_position` vector binding. Each normalized component selects the
+remaining travel inside the parent after the widget's transformed bounds, keeping
+scaled widgets within the parent. Ordinary resource-pack catalogs ignore this
+native extension. The host enables it for a HUD with active trusted mod bindings.
 
 An authored `surface.screen` identifies a logical route. Catalog revisions of the
 same screen retain binding tweens; a different screen starts its declared entry.
@@ -92,7 +163,7 @@ cursor loss or another screen taking input. It is delivered once, including when
 several samples coalesce; normal release leaves it false. `shift_held` is the
 current focused physical Shift state. Ordered visibility phases retain earlier
 edits while rejecting their stale panel results, so closing before a worker poll
-cannot silently lose a final control edit.
+cannot silently lose a final HUD edit.
 The host owns drawing, input routing and animation; the guest owns feature state.
 
 The Mods library detects the native callback permissions of raw reactors when
@@ -109,5 +180,6 @@ cargo run -p ui-snapshot -- --panel panel.json --out panel.png \
 
 The CPU snapshot path uses the production panel painter and local validated
 carriers. A headless client capture verifies the GPU glass/backdrop appearance.
-Use `--resource-pack /path/to/pack` to load static textures referenced by the
-panel. Texture names must be relative without dot segments; reads use the pack file limit.
+Pack-control previews require the full presentation runtime, including composed
+pack fonts and player-renderer resources; the optional reactor painter scenario
+installs these through their normal owners.

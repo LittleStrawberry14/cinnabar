@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub mod backdrop;
 mod collection;
 mod paint_transform;
+pub mod preview;
 mod static_templates;
 mod transition;
 pub use collection::{CollectionArt, CollectionDefinition, CollectionItem, SurfaceCollection};
@@ -26,6 +27,9 @@ pub(crate) const MAX_BINDING_NAME_BYTES: usize = 96;
 pub struct Surface {
     pub screen: String,
     pub document: String,
+    /// Independently bound, inert pack controls fitted inside authored preview nodes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub previews: BTreeMap<String, preview::ControlPreview>,
     #[serde(default)]
     pub bindings: BTreeMap<String, SurfaceValue>,
     /// Numeric bindings that ease toward each new value, keyed by binding name.
@@ -77,6 +81,7 @@ impl SurfaceValue {
 impl Surface {
     /// Rejects oversized trees and dynamic factories before the host retains them.
     pub fn validate(&self) -> Result<(), String> {
+        preview::validate(&self.previews)?;
         let _ = self.walk()?;
         self.validate_bindings()
     }
@@ -165,6 +170,7 @@ impl Surface {
     /// Collects capability-routed actions from the fully validated static tree.
     fn walk(&self) -> Result<Vec<String>, String> {
         let root = self.resolved_root()?;
+        preview::node(&root, &self.previews)?;
         let mut count = 0;
         let mut actions = Vec::new();
         node(&root, 0, &mut count, &mut actions, false, false)?;
@@ -219,6 +225,7 @@ impl Surface {
     pub fn same_definition(&self, other: &Self) -> bool {
         self.screen == other.screen
             && self.document == other.document
+            && self.previews == other.previews
             && self.collections.len() == other.collections.len()
             && self.collections.iter().all(|(name, collection)| {
                 other.collections.get(name).is_some_and(|other| {
@@ -427,6 +434,7 @@ fn node(
                         | "cinnabar_vector_icon"
                         | "cinnabar_vector_path"
                         | "gradient_renderer"
+                        | preview::RENDERER
                 )
             })
     {

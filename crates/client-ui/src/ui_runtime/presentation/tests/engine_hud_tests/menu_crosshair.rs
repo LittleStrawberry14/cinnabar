@@ -219,6 +219,7 @@ fn crosshair_menu_panel_close_restores_cursor_while_exit_is_still_painted() {
     let mut panel = mod_ui::test_support::sample_panel();
     panel.surface = Some(Surface {
         collections: Default::default(),
+        previews: Default::default(),
         screen: "extension.cursor_exit".into(),
         document: json!({"namespace":"extension","cursor_exit":{
             "type":"screen","controls":[{"body":{"type":"panel","size":[40,20],

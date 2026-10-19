@@ -13,6 +13,12 @@ pub struct Output {
     pub open: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<ui::mod_panel::Panel>,
+    /// Bounded, trusted globals for the actual resource-pack HUD, independent of menu visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_bindings: Option<ui::mod_hud::HudBindings>,
+    /// Opaque inert gameplay HUD roots requested independently of menu visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_geometry: Option<ui::mod_hud::HudGeometryRequests>,
     /// Version-one input groups accepted on subsequent calls; omission retains the selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_extensions: Option<mod_api::native_menu::InputExtensions>,
@@ -69,7 +75,12 @@ impl PacketMod {
                             "native menu text controls are not supported"
                         );
                     }
-
+                    if let Some(bindings) = &output.hud_bindings {
+                        bindings.validate().map_err(anyhow::Error::msg)?;
+                    }
+                    if let Some(requests) = &output.hud_geometry {
+                        requests.validate().map_err(anyhow::Error::msg)?;
+                    }
                     if let Some(extensions) = &output.input_extensions {
                         extensions.validate().map_err(anyhow::Error::msg)?;
                     }
@@ -198,9 +209,9 @@ mod tests {
     #[test]
     fn extended_input_is_opted_in_retained_and_explicitly_cleared_per_instance() {
         let legacy = r#"{"version":1,"open":false,"events":[],"keys":[]}"#;
-        let extended = r#"{"version":1,"open":false,"events":[],"keys":[],"pointer_held":true,"pointer_cancelled":true,"shift_held":true}"#;
+        let extended = r#"{"version":1,"open":false,"events":[],"keys":[],"pointer_held":true,"pointer_cancelled":true,"shift_held":true,"hud_geometry":{}}"#;
         let outputs = [
-            r#"{"open":false,"input_extensions":["pointer_state","shift_state"]}"#,
+            r#"{"open":false,"input_extensions":["pointer_state","shift_state","hud_geometry"]}"#,
             "null",
             r#"{"open":false,"input_extensions":[]}"#,
             r#"{"open":false}"#,
@@ -269,6 +280,45 @@ mod tests {
         ] {
             let output =
                 serde_json::json!({"open":false,"input_extensions":extensions}).to_string();
+            let mut guest = instance(&output, output.len(), true);
+            assert!(guest.menu(&Input::default()).is_err());
+            assert!(!guest.is_active());
+        }
+    }
+
+    #[test]
+    fn hud_bindings_can_update_before_a_panel_and_reject_untrusted_globals() {
+        let output = serde_json::json!({"open":false,"hud_bindings":{
+            "#mod_fixture_position":[0.25,0.75],"#mod_fixture_scale":1.2,
+            "#mod_fixture_active":true
+        }})
+        .to_string();
+        let mut guest = instance(&output, output.len(), true);
+        let update = guest.menu(&Input::default()).unwrap().unwrap();
+        assert!(!update.open && update.panel.is_none());
+        assert!(update.hud_bindings.is_some());
+        for invalid in [
+            output.replace("#mod_fixture_scale", "#world_blur"),
+            output.replace("1.2", "\"untyped\""),
+        ] {
+            let mut guest = instance(&invalid, invalid.len(), true);
+            assert!(guest.menu(&Input::default()).is_err());
+            assert!(!guest.is_active());
+        }
+    }
+
+    #[test]
+    fn named_hud_geometry_requests_are_bounded_and_independent_of_menu_visibility() {
+        let output = serde_json::json!({"open":false,"hud_geometry":["fixture.clock"]}).to_string();
+        let mut guest = instance(&output, output.len(), true);
+        let update = guest.menu(&Input::default()).unwrap().unwrap();
+        assert!(update.panel.is_none());
+        assert_eq!(update.hud_geometry.unwrap().0, ["fixture.clock"]);
+        for names in [
+            serde_json::json!(["duplicate", "duplicate"]),
+            serde_json::json!(["bad/name"]),
+        ] {
+            let output = serde_json::json!({"open":false,"hud_geometry":names}).to_string();
             let mut guest = instance(&output, output.len(), true);
             assert!(guest.menu(&Input::default()).is_err());
             assert!(!guest.is_active());

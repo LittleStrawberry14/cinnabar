@@ -376,6 +376,12 @@ and read budget. Native integrations drain
 `ModUi::take_mod_panel_text_events(owner)` and call that owner's
 `ModHost::queue_text_events` before running its frame. Admission validates the
 entire batch against its current text controls before updating any retained value.
+Optional `show_gameplay_hud: true` retains the resource-pack gameplay HUD behind an
+open panel, for example while placing HUD elements. It defaults to false. Hide HUD
+and death-screen suppression still apply, and the crosshair stays hidden while a
+panel owns input. This does not enable other extensions' overlay cards. The value
+can change with a full panel update without replacing the retained document.
+
 Optional `motion: true` enables short native hover and toggle transitions and
 smooth discrete wheel scrolling. Pixel scrolling and scrollbar dragging remain
 immediate. Authored surfaces can bind `#row_N_hover` and

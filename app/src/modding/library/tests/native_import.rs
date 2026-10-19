@@ -332,6 +332,14 @@ fn imported_external_reactor_keeps_native_menu_alive_after_explicit_consent() {
         pointer_held: true,
         pointer_cancelled: true,
         shift_held: true,
+        hud_geometry: [(
+            "fixture.clock".into(),
+            mod_api::native_menu::HudGeometry {
+                rect: [10.0, 20.0, 50.0, 15.0],
+                size: [50.0, 15.0],
+            },
+        )]
+        .into(),
         ..Default::default()
     };
     let mut retained = None;
