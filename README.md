@@ -66,6 +66,7 @@ Launch the native menu, then sign in or select a saved account and join a server
 cargo run -p cinnabar --features native-networking -- --native-networking raknet
 ```
 
+Native menu account and local-world services start without a Go Core process or control endpoint.
 Native mode uses the existing account menu for Microsoft device-code sign-in and saved-account
 validation. Pending sign-in leaves the active account unchanged until identity verification and
 account commit finish. Account changes, cancellation and expired credentials stop the original
@@ -93,7 +94,9 @@ Friend-world admission and hosting have native implementations, including legacy
 Messaging signaling, signed peer admission and original Dragonfly or BDS worlds. Their native
 menu join gate remains disabled while end-to-end acceptance is completed. Broader retail
 account, server, browser and platform compatibility also remains under validation; Go stays
-the default until that work passes. The native HTTPS/WebSocket relay has a separate operator;
+the default until that work passes. The `--address friend_xuid/<xuid>` form uses the default Go
+backend; combined with `--native-networking`, it returns an error because the string supplies no
+verified friend-world selection. The native HTTPS/WebSocket relay has a separate operator;
 see [web/gateway/README.md](web/gateway/README.md) for configuration and current transport limits.
 
 The transport protocol cores are sans I/O. Runtime adapters own their sockets and timers;

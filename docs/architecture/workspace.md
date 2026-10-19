@@ -1,6 +1,6 @@
 # Workspace layout
 
-How the client, the Go core and their libraries fit together, and what each crate and package owns. The crate layering rules are in `tools/architecture/policy.toml`.
+How the client, its default Go backend and opt-in Rust networking libraries fit together, and what each crate and package owns. The crate layering rules are in `tools/architecture/policy.toml`.
 
 ## Overview
 
@@ -10,11 +10,17 @@ cinnabar (Rust)  ── local socket ──  bedrock-core (Go, gophertunnel)
                                              └─ go-nethernet ─ Realms and friend worlds
 ```
 
-Rust never implements Xbox authentication, encryption, RakNet or NetherNet; the core owns those
-and relays packets over a local stream.
+This is the default backend. With the `native-networking` feature and `--native-networking`
+selection, Rust libraries own authentication, encryption and RakNet/NetherNet sessions directly.
+Native menu services require no Core process or control endpoint. Local-world server integrations
+retain their existing Dragonfly or BDS process owners. See the [native launch instructions](../../README.md#how-it-works).
 
 | Library | Used for |
 | --- | --- |
+| [bedrock-net](https://github.com/cinnabar-mc/bedrock-net) | Native framing, encryption, Login, resource packs and typed session lifecycle. |
+| [bedrock-services](https://github.com/cinnabar-mc/bedrock-services) | Native Microsoft/Xbox authentication, Realms, profiles, presence and signaling. |
+| [raknet](https://github.com/cinnabar-mc/raknet) | Native RakNet protocol core and its runtime adapter. |
+| [nethernet](https://github.com/cinnabar-mc/nethernet) | Native ICE, DTLS and SCTP with explicit Tokio and Bevy adapters. |
 | [protocolgen](https://github.com/cinnabar-mc/protocolgen) | Generates the Bedrock packet codec vendored in `crates/protocol/vendor`. |
 | [Axolotl Stack](https://github.com/axolotl-stack/axolotl-stack) | Jolyne (client session library), whose raw packet entries and spawn sequence `crates/protocol` adapts. MIT; see `THIRD_PARTY_NOTICES.md`. |
 | [gophertunnel](https://github.com/Sandertv/gophertunnel) | Bedrock login, encryption, resource packs and the packet relay. |
