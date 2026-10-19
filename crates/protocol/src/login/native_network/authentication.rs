@@ -236,6 +236,24 @@ impl NativeAuthentication {
         Ok(self)
     }
 
+    /// Attaches this account's protected socket to an explicitly parsed raw service destination.
+    /// The target grants no friend membership or Login nonce. Only this explicit raw policy permits
+    /// absent answer identity for either dialect; every present assertion still uses provider trust.
+    pub fn with_raw_messaging(
+        mut self,
+        prepared: bedrock_net::messaging::PreparedMessaging,
+        target: crate::NativeRawTarget,
+    ) -> io::Result<Self> {
+        if self.messaging.is_some() || !target.matches_recipient(prepared.recipient()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native raw service target mismatch",
+            ));
+        }
+        self.messaging = Some((prepared, MessagingTarget::Raw(target)));
+        Ok(self)
+    }
+
     /// Returns the original absolute Login admission deadline without extending the minted lifetime.
     pub fn expires_at(&self) -> Instant {
         self.expires

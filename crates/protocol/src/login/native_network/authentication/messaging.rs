@@ -22,10 +22,11 @@ pub(in crate::login::native_network) struct MessagingAdmission {
     pub(in crate::login::native_network) expires: Instant,
 }
 
-/// Original friend admission and authenticated service routes carry distinct nonce/answer policy.
+/// Joined worlds, returned service routes and explicit raw targets retain their own admission policy.
 pub(in crate::login::native_network) enum MessagingTarget {
     Joined(crate::NativeMessagingTarget),
     Service(Recipient),
+    Raw(crate::NativeRawTarget),
 }
 
 impl MessagingTarget {
@@ -35,6 +36,7 @@ impl MessagingTarget {
     ) -> crate::NativeConnectionTarget {
         match self {
             Self::Joined(target) => target.connection_target(),
+            Self::Raw(target) => target.connection_target(),
             Self::Service(Recipient::Messaging(peer)) => crate::NativeConnectionTarget::new(
                 peer.to_string(),
                 crate::NativeTransport::NetherNetMessaging,
@@ -50,16 +52,17 @@ impl MessagingTarget {
     pub(in crate::login::native_network) fn nonce(&self) -> &str {
         match self {
             Self::Joined(target) => target.nonce(),
-            Self::Service(_) => "",
+            Self::Service(_) | Self::Raw(_) => "",
         }
     }
 
-    /// Only an explicit authenticated legacy route permits a missing answer identity.
-    /// Joined friends retain their original Login nonce; present assertions still use provider trust.
+    /// Explicit raw targets and legacy service routes permit only an absent answer identity.
+    /// Joined friends retain their original nonce; present assertions still use provider trust.
     pub(in crate::login::native_network) fn allow_anonymous_answers(&self) -> bool {
         let recipient = match self {
             Self::Joined(target) => target.recipient(),
             Self::Service(recipient) => recipient,
+            Self::Raw(_) => return true,
         };
         matches!(recipient, Recipient::Legacy(_))
     }

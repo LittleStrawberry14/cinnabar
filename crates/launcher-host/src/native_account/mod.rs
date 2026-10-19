@@ -17,6 +17,7 @@ mod prepare;
 pub(crate) mod presence;
 mod product_api;
 mod profile;
+mod raw_nethernet;
 mod read_identity;
 mod realms;
 mod restore;

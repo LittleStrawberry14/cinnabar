@@ -11,7 +11,9 @@ pub(crate) fn native_target(
     if local_world {
         return None;
     }
-    if launcher_host::native_account::is_realm_target(address) {
+    if launcher_host::native_account::is_realm_target(address)
+        || protocol::NativeRawTarget::recognizes(address)
+    {
         return Some(NativeConnectionTarget::new(
             address.trim().to_owned(),
             NativeTransport::RakNet,

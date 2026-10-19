@@ -38,6 +38,9 @@ impl NativeAccount {
                 "selected native transport does not support account preparation",
             ));
         }
+        if let Some(raw) = protocol::NativeRawTarget::parse(&target.address)? {
+            return self.prepare_raw_nethernet(raw, claims, random_id).await;
+        }
         if let bridge::ConnectTarget::Gathering(id) =
             crate::launcher_core::target_for(&target.address)
         {

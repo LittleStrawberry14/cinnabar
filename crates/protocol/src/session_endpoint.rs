@@ -6,6 +6,11 @@ mod addressed;
 pub use addressed::NativeServerTrust;
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod raw_nethernet;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use raw_nethernet::NativeRawTarget;
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 /// Largest host-issued admission nonce retained for a native game login.
 pub const MAX_NATIVE_JOIN_NONCE_BYTES: usize = 4096;
 

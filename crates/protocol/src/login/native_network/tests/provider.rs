@@ -105,6 +105,67 @@ pub(super) fn authentication() -> NativeAuthentication {
     authentication_at(Instant::now())
 }
 
+/// Raw-only absent identity does not turn malformed tokens or fingerprint proofs into unsigned answers.
+#[test]
+fn explicit_raw_answer_policy_keeps_present_provider_and_fingerprint_checks() {
+    use bedrock_net::messaging::Recipient;
+    use nethernet::identity::{SdpIdentity, TokenIdentity, TokenTrust, verify_answer_with_policy};
+    let peer = uuid::Uuid::from_u128(7);
+    let address = format!(
+        "{}{}/{}",
+        bridge::contract::NETHERNET_TARGET_PREFIX,
+        bridge::contract::NETHERNET_SIGNALING_JSONRPC,
+        peer
+    );
+    let target = crate::NativeRawTarget::parse(&address).unwrap().unwrap();
+    let raw = authentication::MessagingTarget::Raw(target);
+    assert_eq!(raw.nonce(), "");
+    let service = authentication::MessagingTarget::Service(Recipient::Messaging(peer));
+    assert!(!service.allow_anonymous_answers());
+    let now = UNIX_EPOCH + Duration::from_secs(SERVICE_SECONDS);
+    let trust = TokenTrust::Provider(std::sync::Arc::new(verifier()));
+    let absent = "v=0\r\na=fingerprint:sha-256 AB:CD\r\nm=application 9\r\n";
+    assert!(matches!(
+        verify_answer_with_policy(absent, Some(&trust), raw.allow_anonymous_answers(), now),
+        Ok(None)
+    ));
+    assert!(
+        verify_answer_with_policy(absent, Some(&trust), service.allow_anonymous_answers(), now)
+            .is_err()
+    );
+    let identity = TokenIdentity::new(
+        std::sync::Arc::new(key()),
+        signed(claims(), "synthetic"),
+        now,
+    )
+    .unwrap();
+    let valid = identity.augment(absent, now).unwrap();
+    assert!(matches!(
+        verify_answer_with_policy(&valid, Some(&trust), raw.allow_anonymous_answers(), now),
+        Ok(Some(_))
+    ));
+    let untrusted = TokenIdentity::new(
+        std::sync::Arc::new(key()),
+        signed(claims(), "unknown-key"),
+        now,
+    )
+    .unwrap()
+    .augment(absent, now)
+    .unwrap();
+    for answer in [
+        format!("{absent}a=identity:\r\n"),
+        format!("{absent}a= identity \t\r\n"),
+        format!("{absent}a=identity:not-an-assertion\r\n"),
+        valid.replace("AB:CD", "AB:CE"),
+        untrusted,
+    ] {
+        assert!(
+            verify_answer_with_policy(&answer, Some(&trust), raw.allow_anonymous_answers(), now)
+                .is_err()
+        );
+    }
+}
+
 /// Simulates holding an already-qualified handoff without sleeping or changing a production clock.
 fn authentication_at(observed: Instant) -> NativeAuthentication {
     let client =

@@ -280,6 +280,7 @@ impl SessionController {
             .and_then(|transport| destination::native_target(address, transport, self.local_world))
         {
             let service = launcher_host::native_account::is_realm_target(address)
+                || protocol::NativeRawTarget::recognizes(address)
                 || matches!(
                     launcher_host::launcher_core::target_for(address),
                     bridge::ConnectTarget::Gathering(_)

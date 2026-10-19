@@ -67,6 +67,7 @@ pub fn spawn_network(
     #[cfg(feature = "native-networking")]
     if matches!(&config.endpoint, protocol::SessionEndpoint::Native(target)
         if launcher_host::native_account::is_realm_target(&target.address)
+            || protocol::NativeRawTarget::recognizes(&target.address)
             || matches!(launcher_host::launcher_core::target_for(&target.address), bridge::ConnectTarget::Gathering(_)))
         && config.native_account.is_none()
         && config.native_gathering.is_none()
