@@ -295,7 +295,8 @@ impl NativeSender {
     }
 }
 
-/// Prepares the original count-bounded desktop driver without polling or spawning it.
+/// Prepares the original count-only incoming owner without polling or spawning it.
+#[cfg(test)]
 pub(crate) fn prepare(connection: impl PacketConnection) -> PreparedPump {
     prepare_with_byte_budget(connection, None)
 }
@@ -420,7 +421,7 @@ impl SessionTransport {
             incoming,
             stop,
             driver,
-        } = prepare(connection);
+        } = prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
         // Desktop keeps its original close-result policy and same joined pending-input transfer.
         let task = tokio::spawn(async move { driver.await.pending });
         Self {

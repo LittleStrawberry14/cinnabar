@@ -2,6 +2,7 @@ use super::*;
 use std::future::Future;
 
 mod byte_credit;
+mod default_byte_admission;
 mod delay;
 mod public_close;
 
