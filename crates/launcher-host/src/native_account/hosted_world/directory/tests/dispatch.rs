@@ -261,3 +261,5 @@ async fn send_json(writer: &mut Writer, kind: Kind, record: &impl serde::Seriali
         .unwrap();
     writer.flush().await.unwrap();
 }
+
+mod initialized;

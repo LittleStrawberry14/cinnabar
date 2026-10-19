@@ -11,7 +11,9 @@ use bedrock_client::server::{
     ServerLoginEvent, ServerPacksReady, ServerSettingsEvent,
     session::{ServerPackDelivery, ServerPackEvent, ServerSpawnEvent},
 };
-use bridge::host_world::{BackendWorldReady, HostProcess, PendingBackendPeer, contract::Identity};
+use bridge::host_world::{
+    ActiveBackendPeer, BackendWorldReady, HostProcess, PendingBackendPeer, contract::Identity,
+};
 use p384::ecdsa::SigningKey;
 use protocol::{NativeAcceptingIo, NativeHostWorld, native_host_packs};
 use std::{io, sync::Arc, time::Instant};
@@ -31,6 +33,27 @@ impl NativeHostedWorld {
         self.recheck_approval(approval)?;
         let backend = backend.begin_attach(deadline)?;
         let backend = self.peer_io(Some(deadline), backend.finish()).await?;
+        self.recheck_approval(approval)?;
+        Ok(backend)
+    }
+
+    /// Checks original membership around the existing backend Initialized operation.
+    /// Cryptographic Login and typed ServerInitialized::finish remain with the caller.
+    pub(super) async fn initialize_backend(
+        &mut self,
+        approval: &HostedApproval,
+        backend: BackendWorldReady,
+        cache_enabled: bool,
+        radius: u32,
+        deadline: Instant,
+    ) -> io::Result<ActiveBackendPeer> {
+        self.recheck_approval(approval)?;
+        let backend = self
+            .peer_io(
+                Some(deadline),
+                backend.initialized(cache_enabled, radius, deadline),
+            )
+            .await?;
         self.recheck_approval(approval)?;
         Ok(backend)
     }
@@ -351,9 +374,12 @@ impl NativeHostedWorld {
             .map_err(|_| rejected())?;
         let radius = u32::try_from(accepted.chunk_radius()).map_err(|_| rejected())?;
         let backend = self
-            .peer_io(
-                Some(deadline),
-                backend.initialized(accepted.client_cache_enabled(), radius, deadline),
+            .initialize_backend(
+                &accepted.grant().approval,
+                backend,
+                accepted.client_cache_enabled(),
+                radius,
+                deadline,
             )
             .await?;
         self.recheck_login(accepted.login(), &policy, accepted.grant())?;
