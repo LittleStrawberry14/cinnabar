@@ -289,12 +289,12 @@ async fn signed_pair(deadline: Instant) -> SignedPair {
     }
 }
 
-struct SignedAssociation {
-    accepted: nethernet_tokio::AcceptedSession,
-    key: Arc<SigningKey>,
-    client: NetherClient,
-    listener: NetherServer,
-    signaling: Arc<HttpSignalingServer>,
+pub(in crate::native_account::hosted_world) struct SignedAssociation {
+    pub(in crate::native_account::hosted_world) accepted: nethernet_tokio::AcceptedSession,
+    pub(in crate::native_account::hosted_world) key: Arc<SigningKey>,
+    pub(in crate::native_account::hosted_world) client: NetherClient,
+    pub(in crate::native_account::hosted_world) listener: NetherServer,
+    pub(in crate::native_account::hosted_world) signaling: Arc<HttpSignalingServer>,
 }
 
 /// Establishes the same signed host-only association before either actual protocol consumer takes it.
@@ -302,6 +302,24 @@ async fn signed_association(client_key: Arc<SigningKey>) -> SignedAssociation {
     let now = SystemTime::now();
     let lifetime = ACQUISITION_TIMEOUT;
     let key = Arc::new(SigningKey::generate());
+    signed_association_at(client_key, key, now, lifetime).await
+}
+
+/// Reuses the same real signed transport while retaining the active host's original synthetic key.
+pub(in crate::native_account::hosted_world) async fn signed_association_with_key(
+    client_key: Arc<SigningKey>,
+    key: Arc<SigningKey>,
+) -> SignedAssociation {
+    signed_association_at(client_key, key, SystemTime::now(), ACQUISITION_TIMEOUT).await
+}
+
+/// Keeps the original concrete transport configuration and clock inputs in one fixture owner.
+async fn signed_association_at(
+    client_key: Arc<SigningKey>,
+    key: Arc<SigningKey>,
+    now: SystemTime,
+    lifetime: std::time::Duration,
+) -> SignedAssociation {
     let client_trust = trust(*client_key.verifying_key(), None);
     let signaling = Arc::new(
         HttpSignalingServer::bind(
@@ -447,4 +465,4 @@ async fn drain(receiver: &mut SessionReceiver) -> bool {
 
 mod output;
 
-mod paired;
+pub(in crate::native_account::hosted_world) mod paired;

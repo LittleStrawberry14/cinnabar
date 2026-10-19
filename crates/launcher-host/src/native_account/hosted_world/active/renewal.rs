@@ -77,3 +77,6 @@ async fn candidate(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,7 +2,7 @@
 
 mod authority;
 mod multiple;
-mod provider;
+pub(in crate::native_account::hosted_world) mod provider;
 
 use super::*;
 use crate::local_worlds::test_support::paired as world;
