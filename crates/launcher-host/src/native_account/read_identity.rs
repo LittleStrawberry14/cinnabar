@@ -112,3 +112,27 @@ impl NativeAccount {
         }
     }
 }
+
+/// Availability of the actual account owner; Available alone grants no identity or transport authority.
+pub(super) enum AccountAvailability<'a> {
+    Available(std::sync::MutexGuard<'a, State>),
+    Busy,
+    Unavailable,
+}
+
+impl NativeAccount {
+    /// Distinguishes temporary checkout from a missing/poisoned owner without cloning its SDK state.
+    /// Callers check their own original identity/proof with this guard, then release it before awaiting.
+    pub(super) fn available_state(&self) -> AccountAvailability<'_> {
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::WouldBlock) => return AccountAvailability::Busy,
+            Err(std::sync::TryLockError::Poisoned(_)) => return AccountAvailability::Unavailable,
+        };
+        if state.busy {
+            AccountAvailability::Busy
+        } else {
+            AccountAvailability::Available(state)
+        }
+    }
+}

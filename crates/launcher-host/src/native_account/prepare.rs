@@ -123,29 +123,18 @@ impl NativeAccount {
         )?;
         let raw = serde_json::value::to_raw_value(&claims)
             .map_err(|_| io::Error::other("serialize native client data"))?;
-        let cached = operation.cached.as_mut().expect("account owner");
-        let same_provider = cached
-            .provider
+        let xuid = operation
+            .cached
             .as_ref()
-            .map(|provider| provider.matches(&issuer))
-            .transpose()?
-            .unwrap_or(false);
-        if !same_provider {
-            cached.provider = Some(protocol::NativeProvider::new(
-                &issuer,
-                bedrock_services::minecraft::USER_AGENT,
-            )?);
-        }
-        let prepared = cached
-            .provider
-            .as_mut()
-            .expect("account provider")
-            .authentication(
-                key,
-                credential,
-                &raw,
-                &cached.identity.as_ref().expect("verified identity").xuid,
-            )
+            .expect("account owner")
+            .identity
+            .as_ref()
+            .expect("verified identity")
+            .xuid
+            .clone();
+        let prepared = operation
+            .provider(&issuer)?
+            .authentication(key, credential, &raw, &xuid)
             .await?;
         operation.persist()?;
         Ok(prepared)
@@ -153,6 +142,27 @@ impl NativeAccount {
 }
 
 impl Operation {
+    /// Reuses this account's configured provider cache, replacing it only for a changed discovered issuer.
+    pub(super) fn provider(&mut self, issuer: &str) -> io::Result<&mut protocol::NativeProvider> {
+        let cached = self.cached.as_mut().expect("acquired account owner");
+        let same = cached
+            .provider
+            .as_ref()
+            .map(|provider| provider.matches(issuer))
+            .transpose()?
+            .unwrap_or(false);
+        if !same {
+            cached.provider = Some(protocol::NativeProvider::new(
+                issuer,
+                bedrock_services::minecraft::USER_AGENT,
+            )?);
+        }
+        Ok(cached
+            .provider
+            .as_mut()
+            .expect("configured account provider"))
+    }
+
     /// Creates Minecraft services once, retaining proof, credentials and Session-Id for borrowed service calls.
     pub(super) fn promote(&mut self) -> io::Result<()> {
         if matches!(

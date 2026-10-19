@@ -26,11 +26,11 @@ pub use friend_join::{
 };
 pub use friends::NativeFriendWorld;
 pub(crate) use home::NativeHomeScope;
-pub(crate) use hosted_world::HostSlot;
 pub use hosted_world::{
-    ClosingHostedPeer, HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy,
-    NativeHostedPeer, NativeHostedProcess, NativeHostedWorld,
+    ActiveHostedWorld, ClosingHostedPeer, ClosingHostedWorld, HostedApproval, HostedLoginApproval,
+    NativeHostedLoginPolicy, NativeHostedPeer, NativeHostedProcess, NativeHostedWorld,
 };
+pub(crate) use hosted_world::{HostSlot, HostedInvitation};
 pub(crate) use people::NativePeople;
 pub(crate) use profile::NativeProfile;
 pub use realms::is_realm_target;

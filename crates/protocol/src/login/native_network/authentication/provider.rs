@@ -1,6 +1,6 @@
 //! Bounded provider acquisition shared by actual native account owners.
 
-use super::{NativeAuthentication, NativeCredential, NativeTokenVerifier};
+use super::{NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeTokenVerifier};
 use crate::RawClientData;
 use p384::ecdsa::SigningKey;
 use provider_http::{Client, StatusCode};
@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::{
     io,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use url::Url;
@@ -105,6 +106,26 @@ impl NativeProvider {
             key,
             credential,
             client_data,
+            self.verifier.as_ref().ok_or_else(failed)?,
+            xuid,
+            Instant::now(),
+        )
+    }
+
+    /// Qualifies an accepting host's real service mint with the same provider cache and selected proof key.
+    ///
+    /// # Errors
+    /// Rejects untrusted, expired or wrong-account/key credentials without creating player client data.
+    pub async fn hosting_identity(
+        &mut self,
+        key: Arc<SigningKey>,
+        credential: NativeCredential,
+        xuid: &str,
+    ) -> io::Result<NativeHostingIdentity> {
+        self.acquire_verifier(&credential).await?;
+        NativeHostingIdentity::new(
+            key,
+            credential,
             self.verifier.as_ref().ok_or_else(failed)?,
             xuid,
             Instant::now(),

@@ -49,6 +49,14 @@ impl MenuRuntime {
         match launcher_account {
             Some(mut account) => {
                 account.0.set_native_catalog(self.native_sign_in);
+                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                account.0.set_native_host_intent(if self.native_sign_in {
+                    local_worlds
+                        .as_deref()
+                        .and_then(|worlds| worlds.native_host_intent())
+                } else {
+                    None
+                });
                 let options = self.settings_snapshot().0;
                 account.set_cinnabar_api(
                     options.update_preferences().channel,

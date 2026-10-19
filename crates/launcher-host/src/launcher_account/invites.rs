@@ -23,6 +23,45 @@ pub(super) struct Requests {
 struct Selection {
     generation: u64,
     source: Source,
+    destination: Destination,
+}
+
+enum Destination {
+    Core,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    Native(Option<crate::native_account::HostedInvitation>),
+}
+
+impl Destination {
+    /// Separates the actual hosting owner from the independently selected People reader.
+    fn capture(snapshot: &Snapshot) -> Self {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if snapshot
+            .native_host_wake
+            .as_ref()
+            .is_some_and(|wake| matches!(&*wake.borrow(), super::native_host::Desired::Host(_)))
+        {
+            return Self::Native(snapshot.native_host_invitation.clone());
+        }
+        let _ = snapshot;
+        Self::Core
+    }
+
+    /// Uses only the host selected when queued; an unavailable native incarnation never falls back.
+    async fn send(&self, socket_dir: &std::path::Path, xuid: &str) -> Result<(), ()> {
+        match self {
+            Self::Core => bridge::invite_to_world(socket_dir, xuid)
+                .await
+                .map_err(|_| ()),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            Self::Native(host) => host
+                .as_ref()
+                .ok_or(())?
+                .send(xuid, Instant::now() + RESPONSE_TIMEOUT)
+                .await
+                .map_err(|_| ()),
+        }
+    }
 }
 
 impl Selection {
@@ -31,6 +70,7 @@ impl Selection {
         Self {
             generation: snapshot.auth_generation,
             source: snapshot.people_source.clone(),
+            destination: Destination::capture(snapshot),
         }
     }
 
@@ -57,7 +97,7 @@ impl Requests {
         let _ = self.requests.send(Request::People(selected));
     }
 
-    /// Keeps outgoing invitations on the original active Go host and requesting generation.
+    /// Captures the original active host capability and requesting account generation.
     pub(super) fn send(&self, shared: &Mutex<Snapshot>, xuids: Vec<String>) {
         let selected = Selection::capture(&shared.lock().unwrap_or_else(|p| p.into_inner()));
         let _ = self.requests.send(Request::Send(selected, xuids));
@@ -195,7 +235,7 @@ async fn wait<T>(
     }
 }
 
-/// Invites each friend through the active Go host; retirement cancels its current RPC.
+/// Invites through the captured selected owner; native commands never resolve a replacement Go host.
 async fn send(
     socket_dir: &std::path::Path,
     xuids: &[String],
@@ -205,7 +245,10 @@ async fn send(
 ) {
     for xuid in xuids {
         let sent = wait(
-            tokio::time::timeout(RESPONSE_TIMEOUT, bridge::invite_to_world(socket_dir, xuid)),
+            tokio::time::timeout(
+                RESPONSE_TIMEOUT,
+                selected.destination.send(socket_dir, xuid),
+            ),
             shared,
             selected,
             changed,

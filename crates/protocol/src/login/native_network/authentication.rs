@@ -1,5 +1,7 @@
 //! Qualified provider credentials and their original finite validity.
 
+mod hosting;
+pub use hosting::NativeHostingIdentity;
 mod messaging;
 mod provider;
 pub use provider::NativeProvider;
@@ -68,6 +70,32 @@ impl NativeCredential {
     /// Advances the original service UTC observation with caller-supplied monotonic time.
     fn now(&self, now: Instant) -> io::Result<SystemTime> {
         self.clock.now(now)
+    }
+
+    /// Qualifies the original selected key/account and derives its unchanged hard monotonic cutoff.
+    fn qualify(
+        &self,
+        key: &p384::ecdsa::VerifyingKey,
+        verifier: &NativeTokenVerifier,
+        selected_xuid: &str,
+        now: Instant,
+    ) -> io::Result<(nethernet::identity::jwt::Claims, Instant)> {
+        let identity = verifier.verify(&self.token, key, selected_xuid, self.now(now)?)?;
+        let expiry = identity
+            .expiry()
+            .expect("qualified identity has expiry")
+            .min(self.hard_expiry);
+        let expires = self
+            .clock
+            .observed
+            .checked_add(
+                expiry
+                    .duration_since(self.clock.service_time)
+                    .map_err(|_| expired())?,
+            )
+            .ok_or_else(expired)?;
+        ensure_current(expires, now)?;
+        Ok((identity, expires))
     }
 }
 
@@ -150,27 +178,8 @@ impl NativeAuthentication {
         selected_xuid: &str,
         now: Instant,
     ) -> io::Result<Self> {
-        let service_now = credential.now(now)?;
-        let identity = verifier.verify(
-            &credential.token,
-            key.verifying_key(),
-            selected_xuid,
-            service_now,
-        )?;
-        let expiry = identity
-            .expiry()
-            .expect("qualified identity has expiry")
-            .min(credential.hard_expiry);
-        let expires = credential
-            .clock
-            .observed
-            .checked_add(
-                expiry
-                    .duration_since(credential.clock.service_time)
-                    .map_err(|_| expired())?,
-            )
-            .ok_or_else(expired)?;
-        ensure_current(expires, now)?;
+        let (identity, expires) =
+            credential.qualify(key.verifying_key(), verifier, selected_xuid, now)?;
         claims.set_display_name(
             identity
                 .display_name()

@@ -25,6 +25,8 @@ impl LauncherAccount {
             ..initial
         }));
         let presence_lifetime = TitlePresenceLifetime::new();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        native_host::start(Arc::clone(&snapshot), runtime.clone(), &tasks);
         let (sign_out, requests) = bounded(1);
         let (alive, stop) = bounded(0);
         let message_reports = message_reports::start(

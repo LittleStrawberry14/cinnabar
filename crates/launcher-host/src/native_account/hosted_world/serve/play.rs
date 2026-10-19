@@ -180,6 +180,11 @@ enum Event {
 }
 
 impl ClosingHostedPeer {
+    /// Reports actual transport retirement independently of the retained original play failure.
+    pub(in crate::native_account::hosted_world) fn is_finished(&self) -> bool {
+        self.finished
+    }
+
     /// Drains accepted Go output with fresh original authority before each new external commit.
     /// Cancellation retains partial framing, the delivered obligation and its first deadline.
     /// Revocation permits only an already committed whole effect's receipt; partial output aborts

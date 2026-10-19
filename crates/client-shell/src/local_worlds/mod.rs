@@ -106,6 +106,15 @@ impl LocalWorlds {
         }
     }
 
+    /// Captures a real played opening; account and network work stay with the existing host worker.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn native_host_intent(&self) -> Option<launcher_host::local_worlds::NativeHostIntent> {
+        if !self.playing || self.client.is_none() {
+            return None;
+        }
+        self.manager.as_ref()?.native_host_intent().ok()
+    }
+
     pub fn menu(&self) -> &WorldsMenu {
         &self.menu
     }

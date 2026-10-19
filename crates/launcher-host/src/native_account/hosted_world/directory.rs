@@ -20,6 +20,8 @@ use uuid::Uuid;
 
 mod authority;
 use authority::Authority;
+mod advertised;
+use advertised::Advertisement;
 
 struct ApprovalWrite {
     revision: u64,
@@ -32,6 +34,7 @@ pub(super) struct HostDirectory {
     opening: HostOpening,
     scope: Option<Scope>,
     host_name: String,
+    advertisement: Option<Advertisement>,
     reference: mpsd::Reference,
     session_subscription: Uuid,
     socket: Option<RtaSocket>,
@@ -144,28 +147,7 @@ impl HostDirectory {
                     protocol::NativeServiceClock::new(services.service_time(), observed),
                 )
             };
-            let cached = operation
-                .cached
-                .as_mut()
-                .ok_or_else(|| invalid("host account owner is unavailable"))?;
-            let same_provider = cached
-                .provider
-                .as_ref()
-                .map(|provider| provider.matches(&issuer))
-                .transpose()?
-                .unwrap_or(false);
-            if !same_provider {
-                cached.provider = Some(protocol::NativeProvider::new(
-                    &issuer,
-                    bedrock_services::minecraft::USER_AGENT,
-                )?);
-            }
-            let verifier = cached
-                .provider
-                .as_mut()
-                .ok_or_else(|| invalid("host provider is unavailable"))?
-                .peer_verifier()
-                .await?;
+            let verifier = operation.provider(&issuer)?.peer_verifier().await?;
             Ok::<_, io::Error>((verifier, clock))
         };
         let (verifier, clock) = service(
@@ -232,6 +214,7 @@ impl HostDirectory {
             opening,
             scope: Some(scope),
             host_name: String::new(),
+            advertisement: None,
             reference,
             session_subscription: Uuid::new_v4(),
             socket: None,
@@ -271,8 +254,15 @@ impl HostDirectory {
                                 binding,
                                 member: mpsd::MemberData::default(),
                                 constants: None,
+                                max_members: self.advertisement.as_ref().and_then(|_| {
+                                    std::num::NonZeroU32::new(self.effective_max_players())
+                                }),
                                 properties: Some(properties),
-                                join: mpsd::Restriction::Local,
+                                join: if self.advertisement.is_some() {
+                                    mpsd::Restriction::Followed
+                                } else {
+                                    mpsd::Restriction::Local
+                                },
                                 read: mpsd::Restriction::Followed,
                             },
                         )
@@ -649,7 +639,7 @@ impl HostDirectory {
                 .clone();
             self.approvals = Some(Approvals::new(
                 scope.xuid.clone(),
-                self.opening.max_players(),
+                self.effective_max_players(),
             )?);
             self.scope = Some(scope.clone());
             let headers = rta::websocket::upgrade_headers().map_err(socket_error)?;
@@ -835,7 +825,7 @@ impl HostDirectory {
         Ok(())
     }
 
-    /// Produces title metadata without any activity, supported connection or invented accepting route.
+    /// Produces the complete nonce document, adding a route only for the actual configured acceptor.
     fn properties(&self) -> io::Result<Value> {
         let world = self.opening.world();
         let scope = self
@@ -852,9 +842,11 @@ impl HostDirectory {
             bridge::GameMode::Adventure => "Adventure",
             _ => "Survival",
         };
-        Ok(
-            json!({"hostName":self.host_name,"ownerId":scope.xuid,"version":protocol::GAME_VERSION,"levelId":world.id,"worldName":world.name,"worldType":mode,"protocol":protocol::PROTOCOL_VERSION,"MemberCount":1,"MaxMemberCount":self.opening.max_players(),"nonces":nonces}),
-        )
+        let mut properties = json!({"hostName":self.host_name,"ownerId":scope.xuid,"version":protocol::GAME_VERSION,"levelId":world.id,"worldName":world.name,"worldType":mode,"protocol":protocol::PROTOCOL_VERSION,"MemberCount":1,"MaxMemberCount":self.effective_max_players(),"nonces":nonces});
+        if let Some(advertisement) = &self.advertisement {
+            advertisement.extend(&mut properties);
+        }
+        Ok(properties)
     }
 
     /// Rejects use after retirement before starting authentication or accepting any title approval.
