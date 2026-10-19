@@ -30,7 +30,7 @@ use tokio_util::codec::Framed;
 use tokio_websockets::ClientBuilder;
 
 const LIMIT: usize = RELAY_CONTROL_BYTES + size_of::<u32>();
-type Client = Framed<Socket<TlsStream<TcpStream>>, bridge::BridgeCodec>;
+pub(crate) type Client = Framed<Socket<TlsStream<TcpStream>>, bridge::BridgeCodec>;
 
 struct Fixture {
     task: JoinHandle<io::Result<()>>,
@@ -115,48 +115,7 @@ impl Fixture {
     /// Uses the maintained client codec, exact subprotocol and real framed Hello/control messages.
     async fn control(&self, resume: String) -> (Client, bridge::relay_control::Capability) {
         let tls = self.secure().await;
-        let uri = format!("wss://{}{RELAY_CONTROL_PATH}", self.address)
-            .parse()
-            .unwrap();
-        let builder = ClientBuilder::from_uri(uri)
-            .add_header(
-                SEC_WEBSOCKET_PROTOCOL,
-                HeaderValue::from_static(RELAY_SOCKET_PROTOCOL),
-            )
-            .unwrap()
-            .add_header(
-                ORIGIN,
-                HeaderValue::from_str(&format!("https://{}", self.address)).unwrap(),
-            )
-            .unwrap();
-        let (socket, response) = builder.connect_on(tls).await.unwrap();
-        assert_eq!(
-            response.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap(),
-            RELAY_SOCKET_PROTOCOL
-        );
-        let mut client = Framed::new(
-            Socket::new(socket, LIMIT),
-            bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES),
-        );
-        client
-            .send(Bytes::from(
-                serde_json::to_vec(&Hello {
-                    version: RELAY_VERSION,
-                    channel: RELAY_CHANNEL_CONTROL.into(),
-                    channels: vec![RELAY_CHANNEL_CONTROL.into(), RELAY_CHANNEL_PLAY.into()],
-                    resume,
-                    generation: 0,
-                    join: 0,
-                })
-                .unwrap(),
-            ))
-            .await
-            .unwrap();
-        let Event::Welcome { capability } = event(&mut client).await else {
-            panic!("actual control Welcome")
-        };
-        assert!(matches!(event(&mut client).await, Event::Account { .. }));
-        (client, capability)
+        connect_control(tls, self.address, resume).await
     }
 
     /// Joins the actual backend after it has retired every stream and erased its session registry.
@@ -171,8 +130,58 @@ impl Fixture {
     }
 }
 
+/// Uses the same real upgrade/Hello owner for supplied and file-backed TLS fixture certificates.
+pub(crate) async fn connect_control(
+    tls: TlsStream<TcpStream>,
+    address: SocketAddr,
+    resume: String,
+) -> (Client, bridge::relay_control::Capability) {
+    let uri = format!("wss://{address}{RELAY_CONTROL_PATH}")
+        .parse()
+        .unwrap();
+    let builder = ClientBuilder::from_uri(uri)
+        .add_header(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static(RELAY_SOCKET_PROTOCOL),
+        )
+        .unwrap()
+        .add_header(
+            ORIGIN,
+            HeaderValue::from_str(&format!("https://{address}")).unwrap(),
+        )
+        .unwrap();
+    let (socket, response) = builder.connect_on(tls).await.unwrap();
+    assert_eq!(
+        response.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap(),
+        RELAY_SOCKET_PROTOCOL
+    );
+    let mut client = Framed::new(
+        Socket::new(socket, LIMIT),
+        bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES),
+    );
+    client
+        .send(Bytes::from(
+            serde_json::to_vec(&Hello {
+                version: RELAY_VERSION,
+                channel: RELAY_CHANNEL_CONTROL.into(),
+                channels: vec![RELAY_CHANNEL_CONTROL.into(), RELAY_CHANNEL_PLAY.into()],
+                resume,
+                generation: 0,
+                join: 0,
+            })
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let Event::Welcome { capability } = event(&mut client).await else {
+        panic!("actual control Welcome")
+    };
+    assert!(matches!(event(&mut client).await, Event::Account { .. }));
+    (client, capability)
+}
+
 /// Decodes one actual binary control frame rather than reconstructing a capability fixture.
-async fn event(client: &mut Client) -> Event {
+pub(crate) async fn event(client: &mut Client) -> Event {
     serde_json::from_slice(&client.next().await.unwrap().unwrap()).unwrap()
 }
 

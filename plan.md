@@ -56,6 +56,12 @@ online-capable advertisement; they do not retry unsigned. Advertisement-driven
 authentication preference and fallback remain unverified. Selected own-world LAN
 joins retain their explicit offline policy.
 
+The native browser gateway has an opt-in HTTPS/WebSocket operator using the existing
+ephemeral account and play owners, with validated certificate-file replacement and
+explicit shutdown. Its new operator controls still require execution. WebTransport
+listener and dedicated pack-stream adoption remain incomplete; WebSocket fallback
+does not close browser transport or deployment acceptance.
+
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.
 Owning process, account and production session regressions still require execution.

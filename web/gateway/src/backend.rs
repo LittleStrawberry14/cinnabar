@@ -26,8 +26,9 @@ use tokio::{
 use tokio_rustls::{
     TlsAcceptor,
     rustls::{
-        self, ServerConfig,
+        self, ConfigBuilder, ServerConfig,
         pki_types::{CertificateDer, PrivateKeyDer},
+        server::WantsServerCert,
     },
 };
 
@@ -70,21 +71,33 @@ impl Gateway {
         key: PrivateKeyDer<'static>,
         origins: Vec<String>,
     ) -> io::Result<Self> {
-        let mut config = ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+        let config = tls_builder()?
+            .with_single_cert(certificates, key)
+            .map_err(failed)?;
+        Ok(Self::with_config(config, origins))
+    }
+
+    /// Shares validated operator certificate replacements with new handshakes on this gateway.
+    #[cfg(feature = "operator")]
+    pub(super) fn with_resolver(
+        resolver: Arc<dyn rustls::server::ResolvesServerCert>,
+        origins: Vec<String>,
+    ) -> io::Result<Self> {
+        Ok(Self::with_config(
+            tls_builder()?.with_cert_resolver(resolver),
+            origins,
         ))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(failed)?
-        .with_no_client_auth()
-        .with_single_cert(certificates, key)
-        .map_err(failed)?;
+    }
+
+    /// Keeps the same TLS policy and account owner for supplied and file-backed certificates.
+    fn with_config(mut config: ServerConfig, origins: Vec<String>) -> Self {
         // A counted TCP socket carries one HTTP/1 upgrade, never multiplexed HTTP/2 requests.
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
-        Ok(Self {
+        Self {
             registry: Registry::new(),
             tls: TlsAcceptor::from(Arc::new(config)),
             origins: origins.into(),
-        })
+        }
     }
 
     /// Drives accepted sockets and account work on the caller's Tokio runtime with I/O and timers.
@@ -146,6 +159,18 @@ impl Gateway {
             }
         }
     }
+}
+
+/// Both native entrypoints use one provider, protocol version and client-auth policy.
+fn tls_builder() -> io::Result<ConfigBuilder<ServerConfig, WantsServerCert>> {
+    Ok(
+        ServerConfig::builder_with_provider(
+            Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(failed)?
+        .with_no_client_auth(),
+    )
 }
 
 /// Attaches capacity to the physical socket, including a canceled TLS/upgrade/control future.
@@ -230,4 +255,4 @@ fn current(deadline: Instant) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

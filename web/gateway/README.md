@@ -44,4 +44,24 @@ accepted-stream and service-driver errors are returned to the application.
 
 This crate is a native Tokio edge. A Bevy application can drive it on its existing I/O runtime;
 it does not need a runtime per connection. Browser clients use ordinary WebSocket connections.
-The crate adds no listener binding, process configuration or executor of its own.
+The default library creates no listener or runtime.
+
+The opt-in native operator supplies the actual HTTPS listener, signal handling and one process
+runtime:
+
+```sh
+cargo run -p web-gateway --features operator --bin bedrock-web-relay -- \
+  --hostname relay.example --tcp 127.0.0.1:8443 \
+  --tls-cert /path/to/fullchain.pem --tls-key /path/to/key.pem
+```
+
+The certificate must cover `--hostname` and be within its validity interval. The key must match
+the certificate and be unencrypted PEM. The operator checks both files before binding and retries
+them at the [shared reload interval](bridge::contract::RELAY_CERTIFICATE_RELOAD_SECONDS).
+A valid replacement affects new handshakes; a failed replacement retains the last valid pair
+and active control/play connections continue. `--origins` accepts comma-separated exact origins;
+omitting it preserves the same-authority policy. SIGINT or SIGTERM stops admission and awaits
+the existing gateway retirement before the runtime is dropped.
+
+This operator currently serves HTTPS/WebSocket only. A WebTransport UDP listener and its
+dedicated pack stream remain incomplete; browser WebSocket fallback does not provide them.

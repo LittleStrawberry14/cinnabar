@@ -56,7 +56,7 @@ func (relay *Relay) Serve(ctx context.Context, cfg ListenConfig) error {
 	go func() { errs <- relay.serveQUIC(ctx, udpListener, wt) }()
 	var result error
 	received := 0
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(time.Duration(bridgecontract.RelayCertificateReloadSeconds) * time.Second)
 	defer ticker.Stop()
 listening:
 	for {

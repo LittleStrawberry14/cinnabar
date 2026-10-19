@@ -16,5 +16,8 @@ mod upstream;
 
 pub use backend::Gateway;
 
+#[cfg(feature = "operator")]
+pub mod operator;
+
 #[cfg(test)]
 mod tests;
