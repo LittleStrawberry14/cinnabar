@@ -351,26 +351,24 @@ preparation and presentation readiness remain required for a successful join. Li
 server latency impact and the complete transfer acceptance matrix remain unqualified.
 
 Server pack acquisition, handoff and stack composition no longer impose fixed archive-count
-or compressed-byte quotas. Saved server lists retain every imported entry. Declared sizes,
-identity, digests and framing remain validated. Experience selections preserve service errors
-and wait for the account core result. Complete featured-server acceptance remains open:
-large-pack preparation can be slow or fail, and sparse startup terrain can leave loading open.
-Server language loading retains every readable English and selected-locale layer without fixed
-table, entry or process quotas, and folds inserted keys to ASCII lowercase. Unreadable sources
-and allocation failures are diagnosed without discarding other definitions. Complete pack-content
-acceptance remains open. Local imports, decompression, UI/text expansion and other admission limits
 or compressed-byte quotas. Safe member paths have no added byte cutoff; server manifests
-and default member reads retain complete declared content. Manifest subpack lists have no separate
-row-count cutoff; server and local loading share the existing field validation and device-tier
+and default member reads retain complete declared content. Declared sizes, identity,
+digests and framing remain validated. Manifest subpack lists have no separate row-count
+cutoff; server and local loading share the existing field validation and device-tier
 selection. Native runtime and device acceptance for larger subpack lists remain open.
-Explicit subscriber limits and large-content live and performance acceptance remain open.
-Saved server lists retain every
-imported entry. Declared sizes, identity, digests and framing remain validated. Experience
-selections preserve service errors and wait for the account core result. Complete
-featured-server, menu and gameplay qualification remains open, including large-pack
-preparation and broader sparse-startup coverage.
-Local imports, decompression, UI/text expansion, language memory and other admission limits
-still need version-matched verification; the limit inventory closes no whole-client parity gate.
+
+Server language loading retains every readable English and selected-locale layer without
+fixed table, entry or process quotas, and folds inserted keys to ASCII lowercase.
+Unreadable sources and allocation failures are diagnosed without discarding other
+definitions. Complete pack-content acceptance remains open.
+
+Saved server lists retain every imported entry. Experience selections preserve service
+errors and wait for the account core result. Complete featured-server, menu and gameplay
+qualification remains open: large-pack preparation can be slow or fail, and sparse
+startup terrain can leave loading open. Explicit subscriber limits and large-content
+live and performance acceptance remain open. Local imports, decompression, UI/text
+expansion, language memory and other admission limits still need version-matched
+verification; the limit inventory closes no whole-client parity gate.
 
 Native friend serving has separate Dragonfly and BDS HTTP/LAN backend owners.
 BDS hosting acceptance remains incomplete until the original process, authenticated
