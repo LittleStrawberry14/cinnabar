@@ -107,4 +107,45 @@ mod tests {
             Owner::Minecraft(_)
         ));
     }
+
+    /// A completed presentation survives another real operation on its unchanged account.
+    /// The card is synthetic; this exercises final publication, without a Realms service request.
+    #[tokio::test(start_paused = true)]
+    async fn native_realm_membership_result_survives_same_account_contention() {
+        let (_directory, account) = super::super::super::profile::tests::account();
+        let PreparedRealmMembership {
+            mut operation,
+            identity,
+            code,
+        } = Arc::clone(&account)
+            .prepare_realm_membership("fixture".into())
+            .await
+            .unwrap();
+        operation.persist().unwrap();
+        drop(operation);
+        let result = RealmMembershipResult {
+            identity,
+            code,
+            realm: serde_json::from_value(serde_json::json!({
+                "name":"Confirmed", "state":"OPEN", "member":true
+            }))
+            .unwrap(),
+        };
+        let contender = Arc::clone(&account).acquire_verified().await.unwrap();
+        let mut publishing = Box::pin(async move { result.into_current() });
+        assert!(
+            publishing
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending(),
+            "ordinary account contention discarded the completed membership result"
+        );
+        drop(contender);
+        let (code, realm) = publishing
+            .await
+            .expect("the original identity is still current");
+        assert_eq!(code, "fixture");
+        assert_eq!(realm.name, "Confirmed");
+        assert!(realm.member);
+    }
 }
