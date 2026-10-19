@@ -579,6 +579,41 @@ mod tests {
         ));
     }
 
+    /// Explicit native CLI selection cannot turn a display-only friend address into a Go route.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    #[test]
+    fn explicit_native_friend_startup_never_selects_core_from_a_display_target() {
+        let address = format!("{}2535", bridge::contract::FRIEND_TARGET_PREFIX);
+        let directory = PathBuf::from("unused-friend-cli-endpoint");
+        let ParseOutcome::Run(go) =
+            ClientArgs::parse_from(["client", "--address", address.as_str()]).unwrap()
+        else {
+            panic!("explicit Go fixture arguments");
+        };
+        assert!(matches!(
+            go.session_endpoint(directory.clone()).unwrap(),
+            protocol::SessionEndpoint::Core(selected) if selected == directory
+        ));
+        let mut outcomes = Vec::new();
+        for mode in ["addressed", "raknet", "nethernet-lan"] {
+            let ParseOutcome::Run(native) = ClientArgs::parse_from([
+                "client",
+                "--address",
+                address.as_str(),
+                "--native-networking",
+                mode,
+            ])
+            .unwrap() else {
+                panic!("explicit native fixture arguments");
+            };
+            outcomes.push(native.session_endpoint(directory.clone()));
+        }
+        assert!(
+            outcomes.iter().all(Result::is_err),
+            "explicit native friend startup silently selected a Core endpoint"
+        );
+    }
+
     #[test]
     fn accepts_file_open_arguments_and_explicit_imports() {
         let ParseOutcome::Run(args) = ClientArgs::parse_from([
