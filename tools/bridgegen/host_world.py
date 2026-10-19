@@ -69,7 +69,7 @@ def declarations(root):
         go += ["}", ""]
     def formatted(command, lines):
         """Return exactly the checked-in formatter output for generated declarations."""
-        return subprocess.run(command, input="\n".join(lines) + "\n", text=True,
+        return subprocess.run(command, input="\n".join(lines) + "\n", encoding="utf-8",
                               capture_output=True, check=True).stdout
     return {
         root / "crates/bridge/src/host_world/contract.rs": formatted(
