@@ -52,6 +52,9 @@ pub fn spawn_network(
     runtime: tokio::runtime::Handle,
     tasks: tokio_util::task::TaskTracker,
 ) -> Result<NetworkHandle<PackApplication>, std::io::Error> {
+    if bridge::join_profile::JoinProfile::current().id().is_none() {
+        bridge::join_profile::JoinProfile::begin();
+    }
     let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
     #[cfg(feature = "native-networking")]
     if matches!(&config.endpoint, protocol::SessionEndpoint::Native(target)

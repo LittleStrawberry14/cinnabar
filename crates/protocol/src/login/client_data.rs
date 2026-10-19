@@ -355,6 +355,7 @@ mod tests {
             for name in ["First", "Second"] {
                 let claims = login_client_data(name, id, None, &LoginSettings::default());
                 let request = crate::session_wire::ConnectRequest {
+                    join_profile_id: None,
                     protocol: crate::PROTOCOL_VERSION,
                     target: None,
                     client_cache: false,
@@ -405,6 +406,7 @@ mod tests {
             ..Default::default()
         };
         let request = crate::session_wire::ConnectRequest {
+            join_profile_id: None,
             protocol: crate::PROTOCOL_VERSION,
             target: None,
             client_cache: false,
@@ -561,6 +563,7 @@ mod tests {
                 ..Default::default()
             };
             let request = crate::session_wire::ConnectRequest {
+                join_profile_id: None,
                 protocol: crate::PROTOCOL_VERSION,
                 target: None,
                 client_cache: false,

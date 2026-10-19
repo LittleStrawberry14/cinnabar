@@ -43,6 +43,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
     observation: SessionTrace,
     mut companion: impl SessionCompanion,
 ) -> Result<NetworkHandle<P>, std::io::Error> {
+    let profile = bridge::join_profile::JoinProfile::current();
     let (mut handle, channels) = network_channels(config.session_generation);
     let failure = channels.control_event_tx.clone();
     let shutdown = handle.shutdown.clone();
@@ -57,7 +58,7 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                 .map(std::path::Path::to_path_buf),
             tasks,
         };
-        run_session_runtime(&runtime, async {
+        let session = async {
             #[cfg(feature = "native-networking")]
             let mut config = config;
             #[cfg(feature = "native-networking")]
@@ -137,7 +138,8 @@ pub fn spawn_network_with_companion<P: Send + 'static>(
                     tokio::time::timeout(FINAL_CONTROL_FLUSH_TIMEOUT, failure.send(event)).await;
             }
             companion.close().await;
-        });
+        };
+        run_session_runtime(&runtime, profile.in_scope(session));
         if let Some(capture) = packet_capture
             && !capture.finish(packet_log::CAPTURE_FINISH_TIMEOUT)
         {

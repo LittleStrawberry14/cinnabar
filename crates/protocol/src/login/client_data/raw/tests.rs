@@ -156,6 +156,7 @@ fn canonical_desktop_signing_and_default_connect_bytes_are_unchanged() {
         serde_json::to_vec(&original).unwrap()
     );
     let request = crate::session_wire::ConnectRequest {
+        join_profile_id: None,
         protocol: crate::PROTOCOL_VERSION,
         target: None,
         client_cache: false,

@@ -10,6 +10,7 @@ test-support = []
 
 [dependencies]
 bedrock-packs.workspace = true
+bridge = { path = "../bridge" }
 assets = { path = "../assets" }
 image.workspace = true
 pack-compile-input = { path = "../pack-compiler/input" }

@@ -177,6 +177,7 @@ fn connect_frame(case: &Case) -> Bytes {
         RawValue::from_string(OPAQUE_VALUE.into()).unwrap(),
     );
     let request = session_wire::ConnectRequest {
+        join_profile_id: None,
         protocol: protocol::PROTOCOL_VERSION
             .checked_add(case.protocol_delta)
             .unwrap(),

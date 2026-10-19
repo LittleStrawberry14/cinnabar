@@ -62,6 +62,11 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
     view_distance_chunks: u8,
     on_startup: impl FnOnce(StartGame, ItemRegistry),
 ) -> Result<SpawnReady, ProtocolError> {
+    let profile = bridge::join_profile::JoinProfile::current();
+    let mut start_game_marked = false;
+    let mut item_registry_marked = false;
+    let mut player_spawn_marked = false;
+    let mut chunk_radius_marked = false;
     let mut on_startup = Some(on_startup);
     let request = crate::request_chunk_radius_packet(
         view_distance_chunks,
@@ -88,9 +93,16 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                 };
                 match player_status(status.status) {
                     Ok(PlayerStatus::LoginSuccess) => SpawnUpdate::default(),
-                    Ok(PlayerStatus::PlayerSpawn) => negotiation
-                        .receive(packets::Packet::PlayStatus(status))
-                        .map_err(spawn_failure)?,
+                    Ok(PlayerStatus::PlayerSpawn) => {
+                        let update = negotiation
+                            .receive(packets::Packet::PlayStatus(status))
+                            .map_err(spawn_failure)?;
+                        if !player_spawn_marked {
+                            profile.mark("player_spawn");
+                            player_spawn_marked = true;
+                        }
+                        update
+                    }
                     Ok(_) => {
                         transport.accept_current();
                         return Err(SessionFailure::ClientHandshake(
@@ -114,8 +126,24 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                 let update = negotiation
                     .receive(*raw.clone().decode()?.data)
                     .map_err(spawn_failure)?;
+                let id = raw.id;
                 if update.deferred.is_some() {
                     deferred.push(raw)?;
+                }
+                match id {
+                    PacketId::StartGame if !start_game_marked => {
+                        profile.mark("start_game_decoded");
+                        start_game_marked = true;
+                    }
+                    PacketId::ItemRegistry if !item_registry_marked => {
+                        profile.mark("item_registry_decoded");
+                        item_registry_marked = true;
+                    }
+                    PacketId::ChunkRadiusUpdated if !chunk_radius_marked => {
+                        profile.mark("chunk_radius_reply");
+                        chunk_radius_marked = true;
+                    }
+                    _ => {}
                 }
                 update
             }
@@ -146,6 +174,7 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                     startup_write_failure(transport, error, super::WRITE_FAILURE_DRAIN).await,
                 );
             }
+            profile.mark("chunk_radius_requested");
         }
         if let Some(ready) = update.ready {
             transport.prepend(deferred.into_packets());

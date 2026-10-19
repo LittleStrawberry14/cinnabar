@@ -1031,6 +1031,16 @@ dependency. The app owns the build-identity resource and passes its build profil
 into the runtime-metadata and world-publication markers. Marker output is unchanged;
 compilation and test execution of this move remain unverified until CI.
 
+Developer builds keep a request-to-terrain join timeline in debug logs. The local
+Connect request carries its diagnostic ID to the core; transport, HTTP, login,
+pack preparation and spawn milestones retain that attempt across workers. Timed
+sections can overlap and must not be summed as sequential latency. Pack subscriber
+compilation and bootstrap retain their own breakdowns. Pack acquisition records URL and chunk
+offers, source transfer work, cache hit/miss and operation durations, and URL fallback counts
+without pack identities, URLs, content keys or per-chunk log spam. Shipping builds omit the
+Rust timing feature and the Go `joinprofile` tag. Live join measurements remain
+separate from the LAN join-budget acceptance gate.
+
 ## World day length
 
 `world::TICKS_PER_DAY` is the single day length for sky and moon-phase math, the HUD
@@ -3938,8 +3948,8 @@ sleeping players lower their anchor by `1.5` blocks.
 Each centered line has a black background at alpha `0.25`, with one pixel of side
 padding and vertical bounds `-1 .. 8`. Multiline spacing and world lift remain unchanged.
 
-Ordinary tags draw their background and dim text at alpha `32 / 255` through walls, followed
-by full-opacity depth-tested text before the next label starts. Complete labels draw back
+Ordinary tags draw their background and full-opacity text through geometry, including
+server cosmetics extending above the published actor bounds. Complete labels draw back
 to front by camera depth, independently of viewer-distance limits and score range,
 with depth selection on each quad. Sneaking tags draw only their depth-tested background
 and dim text. Only tested text writes depth; labels use no depth bias and test final
@@ -3948,7 +3958,8 @@ alpha against `0.1`. Visibility uses strict viewer-distance limits of 64 blocks,
 suppress tags; the local player's tag stays hidden by default. Explicit always-show metadata
 overrides a cleared show-name flag; otherwise explicit server hides suppress tags.
 The open font, server text and formatting, score lines, debug text and explicit debug
-quaternions retain their existing paths. Rendered-frame acceptance remains incomplete;
+quaternions retain their existing paths. Live acceptance with oversized server cosmetics remains
+incomplete, as does the broader rendered-frame acceptance;
 no name-tag visual parity gate is closed. See [rendering rules](docs/reference/nametag-rendering.md).
 
 2026-10-01 first-person item rendering: ordinary icons and opaque full-cube blocks now use
