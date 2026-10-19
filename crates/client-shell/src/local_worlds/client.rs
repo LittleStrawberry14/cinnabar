@@ -203,6 +203,13 @@ impl WorldsClient {
                     if let Some(event) = event {
                         let thumbnails = read_thumbnails(&manager, &event, &mut loaded);
                         if event_tx.send(Reply { event, thumbnails }).is_err() {
+                            // Retained native retirement senders still own this request receiver.
+                            // Seal ordinary effects while the same queue finishes their cleanup.
+                            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                            if route.is_none() {
+                                *lock(&worker_revoked) = true;
+                                continue;
+                            }
                             break;
                         }
                     }
