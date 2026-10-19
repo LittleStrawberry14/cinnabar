@@ -2,6 +2,8 @@
 
 pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
+mod step;
+use step::{Phase, Step};
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
 use bedrock_client::server::session::AcceptedSession;
@@ -21,6 +23,8 @@ pub struct NativeHostedPeer {
     backend: ActiveBackendPeer,
     accepted: AcceptedSession<HostedLoginApproval>,
     output: Output,
+    phase: Phase,
+    backend_deadline: Option<Instant>,
 }
 
 /// New play admission ended; original backend output can finish before actual transport retirement.
@@ -49,6 +53,8 @@ impl NativeHostedPeer {
             backend,
             accepted,
             output: Output::Idle,
+            phase: Phase::Receive,
+            backend_deadline: None,
         }
     }
 
@@ -73,84 +79,18 @@ impl NativeHostedPeer {
         (closing, result)
     }
 
-    /// Relays one original raw packet at a time while retaining controls and opposite-direction output.
+    /// Uses the same owned IO steps as the multi-peer coordinator, with original authority at commit.
     async fn play(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
         loop {
-            host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+            host.wait_approval(&self.accepted.grant().approval, self.deadline())
                 .await?;
-            let wire = &mut self.wire;
-            let backend = &mut self.backend;
-            let output = &mut self.output;
-            let event = host
-                .peer_io(None, async {
-                    // The losing receive future is dropped before staging touches the same wire.
-                    let packet = tokio::select! {
-                        packet = wire.receive_play() => return packet.map(Event::External),
-                        packet = backend.recv() => packet?,
-                    };
-                    match packet {
-                        Some(packet) => {
-                            output.stage(wire, packet, cleanup_deadline())?;
-                            Ok(Event::World)
-                        }
-                        None => Ok(Event::Ended),
-                    }
-                })
+            let event = host.peer_io(self.deadline(), self.next_step()).await?;
+            host.wait_approval(&self.accepted.grant().approval, self.deadline())
                 .await?;
-            host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
-                .await?;
-            match event {
-                Event::External(packet) => {
-                    self.backend.queue_send(&packet, cleanup_deadline())?;
-                    loop {
-                        match host.peer_io(None, self.backend.flush_send()).await {
-                            Ok(()) => break,
-                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                                self.world_output(host).await?;
-                            }
-                            Err(error) => return Err(error),
-                        }
-                        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
-                            .await?;
-                    }
-                }
-                Event::World => self.complete_output(host).await?,
-                Event::Ended => return Ok(()),
+            if self.apply(event)? {
+                return Ok(());
             }
         }
-    }
-
-    /// Dispatches the sole retained opposite-direction payload before resuming its pending receipt.
-    async fn world_output(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
-        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
-            .await?;
-        let wire = &mut self.wire;
-        let backend = &mut self.backend;
-        let output = &mut self.output;
-        host.peer_io(None, async {
-            let packet = backend.recv().await?.ok_or_else(ended)?;
-            output.stage(wire, packet, cleanup_deadline())
-        })
-        .await?;
-        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
-            .await?;
-        self.complete_output(host).await
-    }
-
-    /// Keeps external completion and the original backend acknowledgment as one retained obligation.
-    async fn complete_output(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
-        self.output
-            .forward(host, &self.accepted.grant().approval, &mut self.wire)
-            .await?;
-        let deadline = self.output.deadline().expect("delivered output retained");
-        let backend = &mut self.backend;
-        let output = &mut self.output;
-        let wire = &mut self.wire;
-        host.peer_io(Some(deadline), async {
-            backend.received(deadline).await?;
-            output.acknowledged(wire)
-        })
-        .await
     }
 
     /// Captures one finite closing budget and prevents all new application sends.
@@ -171,12 +111,6 @@ impl NativeHostedPeer {
             finished: false,
         }
     }
-}
-
-enum Event {
-    External(bytes::Bytes),
-    World,
-    Ended,
 }
 
 impl ClosingHostedPeer {

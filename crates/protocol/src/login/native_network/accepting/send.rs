@@ -106,6 +106,15 @@ impl NativeAcceptingSend<'_> {
         }
     }
 
+    /// Reborrows the original permit already granted by `next` after an owned IO handoff.
+    /// This neither reserves capacity nor changes the cipher; a pending or retired send is rejected.
+    pub fn reserved_capacity(&mut self) -> io::Result<NativeAcceptingCapacity<'_>> {
+        self.connection.reserved_send_capacity()?;
+        Ok(NativeAcceptingCapacity {
+            connection: self.connection,
+        })
+    }
+
     /// Releases only a completed effect after its caller's original continuation/receipt obligation.
     pub fn finish(self) -> io::Result<()> {
         self.connection.finish_send()
