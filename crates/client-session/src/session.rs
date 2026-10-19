@@ -379,6 +379,7 @@ pub struct NetworkHandle<P = ()> {
     readiness_ingress: Arc<ReadinessIngressCounter>,
     experience_gate: Arc<experience::ExperienceGate>,
     unflushed: Mutex<frame_flush::FrameFlush>,
+    connection_observation: observation::Observation,
 }
 
 impl<P> NetworkHandle<P> {
@@ -619,6 +620,7 @@ impl<P> NetworkHandle<P> {
             .lock()
             .expect("latency reply lock") = None;
         self.shutdown.send_replace(true);
+        self.connection_observation.clear();
         self.release_thread();
     }
 
@@ -662,6 +664,7 @@ fn empty_network_channels<P>() -> (
             thread: None,
             readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
             experience_gate: Arc::default(),
+            connection_observation: Default::default(),
             unflushed: Default::default(),
         },
         physics_reanchor_rx,
@@ -671,11 +674,13 @@ fn empty_network_channels<P>() -> (
 impl<P> Drop for NetworkHandle<P> {
     fn drop(&mut self) {
         self.shutdown.send_replace(true);
+        self.connection_observation.clear();
         self.release_thread();
     }
 }
 
 pub(crate) mod execution;
+mod observation;
 mod start;
 pub use execution::{NetworkExecutor, SessionRead};
 #[cfg(not(target_arch = "wasm32"))]

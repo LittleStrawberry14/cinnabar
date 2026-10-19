@@ -29,6 +29,7 @@ impl<P> NetworkHandle<P> {
                 thread: None,
                 readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
                 experience_gate: Arc::default(),
+                connection_observation: Default::default(),
                 unflushed: Default::default(),
             },
             control_event_tx,

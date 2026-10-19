@@ -35,6 +35,18 @@ pub(super) enum Transport {
 }
 
 impl Transport {
+    /// Subscribes to the selected transport's original full round-trip estimate.
+    pub(super) fn subscribe_rtt(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        match self {
+            Self::RakNet(transport) => transport.subscribe_rtt(),
+            Self::NetherNetLan(transport) => transport.subscribe_rtt(),
+            Self::Messaging(transport) => transport.subscribe_rtt(),
+            Self::Accepted(transport) | Self::LocalHttp(transport) => transport.subscribe_rtt(),
+        }
+    }
+
     /// Reuses the actual accepted IO driver for a fixture's ready signed client and original challenge.
     #[cfg(feature = "test-support")]
     pub(super) fn fixture_nether(client: NetherClient, nonce: String) -> Self {

@@ -21,6 +21,16 @@ enum Connection {
 }
 
 impl MessagingTransport {
+    /// Observes the same established transport without retaining its send capability.
+    pub(super) fn subscribe_rtt(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        match self.connection.as_ref()? {
+            Connection::Established(connection) => Some(connection.sender().subscribe_rtt()),
+            _ => None,
+        }
+    }
+
     /// Checks the exact joined-session route before using the protected socket.
     pub(super) async fn connect(
         endpoint: &crate::NativeConnectionTarget,

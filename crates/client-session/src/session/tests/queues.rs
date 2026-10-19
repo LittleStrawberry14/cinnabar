@@ -24,6 +24,7 @@ fn network_pending_counts_include_ingress_and_outbound_queues() {
         thread: None,
         readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
         experience_gate: Arc::default(),
+        connection_observation: Default::default(),
         unflushed: Default::default(),
     };
 

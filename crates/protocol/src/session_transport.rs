@@ -100,6 +100,17 @@ impl InFlightSend {
 }
 
 impl<R: bridge::FrameRead> SessionTransport<R> {
+    /// Clones only the native transport's read-only observation, never its lifecycle owner.
+    pub(crate) fn subscribe_rtt(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        match &self.reader {
+            Reader::Core(_) => None,
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            Reader::Native(reader) => reader.rtt.clone(),
+        }
+    }
+
     /// Closes the native connection while its runtime is alive; core I/O belongs to its host.
     pub(crate) async fn close(&mut self) -> Result<(), ProtocolError> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]

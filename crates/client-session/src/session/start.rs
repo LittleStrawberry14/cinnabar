@@ -13,6 +13,9 @@ pub use native::spawn_network;
 pub use native::spawn_network_with_companion;
 #[cfg(test)]
 use native::{run_session_runtime, unless_cancelled};
+#[cfg(test)]
+#[path = "start/observation_tests.rs"]
+mod observation_tests;
 
 /// Shared login result carrying startup facts and the presentation owner's prepared payload.
 pub type PreparedLogin<R, P> = Result<
@@ -55,6 +58,7 @@ struct NetworkChannels<P> {
     readiness_ingress: Arc<ReadinessIngressCounter>,
     experience_gate: Arc<experience::ExperienceGate>,
     terminal: Arc<TerminalOwner>,
+    connection_observation: observation::Observation,
 }
 
 /// Allocates the same bounded FIFOs for native threads and local browser tasks.
@@ -69,6 +73,7 @@ fn network_channels<P>(
     let (shutdown, shutdown_rx) = watch::channel(false);
     let readiness_ingress = Arc::new(ReadinessIngressCounter::default());
     let experience_gate = Arc::new(experience::ExperienceGate::default());
+    let connection_observation = observation::Observation::default();
     let channels = NetworkChannels {
         session_generation,
         control_event_tx,
@@ -78,6 +83,7 @@ fn network_channels<P>(
         readiness_ingress: Arc::clone(&readiness_ingress),
         experience_gate: Arc::clone(&experience_gate),
         terminal: Arc::default(),
+        connection_observation: connection_observation.clone(),
     };
     let handle = NetworkHandle {
         session_generation: session_generation.get(),
@@ -90,6 +96,7 @@ fn network_channels<P>(
         thread: None,
         readiness_ingress,
         experience_gate,
+        connection_observation,
         unflushed: Default::default(),
     };
     (handle, channels)
@@ -113,6 +120,7 @@ impl<P: Send + 'static> NetworkChannels<P> {
             readiness_ingress: network_readiness_ingress,
             experience_gate: network_experience_gate,
             terminal,
+            connection_observation,
         } = self;
         let Some(login) =
             wait_for_login_or_cancel(login(shutdown_rx.clone()), &mut shutdown_rx).await
@@ -150,6 +158,8 @@ impl<P: Send + 'static> NetworkChannels<P> {
             packs,
         } = packs;
         let bootstrap = game_data.world;
+        let _observation = connection_observation
+            .install(bootstrap.local_player_runtime_id, session.subscribe_rtt());
         let settings = &game_data.settings;
         let inventory = start_game_inventory_authority(&game_data);
         let item_registry = match start_game_item_registry(&game_data) {

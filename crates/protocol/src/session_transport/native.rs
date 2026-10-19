@@ -49,6 +49,7 @@ pub(crate) mod tests;
 
 pub(crate) struct NativeReader {
     incoming: mpsc::Receiver<IncomingBody>,
+    pub(super) rtt: Option<tokio::sync::watch::Receiver<Option<Duration>>>,
     task: Option<tokio::task::JoinHandle<PendingInput>>,
     tail: PendingInput,
     failure: Option<tokio::task::JoinError>,
@@ -341,6 +342,7 @@ pub(crate) fn prepare_with_byte_budget(
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
     pub(crate) fn from_native(connection: impl PacketConnection) -> Self {
+        let rtt = connection.subscribe_rtt();
         let PreparedPump {
             sender,
             incoming,
@@ -352,6 +354,7 @@ impl SessionTransport {
         Self {
             reader: Reader::Native(NativeReader {
                 incoming,
+                rtt,
                 task: Some(task),
                 tail: None,
                 failure: None,

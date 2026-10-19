@@ -20,6 +20,16 @@ enum Connection {
 }
 
 impl LanTransport {
+    /// Observes the same established transport without retaining its send capability.
+    pub(super) fn subscribe_rtt(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        match self.connection.as_ref()? {
+            Connection::Established(connection) => Some(connection.sender().subscribe_rtt()),
+            _ => None,
+        }
+    }
+
     /// Discovers and connects one compatible IPv4 endpoint under the selection owner's cutoff.
     pub(super) async fn connect(address: SocketAddr) -> io::Result<Self> {
         Self::connect_route(address, None, None)

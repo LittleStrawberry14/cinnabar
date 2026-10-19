@@ -17,6 +17,10 @@ use send::{PendingSend, SendRetirement};
 
 /// Exclusive packet I/O consumed by the native session pump.
 pub(crate) trait PacketConnection: Send + 'static {
+    /// Observes transport estimates without another I/O owner or application probe.
+    fn subscribe_rtt(&self) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        None
+    }
     /// Sends one complete batch without cancelling cipher or transport progress.
     fn send_body(
         &mut self,
@@ -495,6 +499,10 @@ fn envelope(marker: Option<u8>, body: Bytes) -> Bytes {
 }
 
 impl PacketConnection for Connection {
+    fn subscribe_rtt(&self) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        self.transport.subscribe_rtt()
+    }
+
     /// Advances the cipher only inside this owner's uninterrupted write operation.
     async fn send_body(&mut self, body: Bytes) -> io::Result<()> {
         self.send_body_until(body, None).await

@@ -107,6 +107,14 @@ impl WorldIngress {
 }
 
 impl<R: bridge::FrameRead> PlaySession<R> {
+    /// Subscribes to the native transport's full RTT; Core/browser sessions have no native sample.
+    /// A closed channel means withdrawn even if its last value was measured.
+    pub fn subscribe_rtt(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+        self.transport.subscribe_rtt()
+    }
+
     /// Drains accepted native writes and closes the peer before the host stops its runtime.
     /// Core sessions retain their host-owned endpoint lifecycle.
     pub async fn close(&mut self) -> Result<(), ProtocolError> {
