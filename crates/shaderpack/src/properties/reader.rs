@@ -5,20 +5,21 @@
 use std::collections::BTreeMap;
 
 use super::PropertiesDiagnostic;
+use crate::expr::truncated;
 use pp_rs::pp::Preprocessor;
 use pp_rs::token::TokenValue;
 
 /// One key/value pair from an active logical line.
-pub(super) struct RawEntry {
+pub(crate) struct RawEntry {
     /// 1-based line where the logical line starts.
-    pub(super) line: u32,
-    pub(super) key: String,
-    pub(super) value: String,
+    pub(crate) line: u32,
+    pub(crate) key: String,
+    pub(crate) value: String,
 }
 
 /// Reads the key/value pairs of `text` that survive conditional preprocessing, in file
 /// order. Malformed directives are reported to `diagnostics` and reading continues.
-pub(super) fn read_entries(
+pub(crate) fn read_entries(
     text: &str,
     defines: &BTreeMap<String, String>,
     diagnostics: &mut Vec<PropertiesDiagnostic>,
@@ -93,20 +94,30 @@ const MAX_EXPANSIONS: usize = 1024;
 
 /// Expands object-like macros, as Iris's preprocessor does in content and conditions. Numbers
 /// and the spacing between tokens are left unchanged; in a condition, the operand of `defined`
-/// stays a name.
+/// stays a name. As in C, a macro met inside its own expansion is not expanded again: it stays
+/// a name in content and counts as 0 in a condition.
 fn expand(text: &str, defines: &BTreeMap<String, String>, condition: bool) -> String {
     let mut budget = MAX_EXPANSIONS;
     let mut out = String::with_capacity(text.len());
-    expand_into(text, defines, condition, &mut budget, &mut out);
+    expand_into(
+        text,
+        defines,
+        condition,
+        &mut budget,
+        &mut Vec::new(),
+        &mut out,
+    );
     out
 }
 
-/// Appends `text` to `out`, replacing each defined identifier while `budget` lasts.
-fn expand_into(
+/// Appends `text` to `out`, replacing each defined identifier that is not already being
+/// expanded (`active`) while `budget` lasts.
+fn expand_into<'a>(
     text: &str,
-    defines: &BTreeMap<String, String>,
+    defines: &'a BTreeMap<String, String>,
     condition: bool,
     budget: &mut usize,
+    active: &mut Vec<&'a str>,
     out: &mut String,
 ) {
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
@@ -117,12 +128,18 @@ fn expand_into(
         let len = rest[start..].bytes().take_while(|&b| is_word(b)).count();
         let word = &rest[start..start + len];
         rest = &rest[start + len..];
-        match defines.get(word) {
-            Some(value)
-                if *budget > 0 && !after_defined && !word.as_bytes()[0].is_ascii_digit() =>
+        match defines.get_key_value(word) {
+            Some(_) if condition && active.contains(&word) && !after_defined => out.push('0'),
+            Some((name, value))
+                if *budget > 0
+                    && !after_defined
+                    && !word.as_bytes()[0].is_ascii_digit()
+                    && !active.contains(&word) =>
             {
                 *budget -= 1;
-                expand_into(flag_value(value), defines, condition, budget, out);
+                active.push(name.as_str());
+                expand_into(flag_value(value), defines, condition, budget, active, out);
+                active.pop();
             }
             _ => out.push_str(word),
         }
@@ -368,11 +385,12 @@ impl Conditionals {
     }
 
     /// Evaluates an `#if`/`#elif` condition with C preprocessor semantics (integer arithmetic,
-    /// macro expansion, undefined names as 0); malformed conditions are reported and false.
+    /// macro expansion, undefined names as 0, float literals as their integer part, as JCPP
+    /// reads them); malformed conditions are reported and false.
     fn test(&self, text: &str, report: &mut impl FnMut(&str)) -> bool {
         // pp-rs mis-parses some operators after its own macro expansion, so names are expanded
-        // here and pp-rs evaluates literals and `defined` only.
-        let condition = expand(text, &self.defines, true);
+        // here and pp-rs evaluates literals and `defined` only. pp-rs rejects float literals.
+        let condition = integer_literals(&expand(text, &self.defines, true));
         let source = format!("#if {condition}\n1\n#else\n0\n#endif\n");
         let mut preprocessor = Preprocessor::new(&source);
         for (name, value) in &self.defines {
@@ -405,4 +423,40 @@ impl Conditionals {
 /// Splits `#define`/`#undef` arguments into the macro name and its (trimmed) value.
 fn macro_name(args: &str) -> Option<(&str, &str)> {
     crate::options::split_ident(args).map(|(name, value)| (name, value.trim()))
+}
+
+/// `condition` with each float literal replaced by its integer part (`0.75 > 0.5` → `0 > 0`).
+/// Identifiers are copied whole, so digits inside names are untouched.
+fn integer_literals(condition: &str) -> String {
+    let mut out = String::with_capacity(condition.len());
+    let mut rest = condition;
+    while let Some(c) = rest.chars().next() {
+        let starts_number =
+            c.is_ascii_digit() || (c == '.' && rest[1..].starts_with(|d: char| d.is_ascii_digit()));
+        if !starts_number && !(c.is_ascii_alphabetic() || c == '_') {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+            continue;
+        }
+        // An identifier, or a C preprocessing number: digits, letters, `.`, and a sign after an
+        // exponent.
+        let mut previous = ' ';
+        let end = rest
+            .find(|c: char| {
+                let exponent_sign = matches!(c, '+' | '-') && matches!(previous, 'e' | 'E');
+                let number_part = starts_number && (c == '.' || exponent_sign);
+                previous = c;
+                !(c.is_ascii_alphanumeric() || c == '_' || number_part)
+            })
+            .unwrap_or(rest.len());
+        let (token, tail) = rest.split_at(end);
+        rest = tail;
+        let integer = if starts_number {
+            truncated(token)
+        } else {
+            None
+        };
+        out.push_str(integer.as_deref().unwrap_or(token));
+    }
+    out
 }

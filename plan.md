@@ -284,10 +284,15 @@ See [inventory ownership](docs/architecture/inventory.md),
 
 ## Phase 6 — Online product surface
 
-Online services are implemented; complete acceptance still covers authenticated
+Online services are implemented. Startup requires login facts and PlayerSpawn;
+radius replies remain ordered play updates without holding startup. Complete
+acceptance still covers authenticated
 server/Realm/friend-world joins, transfers, reconnect/disconnect, account switching,
 presence, invites and required-pack failures. Preserve transport/session identity
 and keep actual account details out of captures and reports published with PRs.
+Core transfer/disconnect terminals can abandon unfinished join preparation; ordinary
+preparation and presentation readiness remain required for a successful join. Live
+server latency impact and the complete transfer acceptance matrix remain unqualified.
 
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware
@@ -331,6 +336,24 @@ validation; retain only the explicitly permitted diagnostic/optional fallbacks.
   contract. Behind the render crate's `shaderpacks` feature, the host builds the Java-style
   block atlas packs sample. Pack-specific translation fixes, the rest of the render-host
   integration and in-game acceptance remain incomplete.
+  contract. Pack-specific translation fixes, render-host integration and in-game
+  acceptance remain incomplete; parsed custom uniform expressions are not executed or
+  rendered.
+  and enable rules. Translation, render-host integration and in-game acceptance
+  remain incomplete; parsed custom uniform expressions are not executed or rendered.
+  Pack block, item and entity ids, Java biome values and Java sky and fog colours are
+  computed from the pinned Bedrock→Java mappings but not yet uploaded to shaders.
+  and enable rules, and custom uniform expressions evaluate per frame. Translation,
+  render-host integration and in-game acceptance remain incomplete; evaluated custom
+  uniforms are not uploaded or rendered.
+  shader-pack source loading is implemented in `shaderpack`; configuration parsing,
+  translation, render-host integration and in-game acceptance remain incomplete.
+- `registryc --kind java-mapping` generates `crates/assets/data/java-mapping-v2193.bin` from
+  the GeyserMC data pinned in `assets/geyser-mappings-source.json`: Java block states, block
+  tags, biomes and their colours, entity types and items for every Bedrock id Geyser maps.
+  States Geyser never produces take the closest same-block state and are flagged approximate;
+  Bedrock-only biomes and blocks stay unmapped. Nothing reads the carrier yet; Java shader
+  packs' ids, biome uniforms and sky colours are its first consumers.
 - Runtime pack compatibility still includes custom texture inheritance/tints, authored
   geometry and block/item component behavior beyond the currently supported cases.
 

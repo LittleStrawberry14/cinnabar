@@ -6,7 +6,8 @@
 //! - group 0, binding 0: the program's loose uniforms as one std140 block ([`UniformBlock`]);
 //!   further pack-declared uniform blocks follow from binding 1.
 //! - group 1: binding 0 is the shared filtering sampler, binding 1 the shared comparison
-//!   sampler; sampled textures start at binding 2, numbered per program by first declaration.
+//!   sampler, bindings 2–4 the other [`SamplerClass`]es; sampled textures start at binding 5,
+//!   numbered per program by first declaration.
 //! - group 2: storage images from binding 0.
 //! - group 3: storage buffers at the pack's own `binding`.
 
@@ -24,7 +25,7 @@ pub const SAMPLER_BINDING: u32 = 0;
 /// Binding of the shared depth-comparison sampler in [`TEXTURE_GROUP`].
 pub const SHADOW_SAMPLER_BINDING: u32 = 1;
 /// First sampled-texture binding in [`TEXTURE_GROUP`].
-pub const FIRST_TEXTURE_BINDING: u32 = 2;
+pub const FIRST_TEXTURE_BINDING: u32 = 5;
 /// Group of storage images.
 pub const IMAGE_GROUP: u32 = 2;
 /// Group of storage buffers.
@@ -35,6 +36,94 @@ pub const LOOSE_UNIFORM_BLOCK: &str = "IrisUniforms";
 pub const SAMPLER_NAME: &str = "iris_sampler";
 /// Name of the shared comparison sampler in translated GLSL.
 pub const SHADOW_SAMPLER_NAME: &str = "iris_samplerShadow";
+
+/// The filtering sampler a texture is read with, by Iris's per-texture rules: render
+/// targets clamp and filter linearly, depth textures clamp without filtering, `noisetex`
+/// repeats, and custom textures follow their `.mcmeta` (`blur`, `clamp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SamplerClass {
+    /// Repeat, linear: the shared sampler, for `noisetex` and names without a rule.
+    RepeatLinear,
+    /// Clamp to edge, linear: `colortex`/`shadowcolor`/`shadowtex`, `lightmap` and custom
+    /// images.
+    ClampLinear,
+    /// Clamp to edge, nearest: `depthtex`.
+    ClampNearest,
+    /// Repeat, nearest (blending mip levels, as Java's atlas does): the block atlas and its
+    /// `normals`/`specular` companions, and custom textures without `blur` or `clamp`.
+    RepeatNearest,
+}
+
+impl SamplerClass {
+    /// Every class, in binding order.
+    pub const ALL: [SamplerClass; 4] = [
+        SamplerClass::RepeatLinear,
+        SamplerClass::ClampLinear,
+        SamplerClass::ClampNearest,
+        SamplerClass::RepeatNearest,
+    ];
+
+    /// Binding in [`TEXTURE_GROUP`].
+    pub const fn binding(self) -> u32 {
+        match self {
+            SamplerClass::RepeatLinear => SAMPLER_BINDING,
+            SamplerClass::ClampLinear => 2,
+            SamplerClass::ClampNearest => 3,
+            SamplerClass::RepeatNearest => 4,
+        }
+    }
+
+    /// Name in translated GLSL.
+    pub const fn glsl_name(self) -> &'static str {
+        match self {
+            SamplerClass::RepeatLinear => SAMPLER_NAME,
+            SamplerClass::ClampLinear => "iris_samplerClampLinear",
+            SamplerClass::ClampNearest => "iris_samplerClampNearest",
+            SamplerClass::RepeatNearest => "iris_samplerRepeatNearest",
+        }
+    }
+
+    /// The class bound at `binding` of [`TEXTURE_GROUP`].
+    pub fn from_binding(binding: u32) -> Option<SamplerClass> {
+        Self::ALL.into_iter().find(|c| c.binding() == binding)
+    }
+
+    /// From `.mcmeta` texture settings.
+    pub const fn from_filtering(blur: bool, clamp: bool) -> SamplerClass {
+        match (blur, clamp) {
+            (true, true) => SamplerClass::ClampLinear,
+            (true, false) => SamplerClass::RepeatLinear,
+            (false, true) => SamplerClass::ClampNearest,
+            (false, false) => SamplerClass::RepeatNearest,
+        }
+    }
+
+    /// Edges clamp rather than repeat.
+    pub const fn clamps(self) -> bool {
+        matches!(self, SamplerClass::ClampLinear | SamplerClass::ClampNearest)
+    }
+
+    /// Filters linearly (including between mip levels) rather than taking the nearest texel.
+    pub const fn linear(self) -> bool {
+        matches!(self, SamplerClass::RepeatLinear | SamplerClass::ClampLinear)
+    }
+
+    /// The class of a built-in sampler name: depth textures are nearest, colour and shadow
+    /// targets linear, both clamped; the atlas repeats without filtering; everything else
+    /// (`noisetex`, unknown names) is the shared repeat/linear sampler. Custom textures
+    /// override this per program stage.
+    pub fn for_name(name: &str) -> SamplerClass {
+        match name {
+            "depthtex0" | "depthtex1" | "depthtex2" | "gdepthtex" => SamplerClass::ClampNearest,
+            "shadow" | "watershadow" | "shadowtex0" | "shadowtex1" | "lightmap" => {
+                SamplerClass::ClampLinear
+            }
+            "gtexture" | "texture" | "tex" | "normals" | "specular" => SamplerClass::RepeatNearest,
+            _ if crate::buffers::BufferId::parse(name).is_some() => SamplerClass::ClampLinear,
+            _ => SamplerClass::RepeatLinear,
+        }
+    }
+}
 
 /// Fixed-function state of the compatibility profile, supplied as members of the loose
 /// uniform block: (GLSL built-in, block member name, member declaration).
@@ -97,6 +186,17 @@ pub enum VertexAttribute {
     ChunkFade,
     /// `dhMaterialId`.
     DhMaterialId,
+    /// `iris_PackedPosition` (`uvec4`): a position in unsigned fixed point, scaled and offset
+    /// by [`VertexAttribute::DrawOrigin`], with the lightmap coordinates' two bytes in `w`.
+    /// The translator unpacks every position input (`gl_Vertex`, `vaPosition`) as
+    /// `stored + origin.xyz + vec3(packed.xyz) * origin.w` and every lightmap input as
+    /// `stored + vec2(packed.w & 255, packed.w >> 8)`, so a vertex stream supplies either
+    /// float values or packed ones and the other part reads zero. Its location is the first
+    /// one the stage leaves free.
+    PackedPosition,
+    /// `iris_DrawOrigin` (`vec4`): the origin (`xyz`) and scale (`w`) of
+    /// [`VertexAttribute::PackedPosition`], per draw.
+    DrawOrigin,
     /// An input the pack declares that Iris does not supply.
     Other(String),
 }
@@ -123,6 +223,8 @@ const ATTRIBUTE_NAMES: &[(&str, VertexAttribute)] = &[
     ("at_velocity", VertexAttribute::Velocity),
     ("mc_chunkFade", VertexAttribute::ChunkFade),
     ("dhMaterialId", VertexAttribute::DhMaterialId),
+    ("iris_PackedPosition", VertexAttribute::PackedPosition),
+    ("iris_DrawOrigin", VertexAttribute::DrawOrigin),
 ];
 
 /// Supplied attributes in location order; `Other` inputs take locations after these.
@@ -147,6 +249,13 @@ const SUPPLIED: &[VertexAttribute] = &[
 /// First location used for [`VertexAttribute::Other`] inputs.
 pub const FIRST_OTHER_ATTRIBUTE_LOCATION: u32 = SUPPLIED.len() as u32;
 
+/// Whether the host's vertex stream stores an attribute as floats or as integers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StoredNumbers {
+    Float,
+    Int,
+}
+
 impl VertexAttribute {
     /// The attribute a translated vertex input name stands for.
     pub fn from_glsl_name(name: &str) -> VertexAttribute {
@@ -157,9 +266,26 @@ impl VertexAttribute {
             .unwrap_or_else(|| VertexAttribute::Other(name.to_string()))
     }
 
-    /// The fixed shader location of a supplied attribute; `None` for `Other`.
+    /// The fixed shader location of a supplied attribute; `None` for `Other` and the raw
+    /// position parts, which take free locations.
     pub fn location(&self) -> Option<u32> {
         SUPPLIED.iter().position(|a| a == self).map(|i| i as u32)
+    }
+
+    /// How the host's vertex stream stores this attribute, for those a declaration of the
+    /// other kind reads converted rather than as declared, as GL converts integer vertex
+    /// data for float inputs. The lightmap is stored as exact floats or bytes, summed into
+    /// floats (`in ivec2 vaUV2` reads them and rounds); `mc_Entity` and `at_midBlock` as the
+    /// integers Iris stores
+    /// (`in vec4 mc_Entity` reads them and converts). `None` for every other attribute.
+    pub fn stored_numbers(&self) -> Option<StoredNumbers> {
+        match self {
+            VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2 => {
+                Some(StoredNumbers::Float)
+            }
+            VertexAttribute::BlockId | VertexAttribute::MidBlock => Some(StoredNumbers::Int),
+            _ => None,
+        }
     }
 }
 
@@ -274,7 +400,7 @@ pub struct TextureBinding {
     pub stages: StageMask,
 }
 
-/// One of the two shared samplers.
+/// One of the shared samplers: a [`SamplerClass`] or the comparison sampler.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SamplerBinding {
     pub name: String,
@@ -282,6 +408,17 @@ pub struct SamplerBinding {
     pub binding: u32,
     pub comparison: bool,
     pub stages: StageMask,
+}
+
+impl SamplerBinding {
+    /// The filtering class, `None` for the comparison sampler.
+    pub fn class(&self) -> Option<SamplerClass> {
+        if self.comparison {
+            None
+        } else {
+            SamplerClass::from_binding(self.binding)
+        }
+    }
 }
 
 /// A storage image (`image2D`, `uimage3D` …).
@@ -294,6 +431,8 @@ pub struct StorageImageBinding {
     pub format: naga::StorageFormat,
     pub read: bool,
     pub write: bool,
+    /// Used with `imageAtomic*`: bind with atomic storage access.
+    pub atomic: bool,
     pub stages: StageMask,
 }
 
@@ -363,8 +502,13 @@ mod tests {
 
     #[test]
     fn every_named_attribute_has_a_location_and_every_location_a_name() {
+        let position_parts = [VertexAttribute::PackedPosition, VertexAttribute::DrawOrigin];
         for (name, attribute) in ATTRIBUTE_NAMES {
-            assert!(attribute.location().is_some(), "{name} has no location");
+            assert_eq!(
+                attribute.location().is_some(),
+                !position_parts.contains(attribute),
+                "{name}: only the position parts take free locations"
+            );
             assert_eq!(&VertexAttribute::from_glsl_name(name), attribute);
         }
         for attribute in SUPPLIED {

@@ -84,6 +84,70 @@ fn builtin_variable(name: &str, stage: StageKind) -> Option<&'static str> {
     })
 }
 
+/// Core-profile names and the compatibility built-ins Iris's core-profile transformer
+/// renames them to. Iris compiles line programs with that transformer whatever their
+/// version, so Complementary's `#version 130` `gbuffers_line` uses these without declaring
+/// them. Vertex attributes only apply to vertex stages.
+const CORE_NAMES: &[(&str, &str, bool)] = &[
+    ("modelViewMatrix", "gl_ModelViewMatrix", false),
+    ("modelViewMatrixInverse", "gl_ModelViewMatrixInverse", false),
+    ("projectionMatrix", "gl_ProjectionMatrix", false),
+    (
+        "projectionMatrixInverse",
+        "gl_ProjectionMatrixInverse",
+        false,
+    ),
+    ("normalMatrix", "gl_NormalMatrix", false),
+    ("vaPosition", "gl_Vertex.xyz", true),
+    ("vaColor", "gl_Color", true),
+    ("vaNormal", "gl_Normal", true),
+    ("vaUV0", "gl_MultiTexCoord0.xy", true),
+    ("vaUV2", "ivec2(gl_MultiTexCoord1.xy)", true),
+];
+
+/// Replaces undeclared [`CORE_NAMES`] with their compatibility built-ins, so a stage that
+/// uses both (`gl_Normal` and `vaNormal`) reads one input. A declared name stays the
+/// pack's own variable.
+fn undeclared_core_names(src: &[Tok], stage: StageKind) -> Option<Vec<Tok>> {
+    // `<type> <name>`, or a later declarator of a list: `in mat4 unproject, projectionMatrix`.
+    let declares = |i: usize| {
+        let mut j = i;
+        while j >= 2 && src[j - 1].is(",") && src[j - 2].ident().is_some() {
+            j -= 2;
+        }
+        j > 0 && src[j - 1].ident().is_some_and(|ty| ty != "return")
+    };
+    let declared = |n: &str| (1..src.len()).any(|i| src[i].ident() == Some(n) && declares(i));
+    let replace: Vec<(&str, &str)> = CORE_NAMES
+        .iter()
+        .filter(|(n, _, attribute)| {
+            (!attribute || stage == StageKind::Vertex)
+                && src.iter().any(|t| t.ident() == Some(n))
+                && !declared(n)
+        })
+        .map(|(n, compat, _)| (*n, *compat))
+        .collect();
+    if replace.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(src.len());
+    for (i, t) in src.iter().enumerate() {
+        let member = i > 0 && src[i - 1].is(".");
+        match replace
+            .iter()
+            .find(|(n, _)| !member && t.ident() == Some(n))
+        {
+            Some((_, compat)) => {
+                out.push(p("(").at(t.line));
+                out.extend(lex(compat).into_iter().map(|c| c.at(t.line)));
+                out.push(p(")").at(t.line));
+            }
+            None => out.push(t.clone()),
+        }
+    }
+    Some(out)
+}
+
 /// Renames reserved identifiers, maps legacy built-ins and lookup functions, and gives
 /// implicit-LOD sampling outside fragment shaders an explicit LOD.
 pub(super) fn rewrite(
@@ -92,7 +156,10 @@ pub(super) fn rewrite(
     version: u32,
 ) -> Result<Legacy, TransformError> {
     let legacy = version < 130;
-    let sized = size_unsized_arrays(src);
+    let mut sized = size_unsized_arrays(src);
+    if let Some(core) = undeclared_core_names(&sized, stage) {
+        sized = core;
+    }
     let src = &sized;
     let mut out = Legacy {
         toks: Vec::with_capacity(src.len()),
@@ -133,7 +200,9 @@ pub(super) fn rewrite(
         }
         let name = name.as_str();
         let called = src.get(i + 1).is_some_and(|n| n.is("("));
-        if legacy && name == "texture" && !called {
+        // Iris renames a non-call `texture` to `gtexture` in every version (SEUS Renewed's
+        // `#version 130` gbuffers declare `uniform sampler2D texture`).
+        if name == "texture" && !called {
             toks.push(id("gtexture").at(line));
             i += 1;
             continue;
@@ -164,13 +233,23 @@ pub(super) fn rewrite(
                 "shadow2D" | "shadow2DLod" | "shadow2DProj" | "shadow2DArray"
             )
         {
+            let close = matching(src, i + 1, "(", ")");
+            // As for `texture`: a compare sample needs an explicit LOD outside fragment
+            // shaders (Rethinking Voxels' compute `deferred1` filters shadows).
+            let explicit_lod = name == "shadow2D"
+                && stage != StageKind::Fragment
+                && split_args(&src[i + 2..close]).len() == 2;
             let f = match name {
                 "shadow2DLod" => "textureLod",
                 "shadow2DProj" => "textureProj",
+                _ if explicit_lod => "textureLod",
                 _ => "texture",
             };
+            if explicit_lod {
+                pending_lod.push(close);
+            }
             // shadow2D returned vec4 in 1.20; the extra `)` follows the call's own.
-            pending_close.push(matching(src, i + 1, "(", ")"));
+            pending_close.push(close);
             toks.extend([id("vec4").at(line), p("(").at(line), id(f).at(line)]);
             i += 1;
             continue;

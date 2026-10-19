@@ -16,7 +16,10 @@ use crate::codec::SessionFailure;
 use crate::disconnect::{delivered_texts, disconnect_reason, join_disconnect, packet_texts};
 use crate::raw_packet::RawPacket;
 use crate::session_transport::{Inbound, SessionTransport, Terminal};
-use crate::{LoadingScreenPhase, Packet, ProtocolError, ServerTransferEvent, SessionError};
+use crate::{
+    LoadingScreenPhase, Packet, ProtocolError, ServerTransferEvent, ServerTransferRejection,
+    SessionError,
+};
 
 /// Bounds the bytes deferred to play while the spawn prerequisites arrive.
 pub(super) const MAX_DEFERRED_PACKET_BYTES: usize = 16 * 1024 * 1024;
@@ -61,7 +64,7 @@ impl DeferredPackets {
 }
 
 /// Runs the spawn sequence: requests the radius once StartGame has arrived, then returns once the
-/// first item registry, the radius reply and PlayerSpawn have all arrived, leaving every deferred
+/// first item registry and PlayerSpawn have arrived, leaving every deferred
 /// packet ahead of unread ones. `on_startup` receives the first StartGame and item registry as soon
 /// as both have arrived, while the sequence keeps reading. Dropping the future cancels it.
 pub(super) async fn await_spawn<R: bridge::FrameRead>(
@@ -76,7 +79,6 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
     let mut item_registry: Option<ItemRegistry> = None;
     let mut registry_seen = false;
     let mut sent_chunk_radius = false;
-    let mut received_chunk_radius = false;
     let mut received_player_spawn = false;
     let mut terrain_before_spawn = false;
     let mut deferred = DeferredPackets::default();
@@ -140,10 +142,7 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
                     .into());
                 }
                 deferred.push(raw)?;
-                if !received_chunk_radius {
-                    profile.mark("chunk_radius_reply");
-                }
-                received_chunk_radius = true;
+                profile.mark_once(bridge::join_profile::Milestone::ChunkRadiusReply);
             }
             PacketId::Disconnect => {
                 let packets::Packet::Disconnect(disconnect) = *raw.decode()?.data else {
@@ -181,11 +180,7 @@ pub(super) async fn await_spawn<R: bridge::FrameRead>(
             profile.mark("chunk_radius_requested");
             sent_chunk_radius = true;
         }
-        if sent_chunk_radius
-            && received_chunk_radius
-            && received_player_spawn
-            && on_startup.is_none()
-        {
+        if sent_chunk_radius && received_player_spawn && on_startup.is_none() {
             break;
         }
     }
@@ -224,37 +219,46 @@ async fn recv_startup<R: bridge::FrameRead>(
 ) -> Result<RawPacket, ProtocolError> {
     let mut skipped = 0_u64;
     loop {
-        let target = match transport.recv().await? {
+        let error = match transport.recv().await? {
             Inbound::Packet(raw) if raw.id == PacketId::Transfer => {
                 match ServerTransferEvent::from_packet_data(&raw.decode()?.data) {
-                    Ok(Some(target)) => Ok(target),
+                    Ok(Some(target)) => Ok(SessionFailure::ServerTransfer(target).into()),
                     Ok(None) => unreachable!("transfer packet ID agrees with its body"),
                     Err(reason) => Err(reason),
                 }
             }
             Inbound::Packet(raw) => return Ok(raw),
-            Inbound::Terminal(Terminal::Transfer(transfer)) => ServerTransferEvent::from_target(
-                &transfer.address,
-                transfer.port,
-                transfer.reload_world,
-            ),
-            Inbound::Terminal(Terminal::Disconnect(disconnect)) => {
-                let (message, filtered_message) = delivered_texts(&disconnect);
-                return Err(join_disconnect(
-                    STAGE,
-                    &disconnect_reason(disconnect.reason),
-                    message,
-                    filtered_message,
-                )
-                .into());
-            }
+            Inbound::Terminal(terminal) => terminal_error(terminal),
         };
-        match target {
-            Ok(target) => return Err(SessionFailure::ServerTransfer(target).into()),
+        match error {
+            Ok(error) => return Err(error),
             Err(reason) => {
                 skipped = skipped.saturating_add(1);
                 tracing::warn!(?reason, skipped, "ignoring unusable startup transfer");
             }
+        }
+    }
+}
+
+/// Maps a core terminal to the same validated startup outcome before or during preparation.
+/// Unusable transfer targets remain semantic skips rather than early startup failures.
+pub(super) fn terminal_error(terminal: Terminal) -> Result<ProtocolError, ServerTransferRejection> {
+    match terminal {
+        Terminal::Transfer(transfer) => ServerTransferEvent::from_target(
+            &transfer.address,
+            transfer.port,
+            transfer.reload_world,
+        )
+        .map(|target| SessionFailure::ServerTransfer(target).into()),
+        Terminal::Disconnect(disconnect) => {
+            let (message, filtered_message) = delivered_texts(&disconnect);
+            Ok(join_disconnect(
+                STAGE,
+                &disconnect_reason(disconnect.reason),
+                message,
+                filtered_message,
+            )
+            .into())
         }
     }
 }

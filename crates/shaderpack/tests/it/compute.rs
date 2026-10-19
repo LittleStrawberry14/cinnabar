@@ -2,8 +2,8 @@
 
 use crate::{open_fixture, program, reflection, uniform_names};
 use shaderpack::{
-    ComputeDispatch, IMAGE_GROUP, ProgramGroup, ProgramKind, StageKind, StageMask,
-    TextureDimension, TranslateConfig,
+    ComputeDispatch, IMAGE_GROUP, PackSource, ProgramGroup, ProgramKind, ShaderPack, StageKind,
+    StageMask, TextureDimension, TranslateConfig,
 };
 
 const COMPUTE: StageMask = StageMask {
@@ -109,4 +109,28 @@ fn render_relative_dispatch_and_explicit_image_formats() {
             ),
         ]
     );
+}
+
+#[test]
+fn an_image_used_with_image_atomics_reflects_atomic_access() {
+    let pack = ShaderPack::new(PackSource::from_files([(
+        "begin.csh",
+        "#version 430\n\
+         layout(local_size_x = 8) in;\n\
+         layout(r32ui) uniform uimage2D counts;\n\
+         layout(r32f) uniform writeonly image2D plain;\n\
+         void main() {\n\
+             ivec2 texel = ivec2(gl_GlobalInvocationID.xy);\n\
+             imageAtomicAdd(counts, texel, 1u);\n\
+             imageStore(plain, texel, vec4(1.0));\n\
+         }\n",
+    )]));
+    let t = pack.translate(&TranslateConfig::default());
+    let r = reflection(program(&t, "begin"));
+    let images: Vec<(&str, bool)> = r
+        .storage_images
+        .iter()
+        .map(|i| (i.name.as_str(), i.atomic))
+        .collect();
+    assert_eq!(images, [("counts", true), ("plain", false)]);
 }

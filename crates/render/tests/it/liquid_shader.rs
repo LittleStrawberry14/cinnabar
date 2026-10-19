@@ -267,10 +267,9 @@ fn liquid_shader_has_mutually_exclusive_water_and_depth_writing_entries() {
     assert!(SHADER.contains("fn fragment_depth("));
     assert!(SHADER.contains("@interpolate(flat) depth_write_route: u32"));
     assert!(SHADER.contains("LIQUID_DEPTH_WRITE_BIT"));
-    assert!(
-        SHADER
-            .contains("let material = positional_material(packed_material & LIQUID_MATERIAL_MASK,")
-    );
+    assert!(SHADER.contains(
+        "let selected_material_id = positional_material_id(packed_material & LIQUID_MATERIAL_MASK,"
+    ));
     assert!(SHADER.contains("return vertex_for_record(instance_index, vertex_index)"));
     assert!(SHADER.contains("out.depth_write_route = packed_material >> 31u"));
     assert!(SHADER.contains("if (in.depth_write_route != 0u)"));
@@ -294,7 +293,7 @@ fn liquid_shader_resolves_block_biome_tint_before_fragment_rasterization() {
     assert!(vertex.contains("(geometry >> 4u) & 15u"));
     assert!(vertex.contains("(geometry >> 8u) & 15u"));
     assert!(vertex.contains("out.water_tint = blended_biome_tint("));
-    assert!(vertex.contains("u32(chunk_origin.value.w),"));
+    assert!(vertex.contains("u32(decoded.chunk_origin.w),"));
     assert!(vertex.contains("vec3<f32>(block_coordinate),"));
     for forbidden in [
         "packed_biome_tint_index",

@@ -3,12 +3,12 @@
 
 use super::TransformError;
 use super::items::{arr_len, mat_cols, matching, sampler_info};
-use crate::reflection::{SAMPLER_NAME, SHADOW_SAMPLER_NAME};
+use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// Sampler name → (combined sampler type to construct, compares depth).
-pub(super) type SamplerKinds = HashMap<String, (String, bool)>;
+/// Sampler name → (combined sampler type to construct, compares depth, filtering class).
+pub(super) type SamplerKinds = HashMap<String, (String, bool, SamplerClass)>;
 
 /// What body rewriting needs to know about the stage's globals.
 pub(super) struct BodyContext<'a> {
@@ -21,14 +21,21 @@ pub(super) struct BodyContext<'a> {
 /// Shared samplers the stage ended up referencing.
 #[derive(Default)]
 pub(super) struct SamplerUse {
-    pub filtering: bool,
+    pub filtering: BTreeSet<SamplerClass>,
     pub comparison: bool,
 }
 
-/// Function parameters of combined sampler types become separate texture types.
+/// Function parameters of combined sampler types become separate texture types, read with
+/// the shared repeat/linear sampler: calls with global textures were specialized already.
+/// Other parameters named like a global sampler shadow it. `const in` loses the `const`,
+/// which naga's parser rejects in that order (SEUS Renewed); the copy is read-only anyway.
 pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec<Tok> {
     let mut out: Vec<Tok> = vec![];
     for (i, t) in header.iter().enumerate() {
+        if t.ident() == Some("const") && header.get(i + 1).is_some_and(|x| x.ident() == Some("in"))
+        {
+            continue;
+        }
         if let Some(n) = t.ident()
             && let Some((tex, shadow)) = sampler_info(n)
             && let Some(Tok {
@@ -36,23 +43,44 @@ pub(super) fn rewrite_params(header: &[Tok], samplers: &mut SamplerKinds) -> Vec
                 ..
             }) = header.get(i + 1)
         {
-            samplers.insert(pname.clone(), (n.to_string(), shadow));
+            samplers.insert(
+                pname.clone(),
+                (n.to_string(), shadow, SamplerClass::RepeatLinear),
+            );
             if out.last().is_some_and(|l| l.ident() == Some("in")) {
                 out.pop();
             }
             out.push(id(tex).at(t.line));
             continue;
         }
+        if let Some(n) = t.ident()
+            && i > 0
+            && header[i - 1]
+                .ident()
+                .is_some_and(|ty| sampler_info(ty).is_none())
+            && header
+                .get(i + 1)
+                .is_some_and(|x| x.is(",") || x.is(")") || x.is("["))
+        {
+            samplers.remove(n);
+        }
         out.push(t.clone());
     }
     out
 }
 
-/// Pairs every texture use with the shared sampler (`sampler2D(colortex0, iris_sampler)`)
-/// unless it is passed straight to a user function, and reads bool uniforms as bools.
+/// Pairs every texture use with its sampler (`sampler2D(colortex0, iris_samplerClampLinear)`)
+/// unless it is passed straight to a user function, and reads bool uniforms as bools. Locals
+/// that shadow a sampler or bool global (Complementary's `float specular`) are left alone in
+/// their block from the end of their declarator on, as GLSL scopes them: SEUS's
+/// `vec4 tex = texture2D(tex, …)` still samples the global in the initializer.
 pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut SamplerUse) -> Vec<Tok> {
     let mut out = vec![];
     let mut calls: Vec<Option<String>> = vec![];
+    // Names declared by each open block.
+    let mut scopes: Vec<Vec<&str>> = vec![vec![]];
+    // A shadowing declaration whose declarator is still open, with its paren depth.
+    let mut pending: Option<(&str, usize)> = None;
     for (i, t) in toks.iter().enumerate() {
         if t.is("(") {
             calls.push(
@@ -62,6 +90,18 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             );
         } else if t.is(")") {
             calls.pop();
+        } else if t.is("{") {
+            scopes.push(vec![]);
+        } else if t.is("}") && scopes.len() > 1 {
+            scopes.pop();
+        } else if (t.is(";") || t.is(","))
+            && let Some((name, depth)) = pending
+            && depth == calls.len()
+        {
+            pending = None;
+            if let Some(scope) = scopes.last_mut() {
+                scope.push(name);
+            }
         }
         let TokKind::Ident(n) = &t.kind else {
             out.push(t.clone());
@@ -71,8 +111,17 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             out.push(t.clone());
             continue;
         }
+        if (cx.samplers.contains_key(n) || cx.bools.contains_key(n)) && declares_local(toks, i) {
+            pending = Some((n, calls.len()));
+            out.push(t.clone());
+            continue;
+        }
+        if scopes.iter().any(|s| s.contains(&n.as_str())) {
+            out.push(t.clone());
+            continue;
+        }
         let line = t.line;
-        if let Some((ctor, shadow)) = cx.samplers.get(n) {
+        if let Some((ctor, shadow, class)) = cx.samplers.get(n) {
             let prev_ok = i > 0 && (toks[i - 1].is("(") || toks[i - 1].is(","));
             let next_ok = toks.get(i + 1).is_some_and(|x| x.is(")") || x.is(","));
             let in_user_call = calls
@@ -86,8 +135,8 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
                     used.comparison = true;
                     SHADOW_SAMPLER_NAME
                 } else {
-                    used.filtering = true;
-                    SAMPLER_NAME
+                    used.filtering.insert(*class);
+                    class.glsl_name()
                 };
                 out.extend([
                     id(ctor).at(line),
@@ -122,6 +171,16 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
         out.push(t.clone());
     }
     out
+}
+
+/// Whether the identifier at `i` is the name in a local declaration (`float specular = …`,
+/// `vec3 specular;`, `int n[2]`): a type name before it and a declarator end after it.
+fn declares_local(toks: &[Tok], i: usize) -> bool {
+    let ty = i.checked_sub(1).and_then(|j| toks[j].ident());
+    let ends = toks
+        .get(i + 1)
+        .is_some_and(|x| x.is("=") || x.is(";") || x.is(",") || x.is("["));
+    ends && ty.is_some_and(|ty| !matches!(ty, "return" | "else" | "do" | "case"))
 }
 
 /// Struct name → members as (type, name, array tokens).
@@ -183,16 +242,23 @@ mod tests {
 
     fn samplers() -> SamplerKinds {
         SamplerKinds::from([
-            ("colortex0".to_owned(), ("sampler2D".to_owned(), false)),
+            (
+                "colortex0".to_owned(),
+                ("sampler2D".to_owned(), false, SamplerClass::ClampLinear),
+            ),
             (
                 "shadowtex0".to_owned(),
-                ("sampler2DShadow".to_owned(), true),
+                (
+                    "sampler2DShadow".to_owned(),
+                    true,
+                    SamplerClass::ClampLinear,
+                ),
             ),
         ])
     }
 
     #[test]
-    fn texture_uses_pair_with_the_shared_sampler_of_their_kind() {
+    fn texture_uses_pair_with_the_shared_sampler_of_their_class() {
         let samplers = samplers();
         let cx = BodyContext {
             samplers: &samplers,
@@ -203,9 +269,13 @@ mod tests {
         let body = rewrite_body(&lex("texture(colortex0, uv).r;"), &cx, &mut used);
         assert_eq!(
             text(&body),
-            format!("texture ( sampler2D ( colortex0 , {SAMPLER_NAME} ) , uv ) . r ;")
+            format!(
+                "texture ( sampler2D ( colortex0 , {} ) , uv ) . r ;",
+                SamplerClass::ClampLinear.glsl_name()
+            )
         );
-        assert!(used.filtering && !used.comparison);
+        assert_eq!(used.filtering, BTreeSet::from([SamplerClass::ClampLinear]));
+        assert!(!used.comparison);
 
         let body = rewrite_body(&lex("texture(shadowtex0, p);"), &cx, &mut used);
         assert_eq!(
@@ -238,12 +308,15 @@ mod tests {
             text(&body),
             "blur ( colortex0 , uv ) ; if ( ( isDay != 0 ) && bvec2 ( mask ) . x ) { }"
         );
-        assert!(!used.filtering);
+        assert!(used.filtering.is_empty());
 
         let mut params = SamplerKinds::new();
         let header = rewrite_params(&lex("vec4 blur(in sampler2D tex, vec2 uv)"), &mut params);
         assert_eq!(text(&header), "vec4 blur ( texture2D tex , vec2 uv )");
-        assert_eq!(params["tex"], ("sampler2D".to_owned(), false));
+        assert_eq!(
+            params["tex"],
+            ("sampler2D".to_owned(), false, SamplerClass::RepeatLinear)
+        );
     }
 
     #[test]

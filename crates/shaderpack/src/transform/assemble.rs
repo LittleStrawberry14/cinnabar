@@ -2,8 +2,8 @@
 
 use super::StageDraft;
 use crate::reflection::{
-    LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, SAMPLER_BINDING, SAMPLER_NAME,
-    SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, TEXTURE_GROUP, UNIFORM_GROUP,
+    LOOSE_UNIFORM_BINDING, LOOSE_UNIFORM_BLOCK, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME,
+    TEXTURE_GROUP, UNIFORM_GROUP,
 };
 use crate::token::{Emitter, Tok};
 
@@ -51,9 +51,11 @@ pub(crate) fn assemble(draft: &StageDraft, ubo: &[UboMember]) -> (String, Vec<u3
         e.raw("};\n");
     }
     e.tokens(&draft.resources);
-    if draft.samplers.filtering {
+    for class in &draft.samplers.filtering {
         e.raw(&format!(
-            "layout(set = {TEXTURE_GROUP}, binding = {SAMPLER_BINDING}) uniform sampler {SAMPLER_NAME};\n"
+            "layout(set = {TEXTURE_GROUP}, binding = {}) uniform sampler {};\n",
+            class.binding(),
+            class.glsl_name()
         ));
     }
     if draft.samplers.comparison {
@@ -97,8 +99,10 @@ impl UboMember {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reflection::SamplerClass;
     use crate::token::lex;
     use crate::transform::body::SamplerUse;
+    use std::collections::BTreeSet;
 
     fn draft(ubo: &[(&str, &str)], body: &str, samplers: SamplerUse) -> StageDraft {
         StageDraft {
@@ -134,7 +138,7 @@ mod tests {
             ],
             "void main() {}",
             SamplerUse {
-                filtering: true,
+                filtering: BTreeSet::from([SamplerClass::RepeatLinear, SamplerClass::ClampNearest]),
                 comparison: false,
             },
         );
@@ -146,7 +150,15 @@ mod tests {
         assert!(glsl.contains(&format!(
             "uniform {LOOSE_UNIFORM_BLOCK} {{\nfloat frameTimeCounter;\nfloat viewWidth;\n}};"
         )));
-        assert!(glsl.contains(&format!("uniform sampler {SAMPLER_NAME};")));
+        // One sampler per class the stage reads, at the class's binding.
+        for class in [SamplerClass::RepeatLinear, SamplerClass::ClampNearest] {
+            assert!(glsl.contains(&format!(
+                "layout(set = {TEXTURE_GROUP}, binding = {}) uniform sampler {};",
+                class.binding(),
+                class.glsl_name()
+            )));
+        }
+        assert!(!glsl.contains(SamplerClass::ClampLinear.glsl_name()));
         assert!(!glsl.contains(SHADOW_SAMPLER_NAME));
         assert_eq!(origins.len(), glsl.lines().count());
 

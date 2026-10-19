@@ -8,6 +8,7 @@ use bevy::prelude::IntoSystemSet;
 mod categories;
 pub(crate) use categories::draw_categories;
 mod health;
+mod memory;
 pub(crate) use health::requested as query_health_requested;
 #[cfg(target_os = "macos")]
 mod metal_frame;
@@ -87,7 +88,7 @@ impl SectionSpan<'_> {
     pub(crate) fn end(&self, _: &mut wgpu::CommandEncoder) {}
 }
 use render_scene::GpuFrameTimes;
-use render_scene::gpu_times::decode_spans;
+use render_scene::gpu_times::{SpanValidity, decode_spans, span_validity, ticks_to_duration};
 
 /// Node-level spans per frame, ahead of the draw pool so draws can never starve them.
 const PASS_SPANS: u32 = 64;
@@ -123,6 +124,7 @@ impl Plugin for GpuTimingPlugin {
             return;
         };
         crate::device_poll::install(render_app);
+        memory::install(render_app);
         #[cfg(target_os = "macos")]
         metal_frame::install(render_app);
         if overdraw::requested() {
@@ -332,6 +334,8 @@ struct ReadbackSlot {
     passes: u32,
     draws: u32,
     stages: [RuntimeStage; SLOT_SPANS as usize],
+    /// [`GpuTimestamps::frames`] when the slot was claimed, to pair consecutive frames.
+    frame: u64,
 }
 
 #[derive(Resource)]
@@ -347,6 +351,10 @@ pub(crate) struct GpuTimestamps {
     pass_detail: bool,
     frame: FrameSpans,
     health: Option<health::QueryHealth>,
+    /// Frames begun so far.
+    frames: u64,
+    /// The last decoded frame's number and final timestamp, for [`RuntimeStage::GpuIdle`].
+    previous_end: Option<(u64, u64)>,
 }
 
 impl GpuTimestamps {
@@ -386,6 +394,7 @@ impl GpuTimestamps {
                 passes: 0,
                 draws: 0,
                 stages: [RuntimeStage::GpuFrame; SLOT_SPANS as usize],
+                frame: 0,
             }),
             ring: ReadbackRing::default(),
             period_ns: queue.get_timestamp_period(),
@@ -403,6 +412,8 @@ impl GpuTimestamps {
                 recorded: AtomicU64::new(NOT_RECORDED),
             },
             health: health::QueryHealth::requested("pass_queries"),
+            frames: 0,
+            previous_end: None,
         })
     }
 
@@ -483,12 +494,18 @@ impl GpuTimestamps {
                     };
                     let passes = (0..slot.passes).map(|span| span * 2);
                     let draws = (0..slot.draws).map(|span| (PASS_SPANS + span) * 2);
-                    let frame = decode_spans(
+                    let mut bounds: Option<(u64, u64)> = None;
+                    let mut frame = decode_spans(
                         passes.chain(draws).map(|query| {
                             let stage = slot.stages[query as usize / 2];
                             let (begin, end) = (tick(query), tick(query + 1));
                             if let Some(health) = &mut self.health {
                                 health.sample(stage, begin, end);
+                            }
+                            if span_validity(begin, end) == SpanValidity::Valid {
+                                bounds = Some(bounds.map_or((begin, end), |(first, last)| {
+                                    (first.min(begin), last.max(end))
+                                }));
                             }
                             (stage, begin, end)
                         }),
@@ -497,6 +514,13 @@ impl GpuTimestamps {
                     );
                     drop(bytes);
                     slot.buffer.unmap();
+                    if let (Some((first, _)), Some((previous, end))) = (bounds, self.previous_end)
+                        && previous + 1 == slot.frame
+                        && first >= end
+                    {
+                        frame = frame.with_idle(ticks_to_duration(first - end, self.period_ns));
+                    }
+                    self.previous_end = bounds.map(|(_, last)| (slot.frame, last));
                     #[cfg(feature = "tracy")]
                     tracy::record(&frame);
                     sink(&frame);
@@ -511,6 +535,10 @@ impl GpuTimestamps {
             self.ring.release(index);
         }
         let slot = self.ring.acquire().map_or(NO_SLOT, |slot| slot as u32);
+        if let Some(claimed) = self.slots.get_mut(slot as usize) {
+            claimed.frame = self.frames;
+        }
+        self.frames += 1;
         if let Some(health) = &mut self.health {
             health.frame(slot == NO_SLOT);
         }

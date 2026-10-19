@@ -24,6 +24,15 @@ Headless sessions render through a hidden window. They can verify pixels and
 rendering work, but displayed-frame pacing, OS focus, and occlusion gates require
 appropriate presentation evidence and remain incomplete without it.
 
+A signed-in capture account still receives Xbox join requests and other toasts, which `F1` does
+not hide. `--hide-toasts` (`developer-control` builds only) stops drawing toasts for the session
+so they cannot land in a comparison capture; they still queue and expire as usual.
+
+To compare frames against another renderer at a known time of day, launch a `developer-control`
+build with `--fixed-time <TICKS>` (0 = sunrise, 6000 = noon, 12000 = sunset, 18000 = midnight).
+The sky and lighting then draw at that time for the whole session, ahead of any mod's time
+changer; the server clock, and so gameplay, keep running. Release builds reject the flag.
+
 Server compatibility tests can establish connection, transfer, or server-authority
 behavior. They do not by themselves establish version-matched Bedrock parity.
 Choose a reproducible scenario and distinguish server behavior from client output.
@@ -244,6 +253,9 @@ draws add `gpu_terrain_solid`, `gpu_terrain_cutout`, `gpu_terrain_model`,
 commands expose no in-pass spans), `gpu_terrain_transparent`, `gpu_actors`,
 `gpu_particles`, `gpu_sky`, `gpu_panorama` and `gpu_mod_primitives`. Personal-mod post passes
 add `gpu_mod_pass_0`–`gpu_mod_pass_7` by execution slot. F3 shows the latest GPU frame.
+`gpu_idle` is the GPU gap from the previous timed frame's last timestamp to this frame's
+first, reported only when both consecutive frames were timed; untimed work between them,
+such as uploads and presentation, counts as idle.
 
 `CINNABAR_GPU_CATEGORIES=1` splits the main opaque phase into category passes
 and disables in-pass spans to avoid double counting; separate late GPU-cull draws
@@ -274,6 +286,11 @@ replay policy: retain identical revisions and fully redraw newer publications.
 Both modes retain unchanged viewport uniforms. Use this same-binary control
 for matched comparisons, with equal warm-up and alternating run order. The switch
 is sampled at startup and has no effect without UI diagnostics.
+
+`CINNABAR_GPU_MEMORY_REPORT=<seconds>` logs the device allocator's allocated and reserved
+totals at that interval (target `cinnabar::gpu_memory`), its largest allocations summed by
+label, and the memory blocks with the most reserved-but-unused room with what holds each.
+Backends without an allocator report (Metal, GL) log nothing.
 
 After the startup visibility probe stops, ordinary world-publication logs keep
 current stream and upload counters but mark the inactive visibility witness as

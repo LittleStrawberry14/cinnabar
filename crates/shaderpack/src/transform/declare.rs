@@ -7,11 +7,11 @@ use super::items::{
     Decl, Item, arr_len, is_image, is_integer, is_opaque, layout_key, loc_size, mat_cols,
     parse_decl, sampler_info, split_items, strip_layout_keys,
 };
-use super::{ProgramInterface, TransformError, UboMember};
+use super::{ProgramInterface, ResourceNames, TransformError, UboMember};
 use crate::programs::StageKind;
 use crate::reflection::{
-    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, TEXTURE_GROUP,
-    UNIFORM_GROUP, VertexAttribute,
+    FIRST_OTHER_ATTRIBUTE_LOCATION, IMAGE_GROUP, STORAGE_BUFFER_GROUP, SamplerClass, StoredNumbers,
+    TEXTURE_GROUP, TextureDimension, UNIFORM_GROUP, VertexAttribute,
 };
 use crate::token::{Tok, id, lex, p};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -44,10 +44,144 @@ pub(super) struct Collected {
     pub frag_outputs: Vec<(u32, String)>,
     /// Pack-visible resource names as (group, binding, name).
     pub resource_names: Vec<(u32, u32, String)>,
+    /// The next location an `Other` vertex input would take.
+    pub next_attribute: u32,
+    /// A position or lightmap input was declared, so the raw position parts must be too.
+    pub reads_packed_parts: bool,
 }
 
 fn first_line(toks: &[Tok]) -> u32 {
     toks.iter().map(|t| t.line).find(|l| *l != 0).unwrap_or(0)
+}
+
+/// Name of the raw packed-position input ([`VertexAttribute::PackedPosition`]).
+const PACKED_POSITION_INPUT: &str = "iris_PackedPosition";
+/// Name of the per-draw origin input ([`VertexAttribute::DrawOrigin`]).
+const DRAW_ORIGIN_INPUT: &str = "iris_DrawOrigin";
+
+/// The expression a position input of type `ty` reads: the float position `stored` plus the
+/// packed position scaled and offset by the draw origin. A vertex stream supplies one of the
+/// two and zero for the other (and for the origin), so either sum is exact.
+fn position_unpack(stored: &str, ty: &str) -> String {
+    let position = format!(
+        "({stored} + {DRAW_ORIGIN_INPUT}.xyz + vec3({PACKED_POSITION_INPUT}.xyz) * {DRAW_ORIGIN_INPUT}.w)"
+    );
+    match ty {
+        "vec4" => format!("vec4({position}, 1.0)"),
+        "vec2" => format!("{position}.xy"),
+        "float" => format!("{position}.x"),
+        _ => position,
+    }
+}
+
+/// The lightmap coordinates a packed vertex stores in the `w` of its packed position: block
+/// light in the low byte, sky light in the high byte, as Java's level × 16. (Generated GLSL
+/// keeps to the operators `token::lex` knows.)
+const PACKED_LIGHTMAP: &str = "vec2(float(iris_PackedPosition.w - iris_PackedPosition.w / 256u * 256u), float(iris_PackedPosition.w / 256u))";
+
+/// Whether input `attribute` reads the raw position parts ([`position_parts`]).
+fn reads_packed_parts(attribute: &VertexAttribute) -> bool {
+    matches!(
+        attribute,
+        VertexAttribute::Position | VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
+    )
+}
+
+/// An input whose declared type differs from what the vertex stream stores for its
+/// attribute: positions, which are unpacked ([`position_unpack`]), lightmap coordinates,
+/// stored as floats or in the packed position ([`PACKED_LIGHTMAP`]), and attributes stored
+/// as the other kind of number ([`VertexAttribute::stored_numbers`]). Returns the name and
+/// type of the input the stage reads instead, and the expression converting that into the
+/// declared type `ty`.
+fn converted_input(
+    attribute: &VertexAttribute,
+    name: &str,
+    ty: &str,
+    arr: &[Tok],
+) -> Option<(String, String, String)> {
+    if !arr.is_empty() {
+        return None;
+    }
+    if *attribute == VertexAttribute::Position {
+        if ty != "float" && !ty.starts_with("vec") {
+            return None;
+        }
+        let stored = format!("iris_float_{name}");
+        let convert = position_unpack(&stored, ty);
+        return Some((stored, "vec3".to_string(), convert));
+    }
+    let size = ty
+        .trim_start_matches(['i', 'u'])
+        .trim_start_matches("vec")
+        .parse::<u8>()
+        .ok();
+    if matches!(
+        attribute,
+        VertexAttribute::Lightmap | VertexAttribute::MultiTexCoord2
+    ) {
+        if !is_integer(ty) && ty != "float" && !ty.starts_with("vec") {
+            return None;
+        }
+        // A vertex stream supplies either float coordinates or packed ones and zero for the
+        // other, so the sum is exact; integers round it back.
+        let stored = format!("iris_float_{name}");
+        let (read, sum) = match size {
+            None => (
+                "float".to_string(),
+                format!("({stored} + {PACKED_LIGHTMAP}.x)"),
+            ),
+            Some(2) => (
+                "vec2".to_string(),
+                format!("({stored} + {PACKED_LIGHTMAP})"),
+            ),
+            Some(3) => (
+                "vec3".to_string(),
+                format!("({stored} + vec3({PACKED_LIGHTMAP}, 0.0))"),
+            ),
+            Some(_) => (
+                "vec4".to_string(),
+                format!("({stored} + vec4({PACKED_LIGHTMAP}, 0.0, 0.0))"),
+            ),
+        };
+        let convert = if is_integer(ty) {
+            format!("{ty}(round({sum}))")
+        } else {
+            sum
+        };
+        return Some((stored, read, convert));
+    }
+    match attribute.stored_numbers()? {
+        StoredNumbers::Int if ty == "float" || ty.starts_with("vec") => {
+            let read = size.map_or("int".to_string(), |size| format!("ivec{size}"));
+            let stored = format!("iris_int_{name}");
+            let convert = format!("{ty}({stored})");
+            Some((stored, read, convert))
+        }
+        _ => None,
+    }
+}
+
+/// Declares the raw position parts at the first locations the stage's inputs leave free,
+/// once a position or lightmap input reads them.
+pub(super) fn position_parts(io: &mut String, c: &mut Collected) {
+    if !c.reads_packed_parts {
+        return;
+    }
+    let others =
+        FIRST_OTHER_ATTRIBUTE_LOCATION..c.next_attribute.max(FIRST_OTHER_ATTRIBUTE_LOCATION);
+    let mut free = (0..).filter(|location| {
+        !others.contains(location) && c.vertex_inputs.iter().all(|(used, _)| used != location)
+    });
+    let mut parts = vec![];
+    for (name, ty) in [
+        (PACKED_POSITION_INPUT, "uvec4"),
+        (DRAW_ORIGIN_INPUT, "vec4"),
+    ] {
+        let location = free.next().expect("locations are unbounded");
+        io.push_str(&format!("layout(location = {location}) in {ty} {name};\n"));
+        parts.push((location, name.to_string()));
+    }
+    c.vertex_inputs.extend(parts);
 }
 
 /// Collects declarations of `items` for `stage`.
@@ -55,7 +189,7 @@ pub(super) fn collect(
     items: Vec<Item>,
     stage: StageKind,
     iface: &mut ProgramInterface,
-    image_formats: &HashMap<String, String>,
+    names: &ResourceNames<'_>,
 ) -> Result<Collected, TransformError> {
     let mut c = Collected::default();
     let mut structs: Structs = HashMap::new();
@@ -105,6 +239,17 @@ pub(super) fn collect(
                 block(&mut c, &d, bname, members, inst, iface);
                 continue;
             }
+            let between_stages = (stage == StageKind::Vertex && d.has("out"))
+                || (stage == StageKind::Fragment && d.has("in"));
+            if between_stages && !inst.iter().any(|t| t.is("[")) {
+                let dir = if stage == StageKind::Vertex {
+                    "out"
+                } else {
+                    "in"
+                };
+                interface_block(&mut c, iface, &structs, &d, bname, members, inst, dir, line)?;
+                continue;
+            }
             if d.has("in") || d.has("out") {
                 return Err(TransformError::new(
                     format!("interface block `{bname}` is not supported"),
@@ -115,7 +260,7 @@ pub(super) fn collect(
             continue;
         }
         if d.has("uniform") {
-            uniforms(&mut c, &d, iface, image_formats, line)?;
+            uniforms(&mut c, &d, iface, names, line)?;
             continue;
         }
         let is_in =
@@ -123,14 +268,29 @@ pub(super) fn collect(
         let is_out = d.has("out") || (d.has("varying") && stage == StageKind::Vertex);
         if stage == StageKind::Vertex && is_in && !d.has("varying") {
             for (name, arr, _) in &d.decls {
-                let loc = VertexAttribute::from_glsl_name(name)
-                    .location()
-                    .unwrap_or_else(|| {
-                        let l = next_attr;
-                        next_attr += loc_size(&d.ty, arr_len(arr).unwrap_or(1));
-                        l
-                    });
+                let attribute = VertexAttribute::from_glsl_name(name);
+                let loc = attribute.location().unwrap_or_else(|| {
+                    let l = next_attr;
+                    next_attr += loc_size(&d.ty, arr_len(arr).unwrap_or(1));
+                    l
+                });
                 c.vertex_inputs.push((loc, name.clone()));
+                if let Some((stored, read, convert)) = converted_input(&attribute, name, &d.ty, arr)
+                {
+                    c.io.extend(
+                        lex(&format!("layout(location = {loc}) in {read} {stored};"))
+                            .into_iter()
+                            .map(|t| t.at(line)),
+                    );
+                    c.split_globals.extend(
+                        lex(&format!("{} {name};", d.ty))
+                            .into_iter()
+                            .map(|t| t.at(line)),
+                    );
+                    c.before_main.push(format!("{name} = {convert};"));
+                    c.reads_packed_parts |= reads_packed_parts(&attribute);
+                    continue;
+                }
                 c.io.extend(
                     lex(&format!("layout(location = {loc}) in {} {name}", d.ty))
                         .into_iter()
@@ -200,6 +360,7 @@ pub(super) fn collect(
         }
         c.body.push(Item::Decl(d, toks));
     }
+    c.next_attribute = next_attr;
     Ok(c)
 }
 
@@ -236,7 +397,7 @@ fn block(
     c.resources.extend([id("layout"), p("(")]);
     c.resources.extend(lay);
     c.resources.push(p(")"));
-    for q in &d.quals {
+    for q in d.quals.iter().filter(|q| supported_qualifier(q)) {
         c.resources.push(id(q));
     }
     c.resources.extend([id(bname), p("{")]);
@@ -246,11 +407,52 @@ fn block(
     c.resources.push(p(";"));
 }
 
+/// Whether naga's parser takes a resource qualifier. It has no `coherent` or `volatile`;
+/// without them a store is still visible after the barriers packs pair them with.
+fn supported_qualifier(q: &str) -> bool {
+    !matches!(q, "coherent" | "volatile")
+}
+
+/// Whether `ty` is `bool` or a `bvecN`.
+fn is_bool(ty: &str) -> bool {
+    ty == "bool" || ty.starts_with("bvec")
+}
+
+/// The integer type storing a bool type (`int`, `ivecN`).
+fn integer_bool(ty: &str) -> String {
+    if ty == "bool" {
+        "int".to_owned()
+    } else {
+        format!("i{}", &ty[1..])
+    }
+}
+
+/// Declares built-in vertex input `name` of type `ty` in `io` at its fixed attribute
+/// location (read converted, as declared inputs are) and records it in `c`; names without a
+/// fixed location are skipped.
+pub(super) fn vertex_input(io: &mut String, c: &mut Collected, name: &str, ty: &str) {
+    let attribute = VertexAttribute::from_glsl_name(name);
+    let Some(loc) = attribute.location() else {
+        return;
+    };
+    c.vertex_inputs.push((loc, name.to_string()));
+    match converted_input(&attribute, name, ty, &[]) {
+        Some((stored, read, convert)) => {
+            io.push_str(&format!(
+                "layout(location = {loc}) in {read} {stored};\n{ty} {name};\n"
+            ));
+            c.before_main.push(format!("{name} = {convert};"));
+            c.reads_packed_parts |= reads_packed_parts(&attribute);
+        }
+        None => io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n")),
+    }
+}
+
 fn uniforms(
     c: &mut Collected,
     d: &Decl,
     iface: &mut ProgramInterface,
-    image_formats: &HashMap<String, String>,
+    names: &ResourceNames<'_>,
     line: u32,
 ) -> Result<(), TransformError> {
     for (name, arr, _) in &d.decls {
@@ -258,7 +460,15 @@ fn uniforms(
             if let Some((tex_ty, shadow)) = sampler_info(&d.ty) {
                 let b = iface.texture_binding(name);
                 c.resource_names.push((TEXTURE_GROUP, b, name.clone()));
-                c.samplers.insert(name.clone(), (d.ty.clone(), shadow));
+                let classes = names.sampler_classes;
+                let shaped = (name.clone(), Some(texture_dimension(tex_ty)));
+                let class = classes
+                    .get(&shaped)
+                    .or_else(|| classes.get(&(name.clone(), None)))
+                    .copied()
+                    .unwrap_or_else(|| SamplerClass::for_name(name));
+                c.samplers
+                    .insert(name.clone(), (d.ty.clone(), shadow, class));
                 c.resources.extend(
                     lex(&format!(
                         "layout(set = {TEXTURE_GROUP}, binding = {b}) uniform {tex_ty} {name}"
@@ -275,7 +485,7 @@ fn uniforms(
                 if lay.is_empty() {
                     // OpenGL allows format-less write-only images; WebGPU needs the format,
                     // which Iris knows from `image.<name>` in shaders.properties.
-                    if let Some(f) = image_formats.get(name) {
+                    if let Some(f) = names.image_formats.get(name) {
                         lay.push(id(f));
                     }
                 }
@@ -286,7 +496,7 @@ fn uniforms(
                 c.resources.extend([id("layout").at(line), p("(")]);
                 c.resources.extend(lay);
                 c.resources.push(p(")"));
-                for q in &d.quals {
+                for q in d.quals.iter().filter(|q| supported_qualifier(q)) {
                     c.resources.push(id(q));
                 }
                 c.resources.extend([id(&d.ty), id(name)]);
@@ -300,16 +510,11 @@ fn uniforms(
             }
             continue;
         }
-        let ty = match d.ty.as_str() {
-            "bool" => {
-                c.bools.insert(name.clone(), "bool".into());
-                "int".to_string()
-            }
-            b if b.starts_with("bvec") => {
-                c.bools.insert(name.clone(), b.to_string());
-                format!("i{}", &b[1..])
-            }
-            t => t.to_string(),
+        let ty = if is_bool(&d.ty) {
+            c.bools.insert(name.clone(), d.ty.clone());
+            integer_bool(&d.ty)
+        } else {
+            d.ty.clone()
         };
         let mut toks = vec![id(&ty).at(line)];
         toks.extend(d.ty_arr.iter().cloned());
@@ -319,6 +524,21 @@ fn uniforms(
         c.ubo.push(UboMember::new(name, toks));
     }
     Ok(())
+}
+
+/// Shape of a separate texture type (`texture3D`, `utexture2DArray` …).
+fn texture_dimension(tex_ty: &str) -> TextureDimension {
+    let shape = tex_ty
+        .trim_start_matches(['i', 'u'])
+        .trim_start_matches("texture");
+    match shape {
+        "1D" | "1DArray" => TextureDimension::D1,
+        "2DArray" => TextureDimension::D2Array,
+        "3D" => TextureDimension::D3,
+        "Cube" => TextureDimension::Cube,
+        "CubeArray" => TextureDimension::CubeArray,
+        _ => TextureDimension::D2,
+    }
 }
 
 /// Emits a vertex output or fragment input. Matrices, arrays and structs are not legal
@@ -347,6 +567,21 @@ fn varying(
         }
         q.join(" ")
     };
+    if dir == "out" {
+        iface.write(name);
+    } else if !iface.written(name) {
+        // No vertex output feeds this input: GLSL links it when the fragment never reads
+        // it, WebGPU rejects the pipeline. It becomes a zeroed private global.
+        let mut leaves = vec![];
+        flatten_leaves(name.to_string(), ty, arr, structs, line, &mut leaves)?;
+        c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
+        c.split_globals.extend_from_slice(arr);
+        c.split_globals.push(p(";"));
+        for (path, leaf_ty) in leaves {
+            c.before_main.push(format!("{path} = {leaf_ty}(0);"));
+        }
+        return Ok(());
+    }
     if arr.is_empty() && mat_cols(ty).is_none() && !structs.contains_key(ty) {
         let loc = iface.varying(name, loc_size(ty, 1));
         let q = if dir == "in" {
@@ -382,6 +617,97 @@ fn varying(
             c.after_main.push(format!("{vname} = {path};"));
         } else {
             c.before_main.push(format!("{path} = {vname};"));
+        }
+    }
+    Ok(())
+}
+
+/// Declares an `in`/`out` interface block between the vertex and fragment stages. GLSL
+/// matches blocks by block and member names whatever their instance names, so each member
+/// is a varying keyed `Block.member`; a named instance (`out DATA { … } data_out;`) is a
+/// private global of a struct with the block's members.
+#[allow(clippy::too_many_arguments)]
+fn interface_block(
+    c: &mut Collected,
+    iface: &mut ProgramInterface,
+    structs: &Structs,
+    d: &Decl,
+    bname: &str,
+    members: &[Tok],
+    inst: &[Tok],
+    dir: &str,
+    line: u32,
+) -> Result<(), TransformError> {
+    let mut fields = vec![];
+    for m in split_items(members) {
+        if let Some(md) = parse_decl(&m) {
+            for (name, arr, _) in md.decls {
+                let mut a = md.ty_arr.clone();
+                a.extend(arr);
+                fields.push((md.quals.clone(), md.ty.clone(), name, a));
+            }
+        }
+    }
+    let instance = inst.iter().find_map(|t| t.ident());
+    if let Some(instance) = instance {
+        let sname = format!("iris_block_{bname}");
+        c.hoisted
+            .extend([id("struct").at(line), id(&sname).at(line), p("{").at(line)]);
+        for (_, ty, name, arr) in &fields {
+            c.hoisted.extend([id(ty).at(line), id(name).at(line)]);
+            c.hoisted.extend(arr.iter().cloned());
+            c.hoisted.push(p(";").at(line));
+        }
+        c.hoisted.extend([p("}").at(line), p(";").at(line)]);
+        c.split_globals
+            .extend([id(&sname).at(line), id(instance).at(line), p(";").at(line)]);
+    }
+    for (quals, ty, name, arr) in &fields {
+        if instance.is_none() {
+            c.split_globals.extend([id(ty).at(line), id(name).at(line)]);
+            c.split_globals.extend(arr.iter().cloned());
+            c.split_globals.push(p(";").at(line));
+        }
+        let key = format!("{bname}.{name}");
+        let path = instance.map_or_else(|| name.clone(), |i| format!("{i}.{name}"));
+        let mut leaves = vec![];
+        flatten_leaves(path, ty, arr, structs, line, &mut leaves)?;
+        if dir == "out" {
+            iface.write(&key);
+        } else if !iface.written(&key) {
+            for (path, leaf_ty) in leaves {
+                c.before_main.push(format!("{path} = {leaf_ty}(0);"));
+            }
+            continue;
+        }
+        let interp: Vec<&str> = d
+            .quals
+            .iter()
+            .chain(quals)
+            .map(String::as_str)
+            .filter(|q| matches!(*q, "flat" | "smooth" | "noperspective" | "centroid"))
+            .collect();
+        let base = iface.varying(&key, leaves.len() as u32);
+        for (k, (path, leaf_ty)) in leaves.iter().enumerate() {
+            let vname = format!("iris_b_{bname}_{name}_{k}");
+            let mut q = interp.clone();
+            if is_integer(leaf_ty) && !q.contains(&"flat") {
+                q.push("flat");
+            }
+            c.io.extend(
+                lex(&format!(
+                    "layout(location = {}) {} {dir} {leaf_ty} {vname};",
+                    base + k as u32,
+                    q.join(" ")
+                ))
+                .into_iter()
+                .map(|t| t.at(line)),
+            );
+            if dir == "out" {
+                c.after_main.push(format!("{vname} = {path};"));
+            } else {
+                c.before_main.push(format!("{path} = {vname};"));
+            }
         }
     }
     Ok(())
@@ -433,7 +759,18 @@ fn fragment_output(c: &mut Collected, name: &str, ty: &str, loc: u32, line: u32)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reflection::FIRST_TEXTURE_BINDING;
+    use crate::reflection::{FIRST_TEXTURE_BINDING, SamplerClass};
+    use crate::transform::{ResourceNames, SamplerClasses};
+
+    /// Resource names with the given image formats and no custom sampler classes.
+    fn names(image_formats: &HashMap<String, String>) -> ResourceNames<'_> {
+        static NO_CLASSES: std::sync::LazyLock<SamplerClasses> =
+            std::sync::LazyLock::new(SamplerClasses::new);
+        ResourceNames {
+            image_formats,
+            sampler_classes: &NO_CLASSES,
+        }
+    }
 
     fn items(src: &str) -> Vec<Item> {
         split_items(&lex(src))
@@ -469,15 +806,16 @@ void main() {}";
     fn stages_declare_resources_and_varyings_at_shared_numbers() {
         let mut iface = ProgramInterface::default();
         let formats = HashMap::new();
-        let vertex = collect(items(VERTEX), StageKind::Vertex, &mut iface, &formats).unwrap();
-        let fragment = collect(items(FRAGMENT), StageKind::Fragment, &mut iface, &formats).unwrap();
+        let names = names(&formats);
+        let vertex = collect(items(VERTEX), StageKind::Vertex, &mut iface, &names).unwrap();
+        let fragment = collect(items(FRAGMENT), StageKind::Fragment, &mut iface, &names).unwrap();
 
         let texture = (TEXTURE_GROUP, FIRST_TEXTURE_BINDING, "colortex0".to_owned());
         assert_eq!(vertex.resource_names, [texture.clone()]);
         assert_eq!(fragment.resource_names, [texture]);
         assert_eq!(
             fragment.samplers["colortex0"],
-            ("sampler2D".to_owned(), false)
+            ("sampler2D".to_owned(), false, SamplerClass::ClampLinear)
         );
 
         let ubo: Vec<_> = vertex.ubo.iter().map(|m| m.name.as_str()).collect();
@@ -516,7 +854,7 @@ void main() {}";
             items(FRAGMENT),
             StageKind::Fragment,
             &mut iface,
-            &HashMap::new(),
+            &names(&HashMap::new()),
         )
         .unwrap();
         assert_eq!(fragment.frag_outputs, [(0, "iris_out_color".to_owned())]);
@@ -535,7 +873,7 @@ void main() {}";
             items("uniform writeonly image2D colorimg0; void main() {}"),
             StageKind::Compute,
             &mut iface,
-            &formats,
+            &names(&formats),
         )
         .unwrap();
         assert_eq!(

@@ -16,8 +16,8 @@ mod specialize;
 use crate::preprocess::Preprocessed;
 use crate::programs::StageKind;
 use crate::reflection::{
-    LEGACY_UNIFORMS, SAMPLER_BINDING, SAMPLER_NAME, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME,
-    TEXTURE_GROUP, VertexAttribute,
+    LEGACY_UNIFORMS, SHADOW_SAMPLER_BINDING, SHADOW_SAMPLER_NAME, SamplerClass, TEXTURE_GROUP,
+    TextureDimension,
 };
 use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
@@ -42,6 +42,13 @@ impl TransformError {
     }
 }
 
+/// Converts the vertex stage's OpenGL clip position to wgpu's: depth `[-w, w]` becomes
+/// `[0, w]`, so window depth keeps GL's `(z + 1) / 2`, and Y flips, so rows are stored
+/// bottom-up exactly as GL stores them. Texture coordinates, `gl_FragCoord` and
+/// `texelFetch` then agree with the pack's GL assumptions; hosts flip Y when copying
+/// images into or out of pack buffers, and triangle winding is mirrored.
+const GL_CLIP_TO_WGPU: &str = "gl_Position = vec4(gl_Position.x, -gl_Position.y, (gl_Position.z + gl_Position.w) * 0.5, gl_Position.w);";
+
 /// One translated stage, waiting for the program's merged uniform block.
 pub(crate) struct StageDraft {
     header: String,
@@ -61,13 +68,23 @@ pub(crate) struct StageDraft {
     pub resource_names: Vec<(u32, u32, String)>,
 }
 
-/// Transforms one preprocessed stage. `image_formats` maps image names to GLSL format
-/// qualifiers from `image.<name>` properties.
+/// Sampler name and shape (`None` for any shape) → class, where the program's custom
+/// textures and images override [`SamplerClass::for_name`].
+pub(crate) type SamplerClasses = HashMap<(String, Option<TextureDimension>), SamplerClass>;
+
+/// Pack-level facts about resource names, from `shaders.properties`.
+pub(crate) struct ResourceNames<'a> {
+    /// Image name → GLSL format qualifier from `image.<name>`.
+    pub image_formats: &'a HashMap<String, String>,
+    pub sampler_classes: &'a SamplerClasses,
+}
+
+/// Transforms one preprocessed stage.
 pub(crate) fn transform(
     pp: &Preprocessed,
     stage: StageKind,
     iface: &mut ProgramInterface,
-    image_formats: &HashMap<String, String>,
+    names: &ResourceNames<'_>,
 ) -> Result<StageDraft, TransformError> {
     let lg = legacy::rewrite(&pp.tokens, stage, pp.version)?;
     let mut items: Vec<Item> = vec![];
@@ -94,7 +111,10 @@ pub(crate) fn transform(
         }
     }
     let items = specialize::specialize_opaque_params(items);
-    let mut c = declare::collect(items, stage, iface, image_formats)?;
+    let mut c = declare::collect(items, stage, iface, names)?;
+    if stage == StageKind::Vertex {
+        c.after_main.push(GL_CLIP_TO_WGPU.to_string());
+    }
 
     let mut ubo: Vec<UboMember> = LEGACY_UNIFORMS
         .iter()
@@ -108,7 +128,7 @@ pub(crate) fn transform(
         // Inputs Iris supplies without the pack declaring them.
         for (n, ty) in [("mc_chunkFade", "float"), ("dhMaterialId", "int")] {
             if !c.declared.contains(n) && lg.toks.iter().any(|t| t.ident() == Some(n)) {
-                vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c, n, ty);
             }
         }
         for (g, n, ty) in [
@@ -121,9 +141,10 @@ pub(crate) fn transform(
             ("gl_MultiTexCoord3", "iris_MultiTexCoord3", "vec4"),
         ] {
             if lg.builtins.contains(g) {
-                vertex_input(&mut builtin_io, &mut c.vertex_inputs, n, ty);
+                declare::vertex_input(&mut builtin_io, &mut c, n, ty);
             }
         }
+        declare::position_parts(&mut builtin_io, &mut c);
     }
     let varying_dir = match stage {
         StageKind::Vertex => Some("out"),
@@ -134,6 +155,13 @@ pub(crate) fn transform(
         let front = (stage == StageKind::Vertex && lg.builtins.contains("gl_FrontColor"))
             || (stage == StageKind::Fragment && lg.builtins.contains("gl_Color"));
         let mut varying = |name: &str, ty: &str| {
+            if dir == "out" {
+                iface.write(name);
+            } else if !iface.written(name) {
+                builtin_io.push_str(&format!("{ty} {name};\n"));
+                c.before_main.push(format!("{name} = {ty}(0);"));
+                return;
+            }
             let loc = iface.varying(name, 1);
             builtin_io.push_str(&format!("layout(location = {loc}) {dir} {ty} {name};\n"));
         };
@@ -226,8 +254,12 @@ pub(crate) fn transform(
         }
     }
     let mut resource_names = c.resource_names;
-    if used.filtering {
-        resource_names.push((TEXTURE_GROUP, SAMPLER_BINDING, SAMPLER_NAME.to_string()));
+    for class in &used.filtering {
+        resource_names.push((
+            TEXTURE_GROUP,
+            class.binding(),
+            class.glsl_name().to_string(),
+        ));
     }
     if used.comparison {
         resource_names.push((
@@ -252,124 +284,5 @@ pub(crate) fn transform(
     })
 }
 
-fn vertex_input(io: &mut String, inputs: &mut Vec<(u32, String)>, name: &str, ty: &str) {
-    if let Some(loc) = VertexAttribute::from_glsl_name(name).location() {
-        io.push_str(&format!("layout(location = {loc}) in {ty} {name};\n"));
-        inputs.push((loc, name.to_string()));
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compile::{OutputMap, compile};
-    use crate::options::OptionValues;
-    use crate::preprocess::{expand, preprocess};
-    use crate::source::PackSource;
-
-    const VERTEX: &str = "#version 120
-varying vec2 texcoord;
-varying vec4 color;
-void main() {
-    gl_Position = ftransform();
-    texcoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
-    color = gl_Color;
-}
-";
-
-    const FRAGMENT: &str = "#version 120
-uniform sampler2D colortex0;
-uniform float viewWidth;
-varying vec2 texcoord;
-varying vec4 color;
-void main() {
-    gl_FragData[0] = texture2D(colortex0, texcoord) * color * viewWidth;
-}
-";
-
-    fn draft(
-        file: &str,
-        text: &str,
-        stage: StageKind,
-        iface: &mut ProgramInterface,
-    ) -> (StageDraft, crate::preprocess::LineMap) {
-        let source = PackSource::from_files([(file, text)]);
-        let expanded = expand(&source, file, &[], &OptionValues::new()).expect("expands");
-        let pp = preprocess(expanded, &[]).expect("preprocesses");
-        let draft = transform(&pp, stage, iface, &HashMap::new()).expect("transforms");
-        (draft, pp.map)
-    }
-
-    #[test]
-    fn a_version_120_program_becomes_vulkan_glsl_naga_validates() {
-        let mut iface = ProgramInterface::default();
-        let vertex = draft("gbuffers_basic.vsh", VERTEX, StageKind::Vertex, &mut iface);
-        let fragment = draft(
-            "gbuffers_basic.fsh",
-            FRAGMENT,
-            StageKind::Fragment,
-            &mut iface,
-        );
-        let ubo = merge_uniforms([&vertex.0, &fragment.0]).expect("uniforms agree");
-        let names: Vec<_> = ubo.iter().map(|m| m.name.as_str()).collect();
-        assert!(names.contains(&"viewWidth"), "{names:?}");
-
-        let inputs: Vec<_> = vertex
-            .0
-            .vertex_inputs
-            .iter()
-            .map(|(_, n)| n.as_str())
-            .collect();
-        assert_eq!(inputs, ["iris_Vertex", "iris_Color", "iris_MultiTexCoord0"]);
-        assert_eq!(fragment.0.frag_outputs, [(0, "iris_FragData0".to_owned())]);
-        assert!(
-            fragment
-                .0
-                .resource_names
-                .iter()
-                .any(|(_, _, name)| name == "colortex0")
-        );
-
-        for ((draft, lines), stage) in
-            [(vertex, StageKind::Vertex), (fragment, StageKind::Fragment)]
-        {
-            let (glsl, origins) = assemble(&draft, &ubo);
-            let map = OutputMap {
-                glsl: &glsl,
-                origins: &origins,
-                lines: &lines,
-            };
-            if let Err(errors) = compile(stage, &map) {
-                panic!("{stage:?} does not validate: {errors:?}\n{glsl}");
-            }
-        }
-    }
-
-    #[test]
-    fn a_vertex_stage_reading_an_undeclared_attribute_gets_iris_input() {
-        let mut iface = ProgramInterface::default();
-        let source = "#version 330 compatibility
-in vec4 mc_Entity;
-out float id;
-void main() { id = mc_Entity.x; gl_Position = gl_Vertex; }
-";
-        let (vertex, _) = draft(
-            "gbuffers_terrain.vsh",
-            source,
-            StageKind::Vertex,
-            &mut iface,
-        );
-        let inputs: Vec<_> = vertex
-            .vertex_inputs
-            .iter()
-            .map(|(location, name)| (name.as_str(), Some(*location)))
-            .collect();
-        assert_eq!(
-            inputs,
-            [
-                ("mc_Entity", VertexAttribute::BlockId.location()),
-                ("iris_Vertex", VertexAttribute::Position.location()),
-            ]
-        );
-    }
-}
+mod tests;

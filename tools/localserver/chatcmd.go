@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"math"
+	"time"
 
 	"github.com/df-mc/dragonfly/server/cmd"
 	"github.com/df-mc/dragonfly/server/player"
@@ -30,6 +31,39 @@ func registerChatCommands() {
 	cmd.Register(cmd.New("tp", "Teleports to a position", []string{"teleport"}, teleport{}))
 	cmd.Register(cmd.New("give", "Adds a vanilla item to your inventory", nil, giveItem{}))
 	cmd.Register(cmd.New("fixture_totem", "Applies server damage while holding a protective totem", nil, totemFixture{}))
+	cmd.Register(cmd.New("weather", "Sets the weather: clear, rain or thunder", nil, weatherSet{}))
+}
+
+// defaultWeatherSeconds keeps a requested weather for an hour unless a duration is given.
+const defaultWeatherSeconds = 3600
+
+// weatherKind is the /weather argument.
+type weatherKind string
+
+func (weatherKind) Type() string { return "WeatherType" }
+
+func (weatherKind) Options(cmd.Source) []string { return []string{"clear", "rain", "thunder"} }
+
+type weatherSet struct {
+	Kind    weatherKind       `cmd:"type"`
+	Seconds cmd.Optional[int] `cmd:"seconds"`
+}
+
+func (w weatherSet) Run(_ cmd.Source, o *cmd.Output, tx *world.Tx) {
+	seconds := max(w.Seconds.LoadOr(defaultWeatherSeconds), 1)
+	duration := time.Duration(seconds) * time.Second
+	level := tx.World()
+	switch w.Kind {
+	case "clear":
+		level.StopThundering()
+		level.StopRaining()
+	case "rain":
+		level.StopThundering()
+		level.StartRaining(duration)
+	case "thunder":
+		level.StartThundering(duration)
+	}
+	o.Printf("Weather set to %s for %d seconds", w.Kind, seconds)
 }
 
 // speedMultiplier clamps m to the accepted range.
