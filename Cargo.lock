@@ -8745,6 +8745,7 @@ dependencies = [
  "uuid",
  "zeroize",
  "zip",
+ "zip-footer",
 ]
 
 [[package]]
@@ -9660,6 +9661,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "shaderpack"
+version = "0.1.21"
+dependencies = [
+ "zip",
+ "zip-footer",
 ]
 
 [[package]]
@@ -12850,6 +12859,14 @@ dependencies = [
  "indexmap",
  "memchr",
  "typed-path",
+]
+
+[[package]]
+name = "zip-footer"
+version = "0.1.21"
+dependencies = [
+ "thiserror 2.0.18",
+ "zip",
 ]
 
 [[package]]

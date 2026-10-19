@@ -17,6 +17,7 @@ thiserror.workspace = true
 uuid = { workspace = true, features = ["serde"] }
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zeroize = "1"
+zip-footer = { path = "../zip-footer" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uuid = { workspace = true, features = ["v4"] }

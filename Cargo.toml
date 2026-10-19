@@ -52,6 +52,8 @@ members = [
     "crates/protocol-ids",
     "crates/resource-pack",
     "crates/server-experience",
+    "crates/shaderpack",
+    "crates/zip-footer",
     "crates/render",
     "crates/render-api",
     "crates/cosmetics",
