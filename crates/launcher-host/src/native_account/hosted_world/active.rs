@@ -2,10 +2,11 @@
 
 mod acquire;
 pub(super) mod peers;
+mod renewal;
 
 use super::{ClosingHostedPeer, NativeHostedProcess, NativeHostedWorld};
 use bedrock_net::messaging::server::{ClosingMessagingServer, MessagingServer};
-use std::{future::Future, io, time::Instant};
+use std::{future::Future, io, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
 /// The generated world bridge cap reserves one original local player.
@@ -30,7 +31,8 @@ pub struct ActiveHostedWorld {
     process: NativeHostedProcess,
     identity: protocol::NativeHostingIdentity,
     expires: Instant,
-    peer_started: bool,
+    phase_started: bool,
+    renewal_failure: Option<Arc<io::Error>>,
     retiring: Option<ClosingHostedPeer>,
     visitor_limit: usize,
     invitations: mpsc::Receiver<Invite>,
@@ -81,7 +83,8 @@ impl NativeHostedWorld {
             process,
             identity,
             expires,
-            peer_started: false,
+            phase_started: false,
+            renewal_failure: None,
             retiring: None,
             visitor_limit,
             invitations,
@@ -110,16 +113,20 @@ impl ActiveHostedWorld {
 
     /// Services original RTA and independent live peers beside one finite accepting setup.
     /// Token/TURN expiry gates new admission while existing Ready peers keep their original lifetime.
-    /// Cancellation during a peer phase ends further admission; consume this owner with `begin_close`.
+    /// Cancellation during setup or renewal ends further admission; consume with `begin_close`.
     /// Dropping the whole owner returns unresolved membership through the sole manager slot.
     pub async fn run(&mut self) -> io::Result<()> {
-        if self.peer_started || self.retiring.is_some() {
+        if self.phase_started || self.retiring.is_some() {
             return Err(unavailable());
         }
         loop {
-            let current = Instant::now() < self.expires;
+            let current = Instant::now() < self.expires && self.renewal_failure.is_none();
+            if !current && self.renewal_failure.is_none() {
+                self.renew_admission().await;
+                continue;
+            }
             if !current && self.world.peers.occupied() == 0 {
-                return Err(expired());
+                return Err(self.admission_error());
             }
             let accepting = current && self.world.peers.occupied() < self.visitor_limit;
             enum Event {
@@ -160,8 +167,9 @@ impl ActiveHostedWorld {
                     if invite.result.is_closed() {
                         continue;
                     }
-                    let result = if Instant::now() >= self.expires {
-                        Err(expired())
+                    let result = if Instant::now() >= self.expires || self.renewal_failure.is_some()
+                    {
+                        Err(self.admission_error())
                     } else {
                         driving(
                             &mut self.server,
@@ -176,10 +184,11 @@ impl ActiveHostedWorld {
                 Event::Invite(None) => return Ok(()),
                 Event::Peer(accepted) => {
                     if Instant::now() >= self.expires {
-                        return Err(expired());
+                        drop(accepted);
+                        continue;
                     }
                     // A canceled peer phase requires closing this host, not admitting another peer.
-                    self.peer_started = true;
+                    self.phase_started = true;
                     {
                         let peer = serve(
                             &mut self.world,
@@ -198,7 +207,7 @@ impl ActiveHostedWorld {
                             }
                         }
                     }
-                    self.peer_started = false;
+                    self.phase_started = false;
                 }
             }
         }
