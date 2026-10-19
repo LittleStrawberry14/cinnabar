@@ -34,11 +34,11 @@ impl Inbox {
     }
 
     /// Keeps driver input progressing until this write completes, with bounded retention.
-    pub(super) async fn send(
+    pub(super) async fn send<T>(
         &mut self,
-        sending: impl Future<Output = io::Result<()>> + Send,
+        sending: impl Future<Output = io::Result<T>> + Send,
         incoming: impl Stream<Item = io::Result<Bytes>> + Send,
-    ) -> io::Result<()> {
+    ) -> io::Result<T> {
         tokio::pin!(sending, incoming);
         loop {
             tokio::select! {

@@ -11,6 +11,8 @@ use std::{collections::VecDeque, io};
 
 mod codec;
 use codec::Codec;
+pub(super) mod send;
+use send::{PendingSend, SendRetirement};
 
 /// Exclusive packet I/O consumed by the native session pump.
 pub(crate) trait PacketConnection: Send + 'static {
@@ -38,6 +40,9 @@ pub(crate) struct Connection {
     current: Option<Bytes>,
     deferred: DeferredPackets,
     ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
+    pending_send: Option<PendingSend>,
+    send_retirement: Option<SendRetirement>,
+    send_sealed: bool,
     negotiation_skips: u64,
     #[cfg(test)]
     observed_batches: Option<BatchLifetimes>,
@@ -91,6 +96,9 @@ impl Connection {
             current: None,
             deferred: DeferredPackets::default(),
             ciphers: None,
+            pending_send: None,
+            send_retirement: None,
+            send_sealed: false,
             negotiation_skips: 0,
             #[cfg(test)]
             observed_batches: None,
@@ -127,6 +135,7 @@ impl Connection {
 
     /// Applies negotiated compression without replacing unread packets.
     pub(super) fn enable_compression(&mut self, settings: CompressionSettings) -> io::Result<()> {
+        self.ensure_send_idle()?;
         let current = self.codec.take().expect("codec transition is synchronous");
         match current {
             Codec::Plain(codec) => {
@@ -155,6 +164,7 @@ impl Connection {
         &mut self,
         ciphers: (BatchEncryptor, BatchDecryptor),
     ) -> io::Result<()> {
+        self.ensure_send_idle()?;
         if self.ciphers.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -220,6 +230,16 @@ impl Connection {
         body: Bytes,
         deadline: Option<std::time::Instant>,
     ) -> io::Result<()> {
+        self.ensure_send_idle()?;
+        for message in self.encode_body(body)? {
+            let message = self.encrypt_message(message)?;
+            self.transport.send_until(message, deadline).await?;
+        }
+        Ok(())
+    }
+
+    /// Encodes the original bounded packet entries once on the current codec.
+    fn encode_body(&self, body: Bytes) -> io::Result<Vec<Bytes>> {
         Self::check_body_size(&body)?;
         let entries = wire::Frames::new(body, self.limits.max_packets)
             .map(|frame| {
@@ -229,20 +249,44 @@ impl Connection {
                 Ok(frame.frame().slice(reader.position()..))
             })
             .collect::<io::Result<Vec<_>>>()?;
-        for mut message in self.codec().encode(&entries).map_err(io::Error::other)? {
-            if let Some((encryptor, _)) = &mut self.ciphers {
-                let marker = self.transport.header().marker();
-                let body = if marker.is_some() {
-                    message.slice(1..)
-                } else {
-                    message
-                };
-                message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
-                self.check_wire_size(&message)?;
-            }
-            self.transport.send_until(message, deadline).await?;
+        self.codec().encode(&entries).map_err(io::Error::other)
+    }
+
+    /// Advances the sole original directional cipher and checks its actual envelope size.
+    fn encrypt_message(&mut self, mut message: Bytes) -> io::Result<Bytes> {
+        if let Some((encryptor, _)) = &mut self.ciphers {
+            let marker = self.transport.header().marker();
+            let body = if marker.is_some() {
+                message.slice(1..)
+            } else {
+                message
+            };
+            message = envelope(marker, encryptor.encrypt(body).map_err(io::Error::other)?);
+            self.check_wire_size(&message)?;
         }
-        Ok(())
+        Ok(message)
+    }
+
+    /// Frames one original raw packet under the same decoded-body limit.
+    pub(super) fn raw_body(&self, raw: Bytes) -> io::Result<Bytes> {
+        let limit = self.max_decoded_bytes();
+        let mut framed = Vec::new();
+        wire::Writer::with_limit(&mut framed, limit)
+            .write_len_var_u32(raw.len())
+            .map_err(io::Error::other)?;
+        if raw.is_empty()
+            || framed
+                .len()
+                .checked_add(raw.len())
+                .is_none_or(|n| n > limit)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid native raw packet",
+            ));
+        }
+        framed.extend_from_slice(&raw);
+        Ok(Bytes::from(framed))
     }
 
     /// Refuses an oversized queue item before it can retain connection capacity.

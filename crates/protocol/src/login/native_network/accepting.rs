@@ -1,8 +1,13 @@
 //! Concrete wire ownership for an already admitted NetherNet server association.
 
 mod packs;
+mod send;
 mod world;
 pub use packs::native_host_packs;
+pub use send::{
+    NativeAcceptingCapacity, NativeAcceptingSend, NativeAcceptingSendOutcome,
+    NativeAcceptingSendRetirement,
+};
 pub use world::NativeHostWorld;
 
 use super::{Connection, PacketConnection, transport::Transport};
@@ -92,22 +97,6 @@ impl NativeAcceptingIo {
         Ok(())
     }
 
-    /// Flushes exact typed effects on the same compression/cipher/transport owner.
-    /// Keep this actual future pinned while driving unrelated service work; do not restart writes.
-    pub async fn send(
-        &mut self,
-        packets: Vec<packets::Packet>,
-        deadline: Instant,
-    ) -> io::Result<()> {
-        let packets: Vec<_> = packets.into_iter().map(crate::Packet::new).collect();
-        wait(
-            deadline,
-            self.connection.send_packets_until(&packets, Some(deadline)),
-        )
-        .await?
-        .map_err(|_| invalid())
-    }
-
     /// Installs only the settings whose exact plaintext response has actually flushed.
     pub fn compression_flushed(&mut self, settings: CompressionSettings) -> io::Result<()> {
         self.connection.enable_compression(settings)
@@ -129,31 +118,6 @@ impl NativeAcceptingIo {
     /// Waits for ordinary initialized play without imposing a new idle timeout.
     pub async fn receive_play(&mut self) -> io::Result<Bytes> {
         self.connection.next_raw().await
-    }
-
-    /// Sends one actual Go packet through the same established batch codec.
-    /// The single write future owns cipher progress until completion or connection retirement.
-    pub async fn send_raw(&mut self, raw: Bytes, deadline: Instant) -> io::Result<()> {
-        let limit = self.connection.max_decoded_bytes();
-        let mut framed = Vec::new();
-        wire::Writer::with_limit(&mut framed, limit)
-            .write_len_var_u32(raw.len())
-            .map_err(|_| invalid())?;
-        if raw.is_empty()
-            || framed
-                .len()
-                .checked_add(raw.len())
-                .is_none_or(|n| n > limit)
-        {
-            return Err(invalid());
-        }
-        framed.extend_from_slice(&raw);
-        wait(
-            deadline,
-            self.connection
-                .send_body_until(Bytes::from(framed), Some(deadline)),
-        )
-        .await?
     }
 
     /// Consumes local send capability and retains the actual accepted receiver and decoded FIFO.
