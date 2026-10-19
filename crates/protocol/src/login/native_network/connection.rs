@@ -436,21 +436,15 @@ impl Connection {
             let mut reader = wire::Reader::from_shared(&bytes);
             let header =
                 wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
-            if self.primary_only && packets::PacketId::from_raw(header.id).is_none() {
+            let Some(id) = packets::PacketId::from_raw(header.id) else {
                 self.negotiation_skips = self.negotiation_skips.saturating_add(1);
                 tracing::debug!(
                     skipped = self.negotiation_skips,
                     id = header.id,
-                    "skipped unused local relay negotiation packet"
+                    "skipped unused native negotiation packet"
                 );
                 continue;
-            }
-            let id = packets::PacketId::from_raw(header.id).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unknown native handshake packet",
-                )
-            })?;
+            };
             let body = bytes.slice(reader.position()..);
             let data = crate::codec::decode_body(id, &body).map_err(io::Error::other)?;
             self.current = Some(bytes);
