@@ -13,7 +13,12 @@ fn deferred_mesh_stream() -> (WorldStream, SchedulerView, SubChunkKey, SubChunkK
     let visible = SubChunkKey::new(1, scheduler::NEAR_CAMERA_RADIUS * 3, 0, 0);
     let backlog = SubChunkKey::new(1, visible.x + 4, 0, 0);
     assert!(!scheduler::mesh_is_near(view, visible));
-    let ready = (0..8).map(|offset| (SubChunkKey::new(1, backlog.x + offset * 2, 0, 0), true));
+    let ready = (0..8).map(|offset| {
+        (
+            SubChunkKey::new(1, backlog.x + offset * 2, 0, 0),
+            offset != 7,
+        )
+    });
     for (key, ready) in std::iter::once((visible, false)).chain(ready) {
         stream
             .authority
@@ -115,6 +120,13 @@ fn far_settled_neighbour_publishes_before_ready_backlog() {
         .unsent_column_deadlines
         .insert(missing.chunk(), now + UNSENT_COLUMN_GRACE);
     assert!(stream.mesh_neighbour_is_due(visible, now));
+    assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 1);
+    let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(completion.key, backlog);
+    stream.accept_mesh_completion(completion);
+    stream.take_mesh_changes();
+    let backlog = SubChunkKey::new(1, backlog.x + 2, backlog.y, backlog.z);
+    assert!(stream.mesh_jobs.pending.contains_key(&visible));
     let revision = stream.mesh_jobs.pending[&visible].revision;
 
     stream.loaded_columns.insert(missing.chunk());

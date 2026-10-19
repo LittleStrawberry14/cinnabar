@@ -12,6 +12,8 @@ const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
 pub(super) struct Lane {
     pub(super) ready: BinaryHeap<PendingSchedulerCandidate>,
     pub(super) deferred: BinaryHeap<PendingSchedulerCandidate>,
+    /// Retries already examined in the current deferred generation.
+    pub(super) rechecked: BinaryHeap<PendingSchedulerCandidate>,
     /// Promoted revisions: attempts and the poll before which a blocked one stays deferred.
     rechecks: HashMap<SubChunkKey, Recheck>,
     polls: u64,
@@ -27,7 +29,16 @@ struct Recheck {
 
 impl Lane {
     pub(super) fn is_empty(&self) -> bool {
-        self.ready.is_empty() && self.deferred.is_empty()
+        self.ready.is_empty() && self.deferred.is_empty() && self.rechecked.is_empty()
+    }
+
+    /// Pops the next refresh record and whether it belongs to a deferred generation.
+    fn pop_for_refresh(&mut self) -> Option<(PendingSchedulerCandidate, bool)> {
+        self.ready
+            .pop()
+            .map(|candidate| (candidate, false))
+            .or_else(|| self.deferred.pop().map(|candidate| (candidate, true)))
+            .or_else(|| self.rechecked.pop().map(|candidate| (candidate, true)))
     }
 
     fn heap_mut(&mut self, deferred: bool) -> &mut BinaryHeap<PendingSchedulerCandidate> {
@@ -47,8 +58,32 @@ impl Lane {
         deadline: Option<Instant>,
         is_current: impl Fn(SubChunkKey, u64) -> bool,
     ) {
-        self.polls += 1;
+        let candidates = self.take_deferred_rechecks(budget, deadline, is_current);
+        self.ready.extend(candidates);
+    }
+
+    /// Takes bounded current retries in rank order, leaving cooling revisions deferred.
+    /// Callers put blocked retries in `rechecked` so the generation advances past them.
+    pub(super) fn take_deferred_rechecks(
+        &mut self,
+        budget: &mut usize,
+        deadline: Option<Instant>,
+        is_current: impl Fn(SubChunkKey, u64) -> bool,
+    ) -> Vec<PendingSchedulerCandidate> {
+        let mut candidates = Vec::new();
         let ready_best = self.ready.peek().copied();
+        let remaining_cannot_lead = self
+            .deferred
+            .peek()
+            .is_some_and(|candidate| ready_best.is_some_and(|ready| *candidate <= ready));
+        let retry_can_lead = self
+            .rechecked
+            .peek()
+            .is_some_and(|candidate| ready_best.is_none_or(|ready| *candidate > ready));
+        if self.deferred.is_empty() || (remaining_cannot_lead && retry_can_lead) {
+            std::mem::swap(&mut self.deferred, &mut self.rechecked);
+        }
+        self.polls += 1;
         let mut examined = false;
         while *budget != 0
             && (!examined || deadline.is_none_or(|deadline| Instant::now() < deadline))
@@ -84,9 +119,10 @@ impl Lane {
                         + (1_u64 << attempts.min(5)).min(MAX_RECHECK_BACKOFF_POLLS),
                 },
             );
-            self.ready.push(candidate);
+            candidates.push(candidate);
         }
-        self.deferred.extend(self.held.drain(..));
+        self.rechecked.extend(self.held.drain(..));
+        candidates
     }
 }
 
@@ -146,22 +182,11 @@ impl<const L: usize> SchedulerRefresh<L> {
             if refreshed && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            let Some((lane, deferred)) =
-                self.previous.iter().enumerate().find_map(|(index, lane)| {
-                    if !lane.ready.is_empty() {
-                        Some((index, false))
-                    } else if !lane.deferred.is_empty() {
-                        Some((index, true))
-                    } else {
-                        None
-                    }
-                })
-            else {
+            let Some(lane) = self.previous.iter().position(|lane| !lane.is_empty()) else {
                 break;
             };
-            let mut candidate = self.previous[lane]
-                .heap_mut(deferred)
-                .pop()
+            let (mut candidate, deferred) = self.previous[lane]
+                .pop_for_refresh()
                 .expect("nonempty refresh queue");
             if is_current(candidate.key, candidate.revision) {
                 candidate.refresh_rank(view);
@@ -175,7 +200,7 @@ impl<const L: usize> SchedulerRefresh<L> {
 
 /// A queued record superseded by a newer revision of its key.
 pub(super) trait PendingJob: Copy {
-    /// Whether ordinary streaming rechecks higher-priority deferred work as startup does.
+    /// Whether the owner retries deferred work outside startup and keeps its backoff history.
     const RECHECK_DEFERRED: bool;
 
     fn revision(&self) -> u64;
@@ -270,6 +295,7 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
         for lane in self.lanes.iter_mut().chain(&mut self.refresh.previous) {
             lane.ready.clear();
             lane.deferred.clear();
+            lane.rechecked.clear();
             lane.rechecks.clear();
         }
     }
@@ -341,11 +367,14 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
         let mut deferred_budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
         for lane in &mut self.lanes {
             if lane.ready.is_empty() {
+                if lane.deferred.is_empty() {
+                    std::mem::swap(&mut lane.deferred, &mut lane.rechecked);
+                }
                 std::mem::swap(&mut lane.ready, &mut lane.deferred);
             }
-            if P::RECHECK_DEFERRED || view.startup_center.is_some() {
+            if view.startup_center.is_some() {
                 lane.prioritize_deferred(&mut deferred_budget, deadline, is_current);
-            } else if !lane.rechecks.is_empty() {
+            } else if !P::RECHECK_DEFERRED && !lane.rechecks.is_empty() {
                 lane.rechecks = HashMap::new();
             }
         }
@@ -627,6 +656,15 @@ mod tests {
             }
         }
         jobs.ingress(view, None, |_, _, _| (0, false));
+        let pending = &jobs.pending;
+        let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
+        let candidates =
+            jobs.lanes[0].take_deferred_rechecks(&mut budget, None, |key, revision| {
+                pending
+                    .get(&key)
+                    .is_some_and(|job| job.revision == revision)
+            });
+        jobs.lanes[0].ready.extend(candidates);
         let lane = &jobs.lanes[0];
         assert_eq!(
             lane.deferred.len(),
@@ -642,6 +680,53 @@ mod tests {
         jobs.clear_queued();
         assert!(jobs.lanes[0].is_empty());
         assert!(jobs.lanes[0].rechecks.is_empty());
+    }
+
+    /// Cooling high-ranked retries cannot hide eligible work beyond one bounded scan window.
+    #[test]
+    fn cooling_retries_do_not_hide_deferred_work() {
+        let view = SchedulerView {
+            position: [8.0; 3],
+            forward: None,
+            startup_center: None,
+        };
+        let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
+        let eligible = SubChunkKey::new(0, count as i32, 0, 0);
+        let mut lane = Lane::default();
+        lane.ready.push(PendingSchedulerCandidate::new(
+            SubChunkKey::new(0, eligible.x + 1, 0, 0),
+            1,
+            view,
+            false,
+        ));
+        for x in 0..=count {
+            let key = SubChunkKey::new(0, x as i32, 0, 0);
+            lane.deferred
+                .push(PendingSchedulerCandidate::new(key, 1, view, false));
+            if key != eligible {
+                lane.rechecks.insert(
+                    key,
+                    Recheck {
+                        revision: 1,
+                        attempts: 6,
+                        not_before: u64::MAX,
+                    },
+                );
+            }
+        }
+        let mut offered = Vec::new();
+        for _ in 0..=count / MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
+            let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
+            offered.extend(lane.take_deferred_rechecks(&mut budget, None, |_, _| true));
+        }
+        assert_eq!(
+            offered
+                .iter()
+                .map(|candidate| candidate.key)
+                .collect::<Vec<_>>(),
+            [eligible]
+        );
+        assert_eq!(lane.rechecked.len(), count);
     }
 
     /// A blocked startup job cooling down costs no allocation however many polls it waits.
@@ -674,7 +759,10 @@ mod tests {
         }
         assert_eq!(test_alloc::thread_allocations(), before);
         assert_eq!(
-            lane.deferred.peek().map(|candidate| candidate.key),
+            lane.deferred
+                .peek()
+                .or_else(|| lane.rechecked.peek())
+                .map(|candidate| candidate.key),
             Some(spawn.key)
         );
         assert_eq!(lane.ready.len(), 1);

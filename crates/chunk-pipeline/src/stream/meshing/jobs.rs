@@ -98,6 +98,9 @@ impl WorldStream {
         for (candidate, _, _) in truncated {
             self.mesh_jobs.refresh.requeue_woken(candidate.key);
         }
+        if view.startup_center.is_none() {
+            self.promote_ready_deferred_meshes();
+        }
         let mut dispatch = workers::WORKERS.batch(workers::Lane::Mesh);
         let mut dispatched = 0;
         let mut examined = false;
@@ -446,6 +449,35 @@ impl WorldStream {
         }
         dispatched
     }
+    /// Promotes bounded deferred retries only after their neighbour and light dependencies settle.
+    fn promote_ready_deferred_meshes(&mut self) {
+        let pending = &self.mesh_jobs.pending;
+        let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
+        let candidates = self.mesh_jobs.lanes[RESIDENT_MESH_LANE].take_deferred_rechecks(
+            &mut budget,
+            self.poll_deadline,
+            |key, revision| {
+                pending
+                    .get(&key)
+                    .is_some_and(|job| job.revision == revision)
+            },
+        );
+        let now = Instant::now();
+        for (index, candidate) in candidates.into_iter().enumerate() {
+            let ready = (index == 0 || !self.poll_budget_exhausted())
+                && self.revisions.is_current(candidate.key, candidate.revision)
+                && !self.mesh_jobs.in_flight.contains_key(&candidate.key)
+                && !self.mesh_neighbour_is_due(candidate.key, now)
+                && self.mesh_light_halo(candidate.key).is_some();
+            let lane = &mut self.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+            if ready {
+                lane.ready.push(candidate);
+            } else {
+                lane.rechecked.push(candidate);
+            }
+        }
+    }
+
     /// Moves due air sections from the keyed set into the removal lane, where removals order by
     /// priority under the poll deadline. Bounded attempts resume after the last key examined, so
     /// stale entries are cleared and sections that need geometry again return to the worker queue
