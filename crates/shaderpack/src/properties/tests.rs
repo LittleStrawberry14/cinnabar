@@ -314,6 +314,27 @@ fn conditions_use_c_integer_arithmetic_and_macro_aliases() {
 }
 
 #[test]
+fn float_literals_in_conditions_read_as_their_integer_part_as_in_jcpp() {
+    let defines = [
+        ("MC_RENDER_QUALITY", "1.0"),
+        ("STRENGTH", "0.75"),
+        ("colortex4", ""),
+    ];
+    let properties = parse_with(
+        "#if MC_RENDER_QUALITY >= 1\nquality=1\n#endif\n\
+         #if STRENGTH > 0.5\nstrong=1\n#else\nweak=1\n#endif\n\
+         #if 1.5f == 1 && 0x1F == 31 && defined colortex4\nliterals=1\n#endif\n",
+        &defines,
+    );
+    assert_eq!(keys(&properties), ["quality", "weak", "literals"]);
+    assert!(
+        properties.diagnostics.is_empty(),
+        "{:?}",
+        properties.diagnostics
+    );
+}
+
+#[test]
 fn values_expand_object_like_macros() {
     let properties = parse_with(
         "#define LUT_SIZE SIZE\nimage.lut = s red r32f float false false LUT_SIZE\nflag=FLAG 0.5\n",
