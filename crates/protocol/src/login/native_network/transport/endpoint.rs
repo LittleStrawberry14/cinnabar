@@ -52,7 +52,8 @@ async fn connect_resolved(
                         .await
                         .map(Box::new)
                         .map(Transport::NetherNetLan),
-                    NativeTransport::NetherNetMessaging
+                    NativeTransport::Addressed
+                    | NativeTransport::NetherNetMessaging
                     | NativeTransport::NetherNetLegacy
                     | NativeTransport::LocalNetherNetHttp
                     | NativeTransport::LocalNetherNetLan => Err(io::Error::new(

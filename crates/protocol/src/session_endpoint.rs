@@ -1,6 +1,11 @@
 //! Application-owned choice of connection backend.
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod addressed;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use addressed::NativeServerTrust;
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 /// Largest host-issued admission nonce retained for a native game login.
 pub const MAX_NATIVE_JOIN_NONCE_BYTES: usize = 4096;
 
@@ -11,6 +16,8 @@ pub const NATIVE_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// Native direct transport selected by application composition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeTransport {
+    /// Addressed-server HTTP discovery followed by its selected NetherNet or RakNet transport.
+    Addressed,
     /// Reliable ordered UDP with application batch encryption.
     RakNet,
     /// Directed LAN discovery and ICE/DTLS/SCTP with self-signed Login.
@@ -71,6 +78,74 @@ impl NativeMessagingTarget {
 #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    struct RefuseTrust;
+    impl NativeServerTrust for RefuseTrust {
+        fn trust<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a p384::ecdsa::VerifyingKey,
+            _: std::time::Instant,
+        ) -> futures::future::BoxFuture<'a, std::io::Result<bool>> {
+            Box::pin(std::future::ready(Ok(false)))
+        }
+    }
+
+    /// A valid scoped native socket must survive addressed selection into the actual RakNet fallback.
+    #[test]
+    fn addressed_scoped_ipv6_retains_its_original_family_and_scope_for_raknet() {
+        use std::{net::SocketAddr, sync::Arc};
+        for address in ["[::1%3]:19132", "[fe80::1%7]:19133"] {
+            let original: SocketAddr = address.parse().unwrap();
+            let target = NativeConnectionTarget::addressed(address.into(), Arc::new(RefuseTrust))
+                .expect("a valid scoped native endpoint was rejected as an HTTP URL");
+            target.validate().unwrap();
+            assert_eq!(target.address, address);
+            let fallback = target.addressed_route().unwrap().raknet_target();
+            assert_eq!(fallback.transport, NativeTransport::RakNet);
+            assert_eq!(
+                fallback.address.parse::<SocketAddr>().unwrap(),
+                original,
+                "addressed RakNet fallback lost the original IPv6 scope"
+            );
+        }
+    }
+
+    /// Only a validated exact endpoint can carry the original join's trust capability.
+    #[test]
+    fn addressed_selection_validates_its_host_and_rejects_changed_public_projections() {
+        use std::sync::Arc;
+        for address in [
+            "",
+            "http://host:19132",
+            "user@host:19132",
+            "host/path:19132",
+            "host\\path:19132",
+            "host:65536",
+            "host\n:19132",
+            "[bad]:19132",
+        ] {
+            assert!(
+                NativeConnectionTarget::addressed(address.into(), Arc::new(RefuseTrust)).is_err()
+            );
+        }
+        for address in ["host.invalid", "host.invalid:19133", "[::1]:19132", "::1"] {
+            let target =
+                NativeConnectionTarget::addressed(address.into(), Arc::new(RefuseTrust)).unwrap();
+            target.validate().unwrap();
+            let mut changed = target.clone();
+            changed.address.push('x');
+            assert!(changed.validate().is_err());
+            let mut changed = target;
+            changed.transport = NativeTransport::RakNet;
+            assert!(changed.validate().is_err());
+        }
+        assert!(
+            NativeConnectionTarget::new("host.invalid:19132".into(), NativeTransport::Addressed)
+                .validate()
+                .is_err()
+        );
+    }
 
     /// Local policy cannot be fabricated or redirected by changing the public endpoint projection.
     #[test]
@@ -136,6 +211,8 @@ pub struct NativeConnectionTarget {
     /// Transport chosen for this endpoint.
     pub transport: NativeTransport,
     local_lan: Option<LocalLanRoute>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    addressed: Option<addressed::AddressedRoute>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +229,8 @@ impl NativeConnectionTarget {
             address,
             transport,
             local_lan: None,
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            addressed: None,
         }
     }
 
@@ -181,6 +260,8 @@ impl NativeConnectionTarget {
                 level,
                 discovery_budget,
             }),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            addressed: None,
         })
     }
 
@@ -208,6 +289,10 @@ impl NativeConnectionTarget {
     pub fn validate(&self) -> std::io::Result<()> {
         if self.local_lan.is_some() || self.transport == NativeTransport::LocalNetherNetLan {
             self.local_lan_route()?;
+        }
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if self.addressed.is_some() || self.transport == NativeTransport::Addressed {
+            self.addressed_route()?;
         }
         Ok(())
     }

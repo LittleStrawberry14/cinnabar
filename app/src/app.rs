@@ -329,6 +329,10 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     let endpoint = connection_requested
         .then(|| args.session_endpoint(socket_dir.clone()))
         .transpose()?;
+    #[cfg(feature = "native-networking")]
+    let (endpoint, initial_trust) = crate::session::native_trust::initial(endpoint, &layout)?;
+    #[cfg(not(feature = "native-networking"))]
+    let initial_trust = None;
     let core_connection = endpoint
         .as_ref()
         .is_some_and(|endpoint| endpoint.core_directory().is_some());
@@ -551,6 +555,10 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     );
     #[cfg(feature = "native-networking")]
     let menu = menu.with_native_sign_in(args.native_transport.is_some());
+    let mut menu = menu;
+    if initial_trust.is_some() {
+        menu.show_connecting();
+    }
     crate::runtime::network::await_overlay_texture_device();
     let network = if let Some(endpoint) = endpoint {
         match spawn_network(
@@ -698,7 +706,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
             .with_native_transport(args.native_transport)
             .with_parallel_resource_pack_urls(args.parallel_resource_pack_urls)
             .with_client_random_id(client_random_id)
-            .with_address(args.address.as_deref()),
+            .with_address(args.address.as_deref())
+            .with_initial_trust(initial_trust),
     )
     .insert_resource(ui_catalog)
     .insert_resource(client_blob_cache)

@@ -18,7 +18,12 @@ pub(crate) fn native_target(
         ));
     }
     match launcher_host::launcher_core::target_for(address) {
-        bridge::ConnectTarget::RakNet(address) => {
+        bridge::ConnectTarget::RakNet(normalized) => {
+            let address = if transport == NativeTransport::Addressed {
+                address.trim().to_owned()
+            } else {
+                normalized
+            };
             Some(NativeConnectionTarget::new(address, transport))
         }
         bridge::ConnectTarget::Gathering(_) => Some(NativeConnectionTarget::new(

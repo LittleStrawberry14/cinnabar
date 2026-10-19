@@ -1,6 +1,7 @@
 //! Exclusive native transport ownership for one direct connection.
 
 mod accepted;
+pub(super) mod addressed;
 mod endpoint;
 pub(super) mod http;
 mod inbox;
@@ -31,7 +32,7 @@ pub(super) enum Transport {
     NetherNetLan(Box<LanTransport>),
     Messaging(Box<MessagingTransport>),
     Accepted(Box<AcceptedTransport>),
-    LocalHttp(Box<AcceptedTransport>),
+    Http(Box<AcceptedTransport>),
 }
 
 impl Transport {
@@ -95,11 +96,13 @@ impl Transport {
     ) -> io::Result<Self> {
         if matches!(
             target.transport,
-            NativeTransport::LocalNetherNetHttp | NativeTransport::LocalNetherNetLan
+            NativeTransport::Addressed
+                | NativeTransport::LocalNetherNetHttp
+                | NativeTransport::LocalNetherNetLan
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "local transport requires its original selection and Login policy",
+                "selected transport requires its original route and Login policy",
             ));
         }
         if matches!(
@@ -137,7 +140,7 @@ impl Transport {
             Self::RakNet(_) => BatchHeader::RakNet,
             Self::NetherNetLan(_) => BatchHeader::NetherNet,
             Self::Messaging(_) => BatchHeader::NetherNet,
-            Self::Accepted(_) | Self::LocalHttp(_) => BatchHeader::NetherNet,
+            Self::Accepted(_) | Self::Http(_) => BatchHeader::NetherNet,
         }
     }
 
@@ -157,7 +160,7 @@ impl Transport {
             Self::RakNet(transport) => transport.send_until(message, deadline).await,
             Self::NetherNetLan(transport) => transport.send_until(message, deadline).await,
             Self::Accepted(transport) => transport.send_until(message, deadline).await,
-            Self::LocalHttp(transport) => {
+            Self::Http(transport) => {
                 let result = transport.send_until(message, deadline).await;
                 if let Some(deadline) = deadline {
                     super::authentication::ensure_current(deadline, Instant::now())?;
@@ -173,7 +176,7 @@ impl Transport {
             Self::Messaging(transport) => transport.recv().await,
             Self::RakNet(transport) => transport.recv().await,
             Self::NetherNetLan(transport) => transport.recv().await,
-            Self::Accepted(transport) | Self::LocalHttp(transport) => transport.recv().await,
+            Self::Accepted(transport) | Self::Http(transport) => transport.recv().await,
         }
     }
 
@@ -197,7 +200,7 @@ impl Transport {
                 transport.close();
                 Ok(())
             }
-            Self::Accepted(transport) | Self::LocalHttp(transport) => {
+            Self::Accepted(transport) | Self::Http(transport) => {
                 transport.close();
                 Ok(())
             }

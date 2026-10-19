@@ -4,9 +4,9 @@ use client_shell::menu::test_support as menu_fixture;
 use client_shell::ui_resources::UiRuntimeResource;
 use client_ui::ui_runtime::UiRuntime;
 
-/// The actual Transfer follow keeps native I/O while replacing discovery with addressed RakNet.
+/// The actual Transfer follow keeps native I/O while replacing discovery with addressed transport selection.
 #[test]
-fn native_lan_transfer_selects_raknet_after_tearing_down_the_original_session() {
+fn native_lan_transfer_selects_addressed_transport_after_tearing_down_the_original_session() {
     let layout = launcher::test_support::scratch("native-lan-transfer");
     let mut menu = MenuRuntime::new_with_layout(
         true,
@@ -64,7 +64,8 @@ fn native_lan_transfer_selects_raknet_after_tearing_down_the_original_session() 
         panic!("native transfer started a Core owner");
     };
     assert_eq!(target.address, "127.0.0.1:19133");
-    assert_eq!(target.transport, protocol::NativeTransport::RakNet);
+    assert_eq!(target.transport, protocol::NativeTransport::Addressed);
+    target.validate().unwrap();
     assert!(controller.directory.is_none());
     assert!(controller.core.id().is_none());
     assert!(

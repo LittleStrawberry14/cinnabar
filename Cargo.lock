@@ -8078,6 +8078,7 @@ dependencies = [
  "url",
  "uuid",
  "web-time",
+ "webpki-roots",
  "xxhash-rust",
  "zeroize",
 ]
