@@ -181,7 +181,7 @@ fn locals_and_parameters_shadowing_a_sampler_stay_plain() {
     let t = p.translate(&TranslateConfig::default());
     let glsl = fragment_glsl(program(&t, "composite"));
     assert!(glsl.contains("float specular = x * 2.0;"), "{glsl}");
-    assert!(glsl.contains("return specular * 0.5;"), "{glsl}");
+    assert!(glsl.contains("return float(specular * 0.5);"), "{glsl}");
     assert!(glsl.contains("s += specular.x;"), "{glsl}");
     // The initializer and the last read both sample the global.
     assert_eq!(
