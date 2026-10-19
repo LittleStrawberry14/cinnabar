@@ -44,9 +44,11 @@ fn native_invite_people_recheck_account_after_artwork() {
             gamertag: "Friend".into(),
             ..Default::default()
         }],
-        account: Arc::clone(&account),
-        generation: "original".into(),
-        xuid: "123".into(),
+        identity: ReadIdentity {
+            account: Arc::clone(&account),
+            generation: "original".into(),
+            xuid: "123".into(),
+        },
     };
     let mut lease = account.store.try_native_lease().unwrap();
     lease.suppress_checkpoint().unwrap();

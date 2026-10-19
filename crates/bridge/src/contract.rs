@@ -284,6 +284,9 @@ pub const METHOD_PROFILE: &str = "profile.v1";
 /// Control method for realm membership.
 pub const METHOD_REALM_MEMBERSHIP: &str = "realm_membership.v1";
 
+/// Largest trimmed Realm invitation link or code input in bytes.
+pub const REALM_INVITE_INPUT_BYTES: usize = 255;
+
 /// Control method for packet delay.
 pub const METHOD_PACKET_DELAY: &str = "packet_delay.v1";
 
