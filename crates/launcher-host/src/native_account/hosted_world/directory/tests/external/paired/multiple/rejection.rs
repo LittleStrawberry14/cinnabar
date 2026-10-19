@@ -26,7 +26,7 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
         authority.host.peers = Peers::new(limit);
         let mut process = authority
             .host
-            .prepare_dragonfly_bridge(deadline)
+            .prepare_backend(deadline)
             .await
             .unwrap();
         let first_key = Arc::new(SigningKey::generate());
@@ -92,7 +92,7 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
         let server = async {
             let first = authority
                 .host
-                .accept_dragonfly_peer(
+                .accept_backend_peer(
                     &mut process,
                     first_accepted,
                     first_host_key,
@@ -103,7 +103,7 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
             authority.host.peers.admit(first)?;
             let rejected = authority
                 .host
-                .accept_dragonfly_peer(
+                .accept_backend_peer(
                     &mut process,
                     second_accepted,
                     second_host_key,

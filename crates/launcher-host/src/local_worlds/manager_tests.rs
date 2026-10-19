@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use launcher::local_worlds::world::{Generator, UnavailableReason};
 
@@ -653,7 +653,10 @@ fn native_bds_host_intent_keeps_the_original_http_or_lan_opening() {
             .unwrap();
         assert_eq!(selected.address, captured.address);
         assert_eq!(selected.transport, captured.transport);
-        assert_eq!(selected.local_lan_route(), captured.local_lan_route());
+        assert_eq!(
+            selected.local_lan_route().unwrap(),
+            captured.local_lan_route().unwrap()
+        );
         manager.close();
         wait_for(manager, WorldState::Idle);
         manager.open(&world.id, None).unwrap();
