@@ -17,12 +17,14 @@ pub enum NativeTransport {
     NetherNetLan,
     /// Protected Player Messaging with signed SDP and explicit friend or service admission.
     NetherNetMessaging,
+    /// Original string-routed WebSocket signaling from an authenticated service join.
+    NetherNetLegacy,
     /// HTTP/full-ICE signaling to an explicitly selected numeric loopback world process.
     LocalNetherNetHttp,
 }
 
 /// An explicit Player Messaging route, distinct from a discovery listing.
-/// Friend nonces come from joined-session admission; authenticated services use a private nonce-free policy.
+/// Friend nonces come from joined-session admission; service routes have their own private policy.
 /// No Debug implementation exposes the admission challenge.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub struct NativeMessagingTarget {
@@ -46,21 +48,6 @@ impl NativeMessagingTarget {
             ));
         }
         Ok(Self { peer, nonce })
-    }
-
-    /// Builds transport metadata for the caller-authorized nonce-free service handoff.
-    /// Friend routes remain available only through the nonce-bearing constructor.
-    pub(crate) fn service(peer: uuid::Uuid) -> std::io::Result<Self> {
-        if peer.is_nil() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "invalid native service messaging target",
-            ));
-        }
-        Ok(Self {
-            peer,
-            nonce: zeroize::Zeroizing::new(String::new()),
-        })
     }
 
     /// Returns the exact Player Messaging recipient supplied by the admission owner.
@@ -104,11 +91,6 @@ mod tests {
         assert_eq!(endpoint.address, peer.to_string());
         assert_eq!(target.nonce(), "synthetic-challenge");
 
-        let realm = NativeMessagingTarget::service(peer).unwrap();
-        assert_eq!(realm.peer(), peer);
-        assert_eq!(realm.connection_target().address, peer.to_string());
-        assert_eq!(realm.nonce(), "");
-        assert!(NativeMessagingTarget::service(uuid::Uuid::nil()).is_err());
         assert!(NativeMessagingTarget::new(peer, String::new()).is_err());
     }
 }
@@ -116,7 +98,7 @@ mod tests {
 /// One explicit direct connection; account policy is supplied separately at Login.
 #[derive(Debug, Clone)]
 pub struct NativeConnectionTarget {
-    /// Endpoint with a port, or the exact peer UUID for a prepared Messaging handoff.
+    /// Endpoint with a port, or the exact typed service recipient for a prepared signaling handoff.
     pub address: String,
     /// Transport chosen for this endpoint.
     pub transport: NativeTransport,

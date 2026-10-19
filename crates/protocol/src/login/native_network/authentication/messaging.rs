@@ -1,7 +1,7 @@
 //! Signed transport handoff, retaining account qualification separately from peer trust.
 
 use super::{NativeServiceClock, NativeTokenVerifier, ensure_current};
-use bedrock_net::messaging::PreparedMessaging;
+use bedrock_net::messaging::{PreparedMessaging, Recipient};
 use nethernet::identity::{
     SdpIdentity, TokenIdentity, TokenTrust, TokenVerifier,
     error::{IdentityError, Result},
@@ -14,19 +14,57 @@ use std::{
     time::{Instant, SystemTime},
 };
 
-pub(crate) struct MessagingAdmission {
-    pub(crate) prepared: PreparedMessaging,
-    pub(crate) target: crate::NativeMessagingTarget,
-    pub(crate) identity: Arc<dyn SdpIdentity>,
-    pub(crate) trust: TokenTrust,
-    pub(crate) expires: Instant,
+pub(in crate::login::native_network) struct MessagingAdmission {
+    pub(in crate::login::native_network) prepared: PreparedMessaging,
+    pub(in crate::login::native_network) target: MessagingTarget,
+    pub(in crate::login::native_network) identity: Arc<dyn SdpIdentity>,
+    pub(in crate::login::native_network) trust: TokenTrust,
+    pub(in crate::login::native_network) expires: Instant,
+}
+
+/// Original friend admission and authenticated service routes carry distinct nonce/answer policy.
+pub(in crate::login::native_network) enum MessagingTarget {
+    Joined(crate::NativeMessagingTarget),
+    Service(Recipient),
+}
+
+impl MessagingTarget {
+    /// Projects only the route admitted by the original account/service owner.
+    pub(in crate::login::native_network) fn connection_target(
+        &self,
+    ) -> crate::NativeConnectionTarget {
+        match self {
+            Self::Joined(target) => target.connection_target(),
+            Self::Service(Recipient::Messaging(peer)) => crate::NativeConnectionTarget {
+                address: peer.to_string(),
+                transport: crate::NativeTransport::NetherNetMessaging,
+            },
+            Self::Service(Recipient::Legacy(peer)) => crate::NativeConnectionTarget {
+                address: peer.clone(),
+                transport: crate::NativeTransport::NetherNetLegacy,
+            },
+        }
+    }
+
+    /// Only the original joined-friend owner supplies a Login challenge.
+    pub(in crate::login::native_network) fn nonce(&self) -> &str {
+        match self {
+            Self::Joined(target) => target.nonce(),
+            Self::Service(_) => "",
+        }
+    }
+
+    /// Missing-only answer admission is confined to the actual authenticated legacy service route.
+    pub(in crate::login::native_network) fn allow_anonymous_answers(&self) -> bool {
+        matches!(self, Self::Service(Recipient::Legacy(_)))
+    }
 }
 
 impl MessagingAdmission {
     /// Uses the one originally minted proof owner for the existing SDP identity implementation.
     pub(super) fn new(
         prepared: PreparedMessaging,
-        target: crate::NativeMessagingTarget,
+        target: MessagingTarget,
         key: Arc<SigningKey>,
         token: &str,
         clock: NativeServiceClock,

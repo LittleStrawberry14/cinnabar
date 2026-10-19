@@ -8608,3 +8608,12 @@ chat/forms, resource packs, and an offline local world followed by reload. Requi
 platform, parity and performance evidence must be complete for the claimed release scope.
 Keep the completion ledger consistent with this checklist; no historical green test
 or isolated fix silently completes the surrounding gate.
+
+The native Realm/Gathering service handoff now represents legacy WebSocket network
+routes separately from Player Messaging UUIDs. Both feed the existing connection,
+codec and caller-driven signaling owner on the same selected account operation
+and minted key. Only an authenticated legacy service route may allow an absent
+answer identity; present identities retain configured verification, and friend,
+JSON-RPC and local HTTP policies remain strict. This source checkpoint still needs
+a coherent released dependency graph and owning execution before acceptance;
+service/WAN/device and vanilla qualification remain open. Go stays the default.
