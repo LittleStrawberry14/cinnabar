@@ -131,7 +131,7 @@ pub const GATEWAY_EGRESS_CANDIDATES: usize = 16;
 /// Maximum queued reliable frames or browser receive chunks.
 pub const QUEUED_FRAMES: usize = 16;
 
-/// Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+/// Incoming frame queue budget; a larger frame is admitted alone.
 pub const RELAY_QUEUED_FRAME_BYTES: usize = 8388608;
 
 /// Upload rate limiter burst, independent of message and queue limits.

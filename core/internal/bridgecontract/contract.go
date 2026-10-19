@@ -89,7 +89,7 @@ const (
 	GatewayEgressCandidates = 16
 	// QueuedFrames: Maximum queued reliable frames or browser receive chunks.
 	QueuedFrames = 16
-	// RelayQueuedFrameBytes: Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+	// RelayQueuedFrameBytes: Incoming frame queue budget; a larger frame is admitted alone.
 	RelayQueuedFrameBytes = 8388608
 	// RelayUploadBurstBytes: Upload rate limiter burst, independent of message and queue limits.
 	RelayUploadBurstBytes = 8388608
