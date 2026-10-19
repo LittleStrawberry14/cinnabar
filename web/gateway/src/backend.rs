@@ -2,6 +2,8 @@
 
 mod origin;
 mod upgrade;
+#[cfg(feature = "webtransport")]
+pub(crate) mod webtransport;
 
 use super::{
     control, play,
@@ -42,6 +44,8 @@ pub struct Gateway {
     registry: Arc<Registry>,
     tls: TlsAcceptor,
     origins: Arc<[String]>,
+    #[cfg(feature = "webtransport")]
+    quic_tls: Arc<ServerConfig>,
 }
 
 /// Field order retires actual sockets before the service driver erases ephemeral credentials.
@@ -91,12 +95,20 @@ impl Gateway {
 
     /// Keeps the same TLS policy and account owner for supplied and file-backed certificates.
     fn with_config(mut config: ServerConfig, origins: Vec<String>) -> Self {
+        #[cfg(feature = "webtransport")]
+        let quic_tls = {
+            let mut quic = config.clone();
+            quic.alpn_protocols = vec![b"h3".to_vec()];
+            Arc::new(quic)
+        };
         // A counted TCP socket carries one HTTP/1 upgrade, never multiplexed HTTP/2 requests.
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
         Self {
             registry: Registry::new(),
             tls: TlsAcceptor::from(Arc::new(config)),
             origins: origins.into(),
+            #[cfg(feature = "webtransport")]
+            quic_tls,
         }
     }
 
@@ -111,7 +123,45 @@ impl Gateway {
     /// Returns an accepted-stream or account-service driver error after retiring active handlers.
     pub async fn run(
         self,
-        mut incoming: impl Stream<Item = io::Result<TcpStream>> + Unpin,
+        incoming: impl Stream<Item = io::Result<TcpStream>> + Unpin,
+    ) -> io::Result<()> {
+        self.run_accepted(incoming.map(|stream| stream.map(Accepted::Tcp)))
+            .await
+    }
+
+    /// Configures HTTP/3 on the same supplied or reloadable certificate owner.
+    ///
+    /// The caller supplies and owns its Quinn endpoint. This starts no listener or runtime.
+    #[cfg(feature = "webtransport")]
+    pub fn quic_config(&self) -> io::Result<quinn::ServerConfig> {
+        webtransport::configuration(Arc::clone(&self.quic_tls))
+    }
+
+    /// Drives paired TCP and pre-handshake QUIC admission through one account/connection owner.
+    ///
+    /// Ending either incoming stream stops both admissions and awaits existing handlers before
+    /// ephemeral accounts retire. Dropping the future remains abortive, as with [`Self::run`].
+    #[cfg(feature = "webtransport")]
+    pub async fn run_paired(
+        self,
+        tcp: impl Stream<Item = io::Result<TcpStream>> + Unpin,
+        quic: impl Stream<Item = io::Result<quinn::Incoming>> + Unpin,
+    ) -> io::Result<()> {
+        // Preserve each source's EOF as an explicit stop; stream::select otherwise hides it.
+        let tcp = tcp
+            .map(|item| item.map(Accepted::Tcp))
+            .chain(futures::stream::once(async { Ok(Accepted::End) }));
+        let quic = quic
+            .map(|item| item.map(Accepted::Quic))
+            .chain(futures::stream::once(async { Ok(Accepted::End) }));
+        self.run_accepted(Box::pin(futures::stream::select(tcp, quic)))
+            .await
+    }
+
+    /// Retains exactly one registry driver and one bounded physical connection set for both edges.
+    async fn run_accepted(
+        self,
+        mut incoming: impl Stream<Item = io::Result<Accepted>> + Unpin,
     ) -> io::Result<()> {
         let registry = Arc::clone(&self.registry);
         let mut running = Running {
@@ -135,7 +185,7 @@ impl Gateway {
                 }
                 accepted = incoming.next(), if !stopping => {
                     match accepted {
-                        Some(Ok(stream)) => {
+                        Some(Ok(Accepted::Tcp(stream))) => {
                             let now = Instant::now();
                             let Ok(peer) = stream.peer_addr() else { continue };
                             let Ok(permit) = self.registry.admit(peer.ip(), now) else { continue };
@@ -144,6 +194,24 @@ impl Gateway {
                             let tls = self.tls.clone();
                             let origins = Arc::clone(&self.origins);
                             running.connections.push(Box::pin(serve(registry, tls, origins, peer.ip(), stream, now)));
+                        }
+                        #[cfg(feature = "webtransport")]
+                        Some(Ok(Accepted::Quic(incoming))) => {
+                            let now = Instant::now();
+                            let peer = incoming.remote_address().ip();
+                            let Ok(permit) = self.registry.admit(peer, now) else {
+                                incoming.refuse();
+                                continue;
+                            };
+                            running.connections.push(Box::pin(webtransport::serve(
+                                Arc::clone(&self.registry), Arc::clone(&self.origins), peer,
+                                incoming, permit, now,
+                            )));
+                        }
+                        #[cfg(feature = "webtransport")]
+                        Some(Ok(Accepted::End)) => {
+                            self.registry.cancelled.cancel();
+                            stopping = true;
                         }
                         Some(Err(error)) => {
                             result = Err(error);
@@ -159,6 +227,14 @@ impl Gateway {
             }
         }
     }
+}
+
+enum Accepted {
+    Tcp(TcpStream),
+    #[cfg(feature = "webtransport")]
+    Quic(quinn::Incoming),
+    #[cfg(feature = "webtransport")]
+    End,
 }
 
 /// Both native entrypoints use one provider, protocol version and client-auth policy.

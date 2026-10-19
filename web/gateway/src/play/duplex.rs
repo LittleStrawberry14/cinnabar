@@ -4,13 +4,16 @@ use super::{
     Bytes, CoreMessage, FrameQueue, FrameRead, PlayLease, closed, current, elapsed, expires,
     invalid, progress, session_wire,
 };
-use bridge::contract::PACK_CHUNK_BYTES;
 use futures::StreamExt;
 use protocol::{NativeRelayDriver, NativeRelayHandoff, NativeRelayInbound, NativeRelaySender};
 use std::{io, time::Instant};
 use tokio::sync::oneshot;
 
 /// Pins each actual direction once; driver completion never replaces accepted input.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the original pump carries its I/O, handoff, deadline and archive delivery owner together"
+)]
 pub(super) async fn run(
     lease: &PlayLease,
     driver: &mut NativeRelayDriver,
@@ -19,6 +22,7 @@ pub(super) async fn run(
     frames: FrameQueue,
     handoff: NativeRelayHandoff,
     deadline: Instant,
+    delivery: super::packs::Delivery,
 ) -> io::Result<()> {
     lease.current()?;
     let (handoff_flushed, handoff_written) = oneshot::channel();
@@ -32,6 +36,7 @@ pub(super) async fn run(
         deadline,
         handoff_flushed,
         terminal_reached,
+        delivery,
     );
     let driving = driver.drive();
     tokio::pin!(upload, output, driving);
@@ -136,15 +141,23 @@ async fn upload_frames(
 }
 
 /// Flushes original handoff/archive order, then one original incoming packet at a time.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one original output owns handoff, archive routing and both actual flush barriers"
+)]
 async fn output(
     lease: &PlayLease,
     frames: &FrameQueue,
-    mut incoming: NativeRelayInbound,
-    handoff: NativeRelayHandoff,
+    incoming: NativeRelayInbound,
+    mut handoff: NativeRelayHandoff,
     deadline: Instant,
     handoff_flushed: oneshot::Sender<()>,
     terminal_reached: oneshot::Sender<()>,
+    delivery: super::packs::Delivery,
 ) -> io::Result<()> {
+    if delivery.independent() {
+        handoff.handoff.pack_stream = Some(lease.join);
+    }
     write(
         lease,
         frames,
@@ -153,26 +166,39 @@ async fn output(
         Some(deadline),
     )
     .await?;
-    for (index, archive) in handoff.archives.into_iter().enumerate() {
-        let index = u32::try_from(index).map_err(invalid)?;
-        for chunk in archive.chunks(PACK_CHUNK_BYTES) {
-            lease.current()?;
-            let message = CoreMessage::PackData {
-                index,
-                data: Bytes::copy_from_slice(chunk),
-            };
-            write(
-                lease,
-                frames,
-                session_wire::encode_core_message(&message).map_err(invalid)?,
-                Some(deadline),
-            )
-            .await?;
+    if !delivery.independent() {
+        super::packs::send(delivery, lease, frames, handoff.archives, deadline).await?;
+        current(lease, Some(deadline))?;
+        lease.progress(progress(bridge::ConnectStage::Idle))?;
+        let _ = handoff_flushed.send(());
+        return forward(lease, frames, incoming, terminal_reached).await;
+    }
+    // The separate archive stream cannot withhold game reads, control or empty browser EOF.
+    let _ = handoff_flushed.send(());
+    let sending = super::packs::send(delivery, lease, frames, handoff.archives, deadline);
+    let forwarding = forward(lease, frames, incoming, terminal_reached);
+    tokio::pin!(sending, forwarding);
+    tokio::select! { biased;
+        result = &mut sending => {
+            result?;
+            current(lease, Some(deadline))?;
+            lease.progress(progress(bridge::ConnectStage::Idle))?;
+            forwarding.await
+        }
+        result = &mut forwarding => {
+            result?;
+            sending.await
         }
     }
-    current(lease, Some(deadline))?;
-    lease.progress(progress(bridge::ConnectStage::Idle))?;
-    let _ = handoff_flushed.send(());
+}
+
+/// Delivers the same accepted reliable prefix and first terminal after the actual handoff flush.
+async fn forward(
+    lease: &PlayLease,
+    frames: &FrameQueue,
+    mut incoming: NativeRelayInbound,
+    terminal_reached: oneshot::Sender<()>,
+) -> io::Result<()> {
     let mut terminal_reached = Some(terminal_reached);
     loop {
         lease.current()?;

@@ -58,9 +58,11 @@ joins retain their explicit offline policy.
 
 The native browser gateway has an opt-in HTTPS/WebSocket operator using the existing
 ephemeral account and play owners, with validated certificate-file replacement and
-explicit shutdown. Its new operator controls still require execution. WebTransport
-listener and dedicated pack-stream adoption remain incomplete; WebSocket fallback
-does not close browser transport or deployment acceptance.
+explicit shutdown. The optional paired WebTransport source reuses that registry,
+controller generation, native play pump and original archives on a dedicated uni stream.
+The coherent HTTP/3 header/capsule dependency and paired transport/BDS owning controls
+still require qualification. Latest-draft browser, deployment and live-account acceptance
+remain incomplete; WebSocket fallback does not close those gates.
 
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.

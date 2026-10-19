@@ -15,6 +15,10 @@ mod native {
         /// HTTPS/WebSocket listen address, including its TCP port.
         #[arg(long)]
         tcp: SocketAddr,
+        /// Optional paired WebTransport UDP listen address.
+        #[cfg(feature = "webtransport")]
+        #[arg(long)]
+        udp: Option<SocketAddr>,
         /// PEM certificate chain file.
         #[arg(long)]
         tls_cert: PathBuf,
@@ -53,7 +57,14 @@ mod native {
                 .filter(|origin| !origin.is_empty())
                 .collect(),
         };
-        runtime.block_on(async move { operator::run(config, shutdown()?).await })?;
+        runtime.block_on(async move {
+            let shutdown = shutdown()?;
+            #[cfg(feature = "webtransport")]
+            if let Some(udp) = options.udp {
+                return operator::run_paired(config, udp, shutdown).await;
+            }
+            operator::run(config, shutdown).await
+        })?;
         Ok(())
     }
 

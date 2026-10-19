@@ -63,5 +63,34 @@ and active control/play connections continue. `--origins` accepts comma-separate
 omitting it preserves the same-authority policy. SIGINT or SIGTERM stops admission and awaits
 the existing gateway retirement before the runtime is dropped.
 
-This operator currently serves HTTPS/WebSocket only. A WebTransport UDP listener and its
-dedicated pack stream remain incomplete; browser WebSocket fallback does not provide them.
+The additional `webtransport` feature supplies `Gateway::quic_config` and
+`Gateway::run_paired` for caller-owned Quinn incoming connections beside the accepted TCP
+stream. Both use the same registry, account service and physical connection limits. QUIC is
+admitted before TLS, and one accepted-time deadline spans TLS, CONNECT, stream prefix and
+control Hello. Each QUIC connection accepts one WebTransport session at the generated route;
+its later play streams use that exact controller and generation. Client application uni streams
+and additional CONNECT requests are refused. HTTP/3 control progress continues while a stream
+prefix or play is blocked.
+
+For the file-backed operator, enable both features and add the UDP bind:
+
+```sh
+cargo run -p web-gateway --features operator,webtransport --bin bedrock-web-relay -- \
+  --hostname relay.example --tcp 127.0.0.1:8443 --udp 127.0.0.1:8443 \
+  --tls-cert /path/to/fullchain.pem --tls-key /path/to/key.pem
+```
+
+The paired listeners share certificate replacements and shutdown. No account, runtime or play
+pump is added per transport. Each play retains the original native connection, validated client
+data, account lease and incoming FIFO. WebTransport sends its already acquired pack archives
+on one server uni stream with the original join prefix, framed PackData and FIN. The archive
+writer runs beside the same play pump and performs no second fetch. Once opened, cancellation
+resets its writer. Partial WebTransport opener cancellation remains a dependency qualification
+gate. WebSocket archive delivery remains serial on its existing play connection.
+
+Application close first settles the original CONNECT capsule write and FIN, retaining its actual
+HTTP/3 owner through the finite physical-close stage. Local flush/FIN is not a remote game or
+browser acknowledgement. Dropping a handler remains abortive. These source paths require
+qualification against their coherent h3 dependency and actual paired/BDS controls. Retail browser,
+latest WebTransport draft, deployment and live-account acceptance remain open; WebSocket
+fallback does not close those gates.

@@ -1,6 +1,10 @@
 //! Native HTTPS/WebSocket listener and certificate-file ownership on the caller's runtime.
 
 mod certificate;
+#[cfg(feature = "webtransport")]
+mod webtransport;
+#[cfg(feature = "webtransport")]
+pub use webtransport::run_paired;
 
 use crate::Gateway;
 use bridge::contract::RELAY_CERTIFICATE_RELOAD_SECONDS;

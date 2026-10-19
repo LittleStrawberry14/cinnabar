@@ -19,6 +19,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
 mod duplex;
+mod packs;
 mod upload;
 
 #[cfg(test)]
@@ -48,10 +49,47 @@ pub(super) async fn run<S>(registry: &Arc<Registry>, stream: S) -> io::Result<()
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    run_inner(registry, stream, None, packs::Delivery::Serial).await
+}
+
+/// Reuses this QUIC connection's original controller instead of a global bearer lookup.
+#[cfg(feature = "webtransport")]
+pub(super) async fn run_bound<S>(
+    registry: &Arc<Registry>,
+    stream: S,
+    controller: &super::registry::Attachment,
+    transport: Arc<super::backend::webtransport::Transport>,
+) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    run_inner(
+        registry,
+        stream,
+        Some(controller),
+        packs::Delivery::WebTransport(transport),
+    )
+    .await
+}
+
+/// Keeps both transport entrypoints on the same account, negotiated socket and closing owner.
+async fn run_inner<S>(
+    registry: &Arc<Registry>,
+    stream: S,
+    bound: Option<&super::registry::Attachment>,
+    delivery: packs::Delivery,
+) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
     // Hello is bounded independently before the play codec admits a larger Connect/game frame.
     let mut hello_io = Framed::new(stream, bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES));
     let hello = control::read_hello(&mut hello_io, RELAY_CHANNEL_PLAY).await?;
-    let attachment = registry.open_play(&hello.resume, hello.generation, Instant::now())?;
+    let attachment = match bound {
+        #[cfg(feature = "webtransport")]
+        Some(controller) => registry.bound_play(controller, hello.generation)?,
+        _ => registry.open_play(&hello.resume, hello.generation, Instant::now())?,
+    };
     registry.allow_play(&attachment, Instant::now())?;
     let deadline = Instant::now()
         .checked_add(protocol::NATIVE_JOIN_TIMEOUT)
@@ -77,7 +115,7 @@ where
         RELAY_QUEUED_FRAME_BYTES,
     );
     let result = {
-        let serving = playing.serve(reader, frames, deadline);
+        let serving = playing.serve_with(reader, frames, deadline, delivery);
         tokio::pin!(serving, writer);
         tokio::select! { biased;
             () = registry.cancelled.cancelled() => Err(closed()),
@@ -92,12 +130,48 @@ where
 }
 
 impl Playing {
-    /// Retains the actual SDK owner across mint and the same socket across every later phase.
+    /// Keeps the original serial fixture entrypoint on the same production serve path.
+    #[cfg(test)]
     async fn serve(
+        &mut self,
+        reader: impl FrameRead,
+        frames: FrameQueue,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.serve_with(reader, frames, deadline, packs::Delivery::Serial)
+            .await
+    }
+
+    /// Keeps original negotiated-socket controls on the same production negotiation path.
+    #[cfg(test)]
+    async fn negotiate(
+        &mut self,
+        reader: impl FrameRead,
+        frames: FrameQueue,
+        claims: RawClientData,
+        client_cache: bool,
+        authentication: Option<protocol::NativeAuthentication>,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.negotiate_with(
+            reader,
+            frames,
+            claims,
+            client_cache,
+            authentication,
+            deadline,
+            packs::Delivery::Serial,
+        )
+        .await
+    }
+
+    /// Retains the actual SDK owner across mint and the same socket across every later phase.
+    async fn serve_with(
         &mut self,
         mut reader: impl FrameRead,
         frames: FrameQueue,
         deadline: Instant,
+        delivery: packs::Delivery,
     ) -> io::Result<()> {
         upstream::current(&self.lease, deadline)?;
         let frame = tokio::time::timeout_at(deadline.into(), reader.next())
@@ -148,13 +222,14 @@ impl Playing {
         });
         let connected = upstream::connect(&self.lease, request.target, deadline).await?;
         self.socket = Some(Socket::Connecting(connected));
-        self.negotiate(
+        self.negotiate_with(
             reader,
             frames,
             claims,
             request.client_cache,
             authentication,
             deadline,
+            delivery,
         )
         .await
     }
@@ -185,7 +260,11 @@ impl Playing {
     }
 
     /// Negotiates the actual retained preconnected owner; it performs no replacement dial or admission.
-    async fn negotiate(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one retained negotiation carries its original I/O, claims, authentication and output owner"
+    )]
+    async fn negotiate_with(
         &mut self,
         reader: impl FrameRead,
         frames: FrameQueue,
@@ -193,6 +272,7 @@ impl Playing {
         client_cache: bool,
         authentication: Option<protocol::NativeAuthentication>,
         deadline: Instant,
+        delivery: packs::Delivery,
     ) -> io::Result<()> {
         upstream::current(&self.lease, deadline)?;
         let Some(Socket::Connecting(socket)) = self.socket.as_mut() else {
@@ -243,6 +323,7 @@ impl Playing {
                 frames,
                 handoff,
                 deadline,
+                delivery,
             )
             .await
         };
