@@ -24,7 +24,7 @@ reads = [
 [features]
 # Fixture builders and semantic observations for other crates' tests.
 test-support = []
-native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:md-5", "uuid/serde", "uuid/v5", "serde_json/raw_value"]
+native-networking = ["dep:bedrock-net", "dep:p384", "dep:rand", "dep:nethernet", "dep:nethernet-tokio", "dep:rustls", "dep:reqwest", "dep:provider_http", "dep:url", "dep:webpki-roots", "dep:md-5", "uuid/serde", "uuid/v5", "serde_json/raw_value"]
 
 [[test]]
 name = "it"
@@ -75,6 +75,7 @@ rand = { version = "0.10", optional = true }
 nethernet-tokio = { workspace = true, optional = true }
 nethernet = { workspace = true, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
+webpki-roots = { version = "1", optional = true }
 
 [dev-dependencies]
 rsa.workspace = true

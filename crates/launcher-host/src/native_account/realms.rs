@@ -29,10 +29,13 @@ impl NativeAccount {
             let authentication = self.prepare(claims, random_id).await?;
             return Ok((target, authentication));
         }
-        if target.transport != protocol::NativeTransport::RakNet {
+        if !matches!(
+            target.transport,
+            protocol::NativeTransport::RakNet | protocol::NativeTransport::Addressed
+        ) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "authenticated native preparation requires RakNet",
+                "selected native transport does not support account preparation",
             ));
         }
         if let bridge::ConnectTarget::Gathering(id) =

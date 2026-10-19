@@ -67,7 +67,7 @@ async fn local_http_ready_connection_preserves_original_proof_and_bidirectional_
         .unwrap();
         let mut client = transport::http::connect(
             address,
-            credentials.local_http_identity().unwrap(),
+            credentials.http_identity().unwrap(),
             tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
         )
         .await
@@ -136,7 +136,7 @@ fn local_http_requires_numeric_loopback_and_a_signed_answer() {
         assert_eq!(selected.local_http_address().unwrap().to_string(), address);
     }
     let credentials = Credentials::new(None).unwrap();
-    let policy = credentials.local_http_identity().unwrap();
+    let policy = credentials.http_identity().unwrap();
     let sdp = "v=0\r\na=fingerprint:sha-256 AB:CD\r\nm=application 9\r\n";
     let signed = policy.identity.augment(sdp, SystemTime::now()).unwrap();
     nethernet::identity::validate_sdp(
@@ -154,7 +154,7 @@ fn local_http_requires_numeric_loopback_and_a_signed_answer() {
 #[tokio::test]
 async fn local_http_expired_credential_rejects_before_any_association() {
     let credentials = Credentials::new(None).unwrap();
-    let mut identity = credentials.local_http_identity().unwrap();
+    let mut identity = credentials.http_identity().unwrap();
     identity.expires = Some(Instant::now());
     let result = transport::http::connect(
         "127.0.0.1:1".parse().unwrap(),

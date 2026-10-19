@@ -22,6 +22,37 @@ fn native_direct_connections_do_not_provision_a_core_directory() {
     ));
 }
 
+/// Direct startup binds its actual addressed target and session dialog without a Core or file read.
+#[cfg(feature = "native-networking")]
+#[test]
+fn native_addressed_startup_retains_its_original_trust_owner_and_optional_port() {
+    let layout = launcher::test_support::scratch("native-addressed-startup");
+    for address in ["fixture.invalid", "fixture.invalid:19133"] {
+        let parsed = run_args(&[
+            "client",
+            "--address",
+            address,
+            "--native-networking",
+            "addressed",
+        ]);
+        let endpoint = parsed
+            .session_endpoint(layout.runtime_root.clone())
+            .unwrap();
+        let (endpoint, trust) =
+            crate::session::native_trust::initial(Some(endpoint), &layout).unwrap();
+        let Some(protocol::SessionEndpoint::Native(target)) = endpoint else {
+            panic!("native addressed startup selected Core");
+        };
+        assert_eq!(target.transport, protocol::NativeTransport::Addressed);
+        assert_eq!(target.address, address);
+        target.validate().unwrap();
+        assert!(trust.as_ref().unwrap().prompt().is_none());
+        let controller = SessionController::default().with_initial_trust(trust);
+        assert!(controller.status().connecting);
+        assert!(!layout.server_trust_file().exists());
+    }
+}
+
 /// Native command-line connections use the same endpoint grammar as saved menu destinations.
 #[cfg(feature = "native-networking")]
 #[test]

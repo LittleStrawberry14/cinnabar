@@ -60,7 +60,7 @@ webpki-roots = { version = "1", optional = true }
 httpdate = { version = "1", optional = true }
 bedrock-net = { workspace = true, features = ["messaging"], optional = true }
 bedrock-services = { workspace = true, features = ["rta-tokio"], optional = true }
-p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa"], optional = true }
+p384 = { version = "0.14", default-features = false, features = ["std", "ecdsa", "pkcs8"], optional = true }
 rand = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"], optional = true }
 zeroize = { version = "1", optional = true }

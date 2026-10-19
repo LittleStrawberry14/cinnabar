@@ -5,6 +5,7 @@ use bedrock_net::{
 };
 use bedrock_protocol_1_26_51::{enums::PlayStatusType, packets, types::ActorRuntimeID, wire};
 use nethernet_tokio::{AcceptedSession, NetherServer, ServerData};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Sends generated packets through the same bounded batch codec used by native connections.
@@ -48,45 +49,31 @@ pub(in crate::login::native_network) async fn receive<S: bedrock_net::BatchPhase
 
 #[tokio::test]
 async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
-    pack_deferred_spawn(false).await;
+    pack_deferred_spawn(Route::Lan).await;
 }
 
 #[tokio::test]
 async fn selected_local_lan_preserves_offline_login_nonce_and_actual_network_id_through_startup() {
-    pack_deferred_spawn(true).await;
+    pack_deferred_spawn(Route::LocalLan).await;
 }
 
-/// Exercises the same original discovery, Login, packs and live owner for both LAN selections.
-async fn pack_deferred_spawn(selected_local: bool) {
+/// HTTP discovery and an actual pending trust decision precede the original Login/packs/spawn path.
+#[tokio::test]
+async fn addressed_http_trust_precedes_login_and_preserves_original_startup_and_live_identity() {
+    pack_deferred_spawn(Route::AddressedHttp).await;
+}
+
+#[derive(Clone, Copy)]
+enum Route {
+    Lan,
+    LocalLan,
+    AddressedHttp,
+}
+
+/// Exercises the same original Login, packs and live owner for each actual selected transport.
+async fn pack_deferred_spawn(route: Route) {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let reservation = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let address = reservation.local_addr().unwrap();
-        drop(reservation);
-        let signaling = LanSignaling::with_config(
-            31,
-            address,
-            LanConfig {
-                discovery_port: address.port(),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        let mut data = ServerData::new("Fixture".into(), "World".into());
-        data.flag_b = true;
-        data.session_id = "synthetic-nonce".into();
-        data.connection_type = LAN_CONNECTION_TYPE;
-        data.protocol_version = if selected_local { 0 } else { crate::PROTOCOL_VERSION as u32 };
-        signaling.set_server_data(data);
-        let mut listener = NetherServer::bind_with(
-            signaling,
-            ConnectionConfig {
-                allow_unsigned_answers: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+        let FixtureRoute { mut listener, address, target, http, approval } = fixture_route(route).await;
         let first = crate::Packet::new(packets::SetTime {
             time: wire::ZigZag32(1),
         });
@@ -102,10 +89,14 @@ async fn pack_deferred_spawn(selected_local: bool) {
         let server = async {
             let mut peer = listener.accept().await.unwrap();
             let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
-            assert!(matches!(
-                &*receive(&mut peer, &codec).await[0].data,
-                packets::Packet::RequestNetworkSettings(_)
-            ));
+            let settings = if let Some((shown, approved)) = approval {
+                shown.await.unwrap();
+                let mut settings = Box::pin(receive(&mut peer, &codec));
+                assert!(futures::poll!(settings.as_mut()).is_pending(), "protocol output preceded the actual trust decision");
+                approved.send(true).unwrap();
+                settings.await
+            } else { receive(&mut peer, &codec).await };
+            assert!(matches!(&*settings[0].data, packets::Packet::RequestNetworkSettings(_)));
             send(
                 &peer,
                 &codec,
@@ -123,8 +114,13 @@ async fn pack_deferred_spawn(selected_local: bool) {
             let packets::Packet::Login(login) = &*login_packets[0].data else {
                 panic!("the real client must send Login");
             };
-            let expected_address = if selected_local { "31".into() } else { address.to_string() };
-            let identity = offline_login_identity(login, &expected_address);
+            let expected_address = match route {
+                Route::LocalLan => "31".into(),
+                Route::AddressedHttp => format!("http://{address}:{}", address.port()),
+                Route::Lan => address.to_string(),
+            };
+            let nonce = if matches!(route, Route::AddressedHttp) { "" } else { "synthetic-nonce" };
+            let identity = offline_login_identity(login, &expected_address, nonce);
             send(
                 &peer,
                 &codec,
@@ -207,15 +203,6 @@ async fn pack_deferred_spawn(selected_local: bool) {
         };
         let client = async {
             let settings = super::super::super::LoginSettings::default();
-            let target = if selected_local {
-                NativeConnectionTarget::local_lan(
-                    address,
-                    "World".into(),
-                    crate::NATIVE_JOIN_TIMEOUT,
-                ).unwrap()
-            } else {
-                NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan)
-            };
             let (mut play, runtime_id) = LoginSequence::connect_native(
                 &target,
                 SessionLogin {
@@ -244,13 +231,153 @@ async fn pack_deferred_spawn(selected_local: bool) {
         };
         tokio::join!(server, client);
         listener.close().await.unwrap();
+        drop(listener);
+        if let Some(http) = http {
+            Arc::try_unwrap(http).ok().expect("original HTTP listener leaked").shutdown().await;
+        }
     })
     .await
     .expect("finite actual native pack/startup fixture stalled");
 }
 
+struct FixtureRoute {
+    listener: NetherServer,
+    address: SocketAddr,
+    target: NativeConnectionTarget,
+    http: Option<std::sync::Arc<nethernet_tokio::signaling::http::HttpSignalingServer>>,
+    approval: Option<(
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<bool>,
+    )>,
+}
+
+struct HttpApproval {
+    key: p384::ecdsa::VerifyingKey,
+    endpoint: String,
+    shown: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    approved: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>,
+}
+
+impl crate::NativeServerTrust for HttpApproval {
+    fn trust<'a>(
+        &'a self,
+        endpoint: &'a str,
+        key: &'a p384::ecdsa::VerifyingKey,
+        _: Instant,
+    ) -> futures::future::BoxFuture<'a, io::Result<bool>> {
+        Box::pin(async move {
+            assert_eq!(endpoint, self.endpoint);
+            assert_eq!(
+                *key, self.key,
+                "trust must receive the actually verified server proof key"
+            );
+            self.shown
+                .lock()
+                .unwrap()
+                .take()
+                .expect("original trust decision repeated")
+                .send(())
+                .unwrap();
+            let approved = self.approved.lock().unwrap().take().unwrap();
+            Ok(approved.await.unwrap())
+        })
+    }
+}
+
+/// Reuses the original finite server owner and actual wire script; only route acquisition differs.
+async fn fixture_route(route: Route) -> FixtureRoute {
+    if matches!(route, Route::AddressedHttp) {
+        use nethernet_tokio::signaling::http::{HttpServerConfig, HttpSignalingServer};
+        let identity = std::sync::Arc::new(
+            nethernet::identity::ServerIdentity::generate("self", std::time::SystemTime::now())
+                .unwrap(),
+        );
+        let signaling = std::sync::Arc::new(
+            HttpSignalingServer::bind("127.0.0.1:0".parse().unwrap(), HttpServerConfig::default())
+                .await
+                .unwrap(),
+        );
+        let address = signaling.local_addr();
+        let listener = NetherServer::bind_with(
+            std::sync::Arc::clone(&signaling),
+            ConnectionConfig {
+                identity: Some(identity.clone()),
+                server_ice: Some(nethernet_tokio::ServerIceConfig {
+                    ice: Default::default(),
+                    bind_addr: "127.0.0.1:0".parse().unwrap(),
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let (shown, question) = tokio::sync::oneshot::channel();
+        let (answer, approved) = tokio::sync::oneshot::channel();
+        let trust = std::sync::Arc::new(HttpApproval {
+            key: *identity.verifying_key(),
+            endpoint: format!("http://{address}"),
+            shown: std::sync::Mutex::new(Some(shown)),
+            approved: std::sync::Mutex::new(Some(approved)),
+        });
+        let target = NativeConnectionTarget::addressed(address.to_string(), trust).unwrap();
+        return FixtureRoute {
+            listener,
+            address,
+            target,
+            http: Some(signaling),
+            approval: Some((question, answer)),
+        };
+    }
+    let reservation = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = reservation.local_addr().unwrap();
+    drop(reservation);
+    let signaling = LanSignaling::with_config(
+        31,
+        address,
+        LanConfig {
+            discovery_port: address.port(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut data = ServerData::new("Fixture".into(), "World".into());
+    data.flag_b = true;
+    data.session_id = "synthetic-nonce".into();
+    data.connection_type = LAN_CONNECTION_TYPE;
+    data.protocol_version = if matches!(route, Route::LocalLan) {
+        0
+    } else {
+        crate::PROTOCOL_VERSION as u32
+    };
+    signaling.set_server_data(data);
+    let listener = NetherServer::bind_with(
+        signaling,
+        ConnectionConfig {
+            allow_unsigned_answers: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let target = if matches!(route, Route::LocalLan) {
+        NativeConnectionTarget::local_lan(address, "World".into(), crate::NATIVE_JOIN_TIMEOUT)
+            .unwrap()
+    } else {
+        NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan)
+    };
+    FixtureRoute {
+        listener,
+        address,
+        target,
+        http: None,
+        approval: None,
+    }
+}
+
 /// Observes the UUID in this real offline Login without treating the fixture token as authority.
-fn offline_login_identity(login: &packets::Login, address: &str) -> uuid::Uuid {
+fn offline_login_identity(login: &packets::Login, address: &str, nonce: &str) -> uuid::Uuid {
     use base64::Engine;
     let bytes = &login.connection_request;
     let length = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
@@ -271,7 +398,7 @@ fn offline_login_identity(login: &packets::Login, address: &str) -> uuid::Uuid {
         .decode(client.split('.').nth(1).unwrap())
         .unwrap();
     let client: serde_json::Value = serde_json::from_slice(&client).unwrap();
-    assert_eq!(client["Nonce"], "synthetic-nonce");
+    assert_eq!(client["Nonce"], nonce);
     assert_eq!(client["ServerAddress"], address);
     uuid::Uuid::parse_str(claims["leguuid"].as_str().unwrap()).unwrap()
 }
