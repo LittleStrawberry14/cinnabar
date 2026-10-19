@@ -200,6 +200,10 @@ impl NativeRelayConnecting {
     }
 
     /// Moves established application I/O only after the actual handoff boundary was reached.
+    #[expect(
+        clippy::result_large_err,
+        reason = "unfinished typestate returns the same transport and pending progress without allocating on retry"
+    )]
     pub fn try_finish(mut self) -> Result<(NativeRelayConnection, NativeRelayHandoff), Self> {
         match self.complete.take() {
             Some(handoff) => {

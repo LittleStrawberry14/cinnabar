@@ -41,11 +41,12 @@ impl LoginSequence {
         match endpoint {
             crate::SessionEndpoint::Core(directory) => {
                 let profile = bridge::join_profile::JoinProfile::current();
-                let endpoint = profile.stage("core_endpoint_connect");
-                let (reader, frames) = bridge::connect_session(directory)
-                    .await
-                    .map_err(ProtocolError::Bridge)?;
-                drop(endpoint);
+                let (reader, frames) = {
+                    let _endpoint = profile.stage("core_endpoint_connect");
+                    bridge::connect_session(directory)
+                        .await
+                        .map_err(ProtocolError::Bridge)?
+                };
                 Self::connect_prepared(
                     SessionIo {
                         reader,
@@ -82,11 +83,12 @@ impl LoginSequence {
         prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
     ) -> Result<(PlaySession, P), ProtocolError> {
         let profile = bridge::join_profile::JoinProfile::current();
-        let endpoint = profile.stage("core_endpoint_connect");
-        let (reader, frames) = bridge::connect_session(socket_dir)
-            .await
-            .map_err(ProtocolError::Bridge)?;
-        drop(endpoint);
+        let (reader, frames) = {
+            let _endpoint = profile.stage("core_endpoint_connect");
+            bridge::connect_session(socket_dir)
+                .await
+                .map_err(ProtocolError::Bridge)?
+        };
         Self::connect_prepared(
             SessionIo {
                 reader,
