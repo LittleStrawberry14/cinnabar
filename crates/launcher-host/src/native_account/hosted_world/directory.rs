@@ -144,7 +144,28 @@ impl HostDirectory {
                     protocol::NativeServiceClock::new(services.service_time(), observed),
                 )
             };
-            let verifier = operation.provider(&issuer)?.peer_verifier().await?;
+            let cached = operation
+                .cached
+                .as_mut()
+                .ok_or_else(|| invalid("host account owner is unavailable"))?;
+            let same_provider = cached
+                .provider
+                .as_ref()
+                .map(|provider| provider.matches(&issuer))
+                .transpose()?
+                .unwrap_or(false);
+            if !same_provider {
+                cached.provider = Some(protocol::NativeProvider::new(
+                    &issuer,
+                    bedrock_services::minecraft::USER_AGENT,
+                )?);
+            }
+            let verifier = cached
+                .provider
+                .as_mut()
+                .ok_or_else(|| invalid("host provider is unavailable"))?
+                .peer_verifier()
+                .await?;
             Ok::<_, io::Error>((verifier, clock))
         };
         let (verifier, clock) = service(
