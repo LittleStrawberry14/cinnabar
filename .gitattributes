@@ -1,5 +1,6 @@
 crates/world/fixtures/manifest.json text eol=lf
 crates/sim/fixtures/*.jsonl text eol=lf
+crates/render-model/src/hats/**/*.json text eol=lf
 crates/protocol/data/retail_items_*.tsv text eol=lf
 crates/protocol/data/item_capacity_*.tsv text eol=lf
 crates/protocol/data/item_capacity_*.provenance.json text eol=lf
