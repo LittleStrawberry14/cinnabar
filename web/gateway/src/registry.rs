@@ -223,6 +223,42 @@ impl Registry {
         })
     }
 
+    /// Attaches a stream only to the current controller on this actual WebTransport connection.
+    #[cfg(feature = "webtransport")]
+    pub(super) fn bound_play(
+        &self,
+        controller: &Attachment,
+        generation: u64,
+    ) -> io::Result<Attachment> {
+        let registry = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.cancelled.is_cancelled()
+            || !controller.controller
+            || generation != controller.generation
+            || !registry
+                .sessions
+                .iter()
+                .any(|session| Arc::ptr_eq(session, &controller.session))
+        {
+            return Err(resume_refused());
+        }
+        let mut state = controller
+            .session
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.check(controller.generation)?;
+        state.attached += 1;
+        Ok(Attachment {
+            session: Arc::clone(&controller.session),
+            generation,
+            cancel: state.control.clone(),
+            controller: false,
+        })
+    }
+
     /// Queues one real acquisition future; its capacity remains held through the final account lifetime.
     pub(super) fn sign_in(&self, attachment: &Attachment, now: Instant) -> io::Result<()> {
         let mut state = self

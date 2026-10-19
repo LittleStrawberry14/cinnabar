@@ -64,6 +64,11 @@ does not close browser transport or deployment acceptance.
 Gateway pack acquisition now has a guarded public HTTP/HTTPS source candidate; CDN-only
 owning controls require execution. Hosted CDN-only packs remain incomplete where original
 upstream data metadata is unavailable; their existing chunk/metadata path is preserved.
+explicit shutdown. The optional paired WebTransport source reuses that registry,
+controller generation, native play pump and original archives on a dedicated uni stream.
+The coherent HTTP/3 header/capsule dependency and paired transport/BDS owning controls
+still require qualification. Latest-draft browser, deployment and live-account acceptance
+remain incomplete; WebSocket fallback does not close those gates.
 
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.

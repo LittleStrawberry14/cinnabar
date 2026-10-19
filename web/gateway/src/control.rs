@@ -2,7 +2,7 @@
 
 use super::{
     budget::Budget,
-    registry::{Registry, refusal},
+    registry::{Attachment, Registry, refusal},
     session::closed,
 };
 use bridge::{
@@ -75,6 +75,42 @@ async fn serve(
             return Err(error);
         }
     };
+    serve_attached(registry, reader, frames, &attachment).await
+}
+
+/// Drives an already claimed controller without another Hello or capability lookup.
+#[cfg(feature = "webtransport")]
+pub(super) async fn run_attached<S>(
+    registry: &Arc<Registry>,
+    stream: S,
+    attachment: &Attachment,
+) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let (read, write) = tokio::io::split(stream);
+    let (reader, frames, writer) = bridge::tasks::prepare_bounded_connection(
+        read,
+        write,
+        RELAY_CONTROL_BYTES,
+        RELAY_CONTROL_BYTES,
+    );
+    let serving = serve_attached(registry, reader, frames, attachment);
+    tokio::pin!(serving, writer);
+    tokio::select! { biased;
+        () = registry.cancelled.cancelled() => Err(closed()),
+        result = &mut serving => result,
+        () = &mut writer => Err(closed()),
+    }
+}
+
+/// Keeps the original controller's writer, requests and observations under one lifetime.
+async fn serve_attached(
+    registry: &Arc<Registry>,
+    mut reader: impl FrameRead,
+    frames: FrameQueue,
+    attachment: &Attachment,
+) -> io::Result<()> {
     let mut observation = attachment.session.observation.subscribe();
     let mut progress = attachment.session.progress.subscribe();
     let capability = attachment
@@ -143,7 +179,7 @@ async fn serve(
                 if !requests.spend(now) { return Err(closed()); }
                 let request: Request = serde_json::from_slice(&frame).map_err(failed)?;
                 let result = match request {
-                    Request::SignIn => registry.sign_in(&attachment, now),
+                    Request::SignIn => registry.sign_in(attachment, now),
                     Request::SignOut => attachment.session.sign_out(attachment.generation),
                     Request::Pong { resume } => {
                         let acknowledged = attachment.session.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).acknowledge(attachment.generation, &resume, now);
