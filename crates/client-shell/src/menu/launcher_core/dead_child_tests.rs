@@ -407,3 +407,52 @@ fn unconfirmed_retirement_holds_replacement_even_after_policy_changes() {
         assert!(slot.core.is_none());
     }
 }
+
+/// Native account/world attachment must not wait for a nonexistent legacy executable or endpoint.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+#[test]
+fn native_menu_attaches_actual_services_and_world_store_without_a_core_executable() {
+    let runtime = worker_runtime();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let layout = launcher::test_support::scratch("native-menu-without-core");
+    assert!(!layout.core_executable.exists());
+    let store = layout.local_worlds_dir();
+    assert!(!store.exists());
+    let mut menu = MenuRuntime::new_with_layout(
+        true,
+        Some(2),
+        "Fixture".into(),
+        layout,
+        crate::player_skin::LocalPlayerSkin::generated_default("Fixture"),
+    )
+    .with_io(runtime.handle().clone(), tasks.clone())
+    .with_native_sign_in(true);
+    let mut slot = LauncherCoreSlot::default();
+    slot.set_title_presence_owner(TitlePresenceOwner::Native);
+    let mut world = World::new();
+    let mut worlds = LocalWorlds::default();
+    let mut queue = CommandQueue::default();
+    slot.drive(
+        &mut Commands::new(&mut queue, &world),
+        &mut menu,
+        true,
+        false,
+        Some(&mut worlds),
+        Instant::now(),
+    );
+    queue.apply(&mut world);
+    let account_attached = world.contains_resource::<LauncherAccount>();
+    let original_store_opened = store.is_dir();
+    let no_core_exit_was_fabricated = slot.last_core_retirement().is_none();
+    drop(worlds);
+    finish_workers(&runtime, tasks, slot, menu, world);
+    assert!(
+        account_attached,
+        "native menu services still required an unrelated Go Core executable"
+    );
+    assert!(
+        original_store_opened,
+        "the original native local-world manager was not attached"
+    );
+    assert!(no_core_exit_was_fabricated);
+}
