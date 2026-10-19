@@ -37,7 +37,7 @@ async fn ordinary_desktop_admission_holds_one_oversized_generated_body() {
     else {
         panic!("expected the original ScriptMessage")
     };
-    assert_eq!(decoded.message_id.as_str(), "byte-admission");
+    assert_eq!(decoded.message_id.to_str().unwrap(), "byte-admission");
     assert_eq!(decoded.message_value.len(), capacity);
     drop(decoded);
     // The first body is now committed and held by its actual RawPacket, not pending in the pump.
