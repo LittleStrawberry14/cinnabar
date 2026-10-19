@@ -187,8 +187,16 @@ async fn signed_lan_public_join_keeps_provider_proof_nonce_startup_and_bidirecti
                     &*receive(&mut peer, &codec).await[0].data,
                     packets::Packet::RequestChunkRadius(_)
                 ));
-                assert!(matches!(&*receive(&mut peer, &codec).await[0].data,
-                packets::Packet::SetLocalPlayerAsInitialized(value) if value.player_id.0 == 42));
+                let initialized = receive(&mut peer, &codec).await;
+                assert_eq!(
+                    initialized
+                        .iter()
+                        .filter(|packet| matches!(&*packet.data,
+                            packets::Packet::SetLocalPlayerAsInitialized(value) if value.player_id.0 == 42))
+                        .count(),
+                    1,
+                    "loading completion must initialize the original player exactly once"
+                );
                 assert!(matches!(&*receive(&mut peer, &codec).await[0].data,
                 packets::Packet::RequestChunkRadius(value) if value.chunk_radius.0 == 7));
                 send(
