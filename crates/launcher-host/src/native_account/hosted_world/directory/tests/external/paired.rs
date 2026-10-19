@@ -130,14 +130,16 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
         let (play, closed) =
             server.expect("actual provider Login/packs/StartGame/Initialized did not complete");
         assert_eq!(
-            play.as_ref().map(|error| error.0),
-            Some(io::ErrorKind::UnexpectedEof),
+            play,
+            Some((
+                io::ErrorKind::Other,
+                nethernet_tokio::NetherError::ConnectionClosed.to_string(),
+            )),
             "unexpected paired play termination: {play:?}; visitor result: {:?}",
             visitor.as_ref().map(|_| ()).map_err(ToString::to_string)
         );
         assert_eq!(
-            closed.as_ref().map(|error| error.0),
-            play.as_ref().map(|error| error.0),
+            closed, play,
             "first original termination was replaced during explicit close"
         );
         let (archives, game, terrain, response) =
