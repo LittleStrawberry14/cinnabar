@@ -122,6 +122,12 @@ pub const RELAY_UPLOAD_BURST_BYTES: usize = 8388608;
 /// Concurrent browser streams for control, active play and retiring play.
 pub const RELAY_BIDIRECTIONAL_STREAMS: usize = 3;
 
+/// QUIC bidirectional stream admission, including HTTP/3 request streams.
+pub const RELAY_QUIC_BIDIRECTIONAL_STREAMS: usize = 8;
+
+/// QUIC unidirectional stream admission, including HTTP/3 control streams.
+pub const RELAY_QUIC_UNIDIRECTIONAL_STREAMS: usize = 4;
+
 /// Interval between control keepalives.
 pub const RELAY_KEEPALIVE_SECONDS: u32 = 30;
 

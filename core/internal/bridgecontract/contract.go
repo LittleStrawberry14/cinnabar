@@ -83,6 +83,10 @@ const (
 	RelayUploadBurstBytes = 8388608
 	// RelayBidirectionalStreams: Concurrent browser streams for control, active play and retiring play.
 	RelayBidirectionalStreams = 3
+	// RelayQuicBidirectionalStreams: QUIC bidirectional stream admission, including HTTP/3 request streams.
+	RelayQuicBidirectionalStreams = 8
+	// RelayQuicUnidirectionalStreams: QUIC unidirectional stream admission, including HTTP/3 control streams.
+	RelayQuicUnidirectionalStreams = 4
 	// RelayKeepAliveSeconds: Interval between control keepalives.
 	RelayKeepAliveSeconds = 30
 	// RelayControlRefillMillis: Time to replenish one relay control request; busy sign-out retries wait at least this long.
