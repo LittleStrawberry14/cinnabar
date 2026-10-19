@@ -316,3 +316,5 @@ fn unavailable() -> io::Error {
         "original two-visitor fixture owner ended",
     )
 }
+
+mod rejection;
