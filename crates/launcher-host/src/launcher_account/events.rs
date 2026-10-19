@@ -173,7 +173,7 @@ async fn control(
             }
         }
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        let core_api = native_api.is_none();
+        let core_api = core_presence && native_api.is_none();
         #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
         let core_api = true;
         if let Some(config) = &cinnabar
@@ -223,39 +223,51 @@ async fn control(
     }
 }
 
-/// Reads and projects the concrete Core event snapshot on the existing control executor.
+/// Keeps native authentication separate from legacy Core route observations.
+/// A response belongs only to the account generation and source that requested it.
 async fn poll_core_events(
     socket_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     core_api: bool,
     seen_release: &mut Option<bridge::CinnabarRelease>,
 ) {
-    let generation = auth_generation(shared);
-    if let Ok(events) = bridge::poll_events(socket_dir).await {
-        if core_api
-            && let Some(release) = new_release(seen_release, events.cinnabar_release.as_ref())
-        {
-            crate::lifecycle::update::release_published(release);
+    let (generation, source) = {
+        let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+        (snapshot.auth_generation, snapshot.title_presence_owner)
+    };
+    let Ok(events) = bridge::poll_events(socket_dir).await else {
+        return;
+    };
+    let announced = {
+        let mut snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+        if snapshot.auth_generation != generation || snapshot.title_presence_owner != source {
+            return;
         }
-        publish(shared, |snapshot| {
-            if let Some(disconnect) = events.disconnect
-                && snapshot.last_disconnect != Some(disconnect.sequence)
-            {
-                // The first poll only records the standing disconnect.
-                if snapshot.last_disconnect.is_some() {
-                    // An empty message reads as vanilla's no-reason line.
-                    let reason = disconnect.message.trim().to_owned();
-                    snapshot.events.push(AccountEvent::Disconnected { reason });
-                }
-                snapshot.last_disconnect = Some(disconnect.sequence);
+        if let Some(disconnect) = events.disconnect
+            && snapshot.last_disconnect != Some(disconnect.sequence)
+        {
+            // The first poll only records the standing disconnect.
+            if snapshot.last_disconnect.is_some() {
+                // An empty message reads as vanilla's no-reason line.
+                let reason = disconnect.message.trim().to_owned();
+                snapshot.events.push(AccountEvent::Disconnected { reason });
             }
-            snapshot.last_disconnect.get_or_insert(0);
-            snapshot.connect = events.connect;
-            snapshot.server_trust = events.server_trust;
-        });
-        publish_account(shared, generation, |snapshot| {
+            snapshot.last_disconnect = Some(disconnect.sequence);
+        }
+        snapshot.last_disconnect.get_or_insert(0);
+        snapshot.connect = events.connect;
+        snapshot.server_trust = events.server_trust;
+        if source == crate::launcher_core::TitlePresenceOwner::Core {
             snapshot.set_account(events.auth);
-        });
+        }
+        core_api
+            && source == crate::launcher_core::TitlePresenceOwner::Core
+            && new_release(seen_release, events.cinnabar_release.as_ref()).is_some()
+    };
+    if announced {
+        crate::lifecycle::update::release_published(
+            events.cinnabar_release.as_ref().expect("announced release"),
+        );
     }
 }
 
