@@ -65,7 +65,7 @@ impl NativeHostedPeer {
     ) -> Self {
         Self {
             wire,
-            backend: PeerBackend::Dragonfly(backend),
+            backend: PeerBackend::Dragonfly(Box::new(backend)),
             accepted,
             output: Output::Idle,
             phase: Phase::Receive,
@@ -84,7 +84,7 @@ impl NativeHostedPeer {
         Self {
             wire,
             backend: PeerBackend::Bds {
-                upstream: backend,
+                upstream: Box::new(backend),
                 ended: false,
             },
             accepted,

@@ -4,9 +4,9 @@ use bytes::Bytes;
 use protocol::{NativeHostedUpstream, NativeHostedUpstreamClosing};
 
 pub(super) enum PeerBackend {
-    Dragonfly(ActiveBackendPeer),
+    Dragonfly(Box<ActiveBackendPeer>),
     Bds {
-        upstream: NativeHostedUpstream,
+        upstream: Box<NativeHostedUpstream>,
         ended: bool,
     },
 }
@@ -18,9 +18,9 @@ pub(super) enum BackendProgress {
 }
 
 pub(super) enum ClosingPeerBackend {
-    Dragonfly(ClosingBackendPeer),
+    Dragonfly(Box<ClosingBackendPeer>),
     Bds {
-        upstream: NativeHostedUpstreamClosing,
+        upstream: Box<NativeHostedUpstreamClosing>,
         closed: bool,
         ended: bool,
     },
@@ -101,10 +101,10 @@ impl PeerBackend {
     pub fn begin_close(self, deadline: Instant) -> ClosingPeerBackend {
         match self {
             Self::Dragonfly(backend) => {
-                ClosingPeerBackend::Dragonfly(backend.begin_close(deadline))
+                ClosingPeerBackend::Dragonfly(Box::new((*backend).begin_close(deadline)))
             }
             Self::Bds { upstream, ended } => ClosingPeerBackend::Bds {
-                upstream: upstream.begin_close(deadline),
+                upstream: Box::new((*upstream).begin_close(deadline)),
                 closed: false,
                 ended,
             },
