@@ -6,8 +6,8 @@ import subprocess
 
 def declarations(root):
     """Keep process message identities, records and bounded flow in one source."""
-    source = json.loads((root / "crates/bridge/data/host-world.json").read_text())
-    shared = json.loads((root / "crates/bridge/data/contract.json").read_text())
+    source = json.loads((root / "crates/bridge/data/host-world.json").read_text(encoding="utf-8"))
+    shared = json.loads((root / "crates/bridge/data/contract.json").read_text(encoding="utf-8"))
     control = next(row["value"] for row in shared["constants"]
                    if row["rust_name"] == "CONTROL_MAX_FRAME_LEN")
     constants = {"VERSION": source["version"], "MAX_CONTROL_BYTES": control,
@@ -69,7 +69,7 @@ def declarations(root):
         go += ["}", ""]
     def formatted(command, lines):
         """Return exactly the checked-in formatter output for generated declarations."""
-        return subprocess.run(command, input="\n".join(lines) + "\n", text=True,
+        return subprocess.run(command, input="\n".join(lines) + "\n", encoding="utf-8",
                               capture_output=True, check=True).stdout
     return {
         root / "crates/bridge/src/host_world/contract.rs": formatted(

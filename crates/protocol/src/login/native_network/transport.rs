@@ -4,7 +4,7 @@ mod accepted;
 mod endpoint;
 pub(super) mod http;
 mod inbox;
-mod lan;
+pub(super) mod lan;
 mod messaging;
 mod raknet;
 use accepted::AcceptedTransport;
@@ -93,13 +93,19 @@ impl Transport {
         messaging: Option<super::authentication::MessagingAdmission>,
         deadline: tokio::time::Instant,
     ) -> io::Result<Self> {
-        if target.transport == NativeTransport::LocalNetherNetHttp {
+        if matches!(
+            target.transport,
+            NativeTransport::LocalNetherNetHttp | NativeTransport::LocalNetherNetLan
+        ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "local HTTP requires its original Login proof",
+                "local transport requires its original selection and Login policy",
             ));
         }
-        if target.transport == NativeTransport::NetherNetMessaging {
+        if matches!(
+            target.transport,
+            NativeTransport::NetherNetMessaging | NativeTransport::NetherNetLegacy
+        ) {
             return MessagingTransport::connect(target, messaging)
                 .await
                 .map(Box::new)

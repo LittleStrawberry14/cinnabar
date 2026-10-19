@@ -1,7 +1,7 @@
-//! The existing account event runtime continuously polls both service owners.
+//! The existing account event runtime continuously polls the selected service owners.
 use super::*;
 
-/// Runs one retained control future beside one retained native presence future.
+/// Drives retained control, presence and product futures on the existing event executor.
 pub(super) fn poll(
     socket_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
@@ -24,7 +24,26 @@ pub(super) fn poll(
                 lifetime.complete(true);
             }
         };
-        tokio::join!(control, publisher);
+        let product = async {
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            {
+                let (api, account) = {
+                    let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+                    (
+                        snapshot.native_product_api.clone(),
+                        snapshot.native_presence_account.clone(),
+                    )
+                };
+                if let Some(api) = api {
+                    tokio::select! { biased;
+                        _=lifetime.retiring()=>{},
+                        _=api.run(account)=>{},
+                    }
+                    api.finish();
+                }
+            }
+        };
+        tokio::join!(control, publisher, product);
     });
     drop(guard);
 }
@@ -68,6 +87,18 @@ async fn control(
                     == crate::launcher_core::TitlePresenceOwner::Native;
                 if native {
                     lifetime.retire();
+                    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                    {
+                        let api = shared
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .native_product_api
+                            .clone();
+                        if let Some(api) = api {
+                            api.stop();
+                            api.finished().await;
+                        }
+                    }
                     lifetime.finished().await;
                     if lifetime.retirement() != Some(TitlePresenceRetirement::Complete) {
                         return;
@@ -116,7 +147,29 @@ async fn control(
             .unwrap_or_else(|poison| poison.into_inner())
             .cinnabar_api
             .clone();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        let native_api = shared
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .native_product_api
+            .clone();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Some(api) = &native_api {
+            if let Some(config) = &cinnabar {
+                api.configure(config.clone());
+            }
+            if let Some(release) = api.take_release()
+                && let Some(release) = new_release(&mut seen_release, Some(&release))
+            {
+                crate::lifecycle::update::release_published(release);
+            }
+        }
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        let core_api = native_api.is_none();
+        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+        let core_api = true;
         if let Some(config) = &cinnabar
+            && core_api
             && sent_cinnabar.as_ref() != Some(config)
         {
             let sent = tokio::time::timeout(
@@ -130,7 +183,9 @@ async fn control(
         }
         let generation = auth_generation(shared);
         if let Ok(events) = bridge::poll_events(socket_dir).await {
-            if let Some(release) = new_release(&mut seen_release, events.cinnabar_release.as_ref())
+            if core_api
+                && let Some(release) =
+                    new_release(&mut seen_release, events.cinnabar_release.as_ref())
             {
                 crate::lifecycle::update::release_published(release);
             }

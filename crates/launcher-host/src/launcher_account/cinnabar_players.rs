@@ -248,10 +248,20 @@ fn run(
         scope.spawn(move || {
             while let Ok(batch) = work.recv() {
                 let answer = runtime.block_on(async {
-                    tokio::time::timeout(
-                        LOOKUP_TIMEOUT,
-                        bridge::lookup_cinnabar_players(socket_dir, &batch),
-                    )
+                    tokio::time::timeout(LOOKUP_TIMEOUT, async {
+                        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                        {
+                            let api = shared
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .native_product_api
+                                .clone();
+                            if let Some(api) = api {
+                                return api.lookup(&batch).await;
+                            }
+                        }
+                        bridge::lookup_cinnabar_players(socket_dir, &batch).await
+                    })
                     .await
                 });
                 if results.send(answer).is_err() {
@@ -260,8 +270,15 @@ fn run(
             }
         });
         let mut lookups = Lookups::default();
-        let mut pending: Option<u64> = None;
+        let mut pending: Option<(u64, u64)> = None;
+        let mut generation = super::auth_generation(shared);
         loop {
+            if generation != super::auth_generation(shared) {
+                generation = super::auth_generation(shared);
+                lookups.resolved.clear();
+                lookups.refresh.clear();
+                lookups.not_before = None;
+            }
             let now = Instant::now();
             let due = pending.is_none().then(|| lookups.next_wake(now)).flatten();
             let wait = due
@@ -275,8 +292,8 @@ fn run(
                     lookups.set_roster(requests.try_iter().last().unwrap_or(roster));
                 }
                 recv(answers) -> answer => {
-                    let Some(session) = pending.take() else { return; };
-                    if lookups.session == Some(session) {
+                    let Some((session,requested_generation)) = pending.take() else { return; };
+                    if lookups.session == Some(session) && requested_generation==generation && generation==super::auth_generation(shared) {
                         match answer {
                             Ok(Ok(Ok(mut answer))) => {
                                 tracing::debug!(resolved = answer.resolved.len(), resolved_uuids = answer.resolved_uuids.len(), found = answer.cinnabar.len(), found_uuids = answer.cinnabar_uuids.len(), "Cinnabar lookup completed");
@@ -312,7 +329,9 @@ fn run(
             }
             let now = Instant::now();
             publish(shared, |snapshot| {
-                if snapshot.cinnabar_roster_key.map(|key| key.0) == lookups.session {
+                if snapshot.auth_generation == generation
+                    && snapshot.cinnabar_roster_key.map(|key| key.0) == lookups.session
+                {
                     let players = lookups.players(now);
                     if *snapshot.cinnabar_players != players {
                         tracing::debug!(found = players.len(), "Cinnabar badges published");
@@ -323,7 +342,7 @@ fn run(
             if pending.is_none()
                 && let Some(batch) = lookups.next_batch(now)
             {
-                pending = lookups.session;
+                pending = lookups.session.map(|session| (session, generation));
                 tracing::debug!(
                     players = batch.len(),
                     uuids = batch

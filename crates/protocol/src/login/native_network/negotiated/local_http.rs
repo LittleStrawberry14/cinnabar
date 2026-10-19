@@ -2,9 +2,7 @@
 
 use super::*;
 use crate::login::native_network::transport::http::LocalIdentity;
-use nethernet::identity::{
-    SelfSignedIdentity, TokenTrust, TokenVerifier, error::IdentityError, jwt::Claims,
-};
+use nethernet::identity::{SelfSignedIdentity, TokenTrust};
 
 impl Credentials {
     /// Retains one proof key for both SDP and Login without acquiring another account credential.
@@ -42,24 +40,13 @@ impl Credentials {
                     )
                     .map_err(io::Error::other)?,
                 ),
-                trust: TokenTrust::ServerAnswer(Arc::new(NoAccountProvider)),
+                trust: authentication::offline_answer_trust(),
                 expires: None,
             }),
             _ => Err(io::Error::other(
                 "local HTTP credential policy is unavailable",
             )),
         }
-    }
-}
-
-struct NoAccountProvider;
-
-impl TokenVerifier for NoAccountProvider {
-    /// A signed-out local route authorizes self-signed server answers, never an unverified provider token.
-    fn verify(&self, _: &str, _: SystemTime) -> nethernet::identity::error::Result<Claims> {
-        Err(IdentityError::Untrusted(
-            "local server provider is not configured".into(),
-        ))
     }
 }
 

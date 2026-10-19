@@ -15,6 +15,8 @@ pub mod local_worlds;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub mod native_account;
 pub mod native_dialog;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod product_api;
 pub mod remote_images;
 pub mod renderer_startup;
 pub mod server_trust;

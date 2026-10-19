@@ -23,6 +23,7 @@ impl NativeAccount {
         protocol::NativeConnectionTarget,
         protocol::NativeAuthentication,
     )> {
+        target.validate()?;
         if target.transport == protocol::NativeTransport::LocalNetherNetHttp {
             target.local_http_address()?;
             let authentication = self.prepare(claims, random_id).await?;

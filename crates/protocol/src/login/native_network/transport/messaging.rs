@@ -1,7 +1,9 @@
-//! The signed Player Messaging edge of the existing native connection owner.
+//! The signed service signaling edge of the existing native connection owner.
 
 use super::Inbox;
-use crate::login::native_network::authentication::{MessagingAdmission, ensure_current, expired};
+use crate::login::native_network::authentication::{
+    MessagingAdmission, MessagingTarget, ensure_current, expired,
+};
 use bedrock_net::messaging::{ClosingMessagingConnection, MessagingConnection};
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, NetherError};
@@ -9,7 +11,7 @@ use std::{io, time::Instant};
 
 pub(in crate::login::native_network) struct MessagingTransport {
     connection: Option<Connection>,
-    target: crate::NativeMessagingTarget,
+    target: MessagingTarget,
     inbox: Inbox,
 }
 
@@ -30,7 +32,8 @@ impl MessagingTransport {
                 "native messaging requires selected-account admission",
             )
         })?;
-        if endpoint.address != admission.target.peer().to_string() {
+        let target = admission.target.connection_target();
+        if endpoint.address != target.address || endpoint.transport != target.transport {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "native messaging target mismatch",
@@ -44,6 +47,7 @@ impl MessagingTransport {
                 ConnectionConfig {
                     identity: Some(admission.identity),
                     server_trust: Some(admission.trust),
+                    allow_anonymous_answers: admission.target.allow_anonymous_answers(),
                     attempts: 1,
                     ..ConnectionConfig::default()
                 },

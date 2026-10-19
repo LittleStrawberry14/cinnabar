@@ -100,12 +100,12 @@ rust-version = "1.99.0"
 [workspace.dependencies]
 bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "4e9626abbb51b8fa842f49b4aea0fb4d3c01a682" }
 raknet = { git = "https://github.com/cinnabar-mc/raknet", rev = "4cb7fac06c2a530e0f98899637e1949e1037c553" }
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "abcb71bfbe4a340b0fa952dc4244fc0664db0dc0" }
-nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "98e88005200030a92f468e429cacb1e37079f44c" }
-nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "98e88005200030a92f468e429cacb1e37079f44c" }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "775fb94aa61807d1537669e7a8926249b07d779b" }
+nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "b11f163fa1d62da912adecd6d26573569520566c" }
+nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "b11f163fa1d62da912adecd6d26573569520566c" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "de34569bd5b94681638a93eebae8b4e9d35d2571" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "de34569bd5b94681638a93eebae8b4e9d35d2571" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "de34569bd5b94681638a93eebae8b4e9d35d2571" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
@@ -166,7 +166,7 @@ wit-component = "=0.247.0"
 
 # Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1.
 [patch.crates-io]
-tokio-websockets = { git = "https://github.com/cinnabar-mc/tokio-websockets", rev = "061d5d9fa7e1913b3734630942b53e40d526eb0e" }
+tokio-websockets = { git = "https://github.com/cinnabar-mc/tokio-websockets", rev = "6f75363f1d892c42b853476dfba3d58e49e9d506" }
 naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }

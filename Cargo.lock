@@ -832,7 +832,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=d559692748a27a9279f47a2174b81d7927f1cdc5#d559692748a27a9279f47a2174b81d7927f1cdc5"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=de34569bd5b94681638a93eebae8b4e9d35d2571#de34569bd5b94681638a93eebae8b4e9d35d2571"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -850,7 +850,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=d559692748a27a9279f47a2174b81d7927f1cdc5#d559692748a27a9279f47a2174b81d7927f1cdc5"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=de34569bd5b94681638a93eebae8b4e9d35d2571#de34569bd5b94681638a93eebae8b4e9d35d2571"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -878,7 +878,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=d559692748a27a9279f47a2174b81d7927f1cdc5#d559692748a27a9279f47a2174b81d7927f1cdc5"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=de34569bd5b94681638a93eebae8b4e9d35d2571#de34569bd5b94681638a93eebae8b4e9d35d2571"
 dependencies = [
  "serde",
  "serde_json",
@@ -920,7 +920,7 @@ dependencies = [
 [[package]]
 name = "bedrock-services"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=abcb71bfbe4a340b0fa952dc4244fc0664db0dc0#abcb71bfbe4a340b0fa952dc4244fc0664db0dc0"
+source = "git+https://github.com/cinnabar-mc/bedrock-services?rev=775fb94aa61807d1537669e7a8926249b07d779b#775fb94aa61807d1537669e7a8926249b07d779b"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -5849,8 +5849,10 @@ dependencies = [
  "crash-report",
  "crossbeam-channel",
  "ctrlc",
+ "futures",
  "futures-lite",
  "getrandom 0.3.4",
+ "httpdate",
  "image",
  "launcher",
  "libc",
@@ -5860,6 +5862,7 @@ dependencies = [
  "nethernet-tokio",
  "p384",
  "protocol",
+ "raknet",
  "rand",
  "reqwest 0.12.28",
  "resource-pack",
@@ -5874,12 +5877,15 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
+ "tokio-websockets",
  "tracing",
  "update-installer",
  "update-manifest",
  "url",
  "uuid",
+ "webpki-roots",
  "windows-sys 0.61.2",
  "zbus",
  "zeroize",
@@ -6719,7 +6725,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=98e88005200030a92f468e429cacb1e37079f44c#98e88005200030a92f468e429cacb1e37079f44c"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=b11f163fa1d62da912adecd6d26573569520566c#b11f163fa1d62da912adecd6d26573569520566c"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6743,7 +6749,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=98e88005200030a92f468e429cacb1e37079f44c#98e88005200030a92f468e429cacb1e37079f44c"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=b11f163fa1d62da912adecd6d26573569520566c#b11f163fa1d62da912adecd6d26573569520566c"
 dependencies = [
  "bytes",
  "futures",
@@ -8845,6 +8851,7 @@ dependencies = [
  "rand_core 0.10.1",
  "sha2 0.11.1",
  "signature",
+ "spki",
  "zeroize",
 ]
 
@@ -10226,7 +10233,7 @@ dependencies = [
 [[package]]
 name = "tokio-websockets"
 version = "0.13.3"
-source = "git+https://github.com/cinnabar-mc/tokio-websockets?rev=061d5d9fa7e1913b3734630942b53e40d526eb0e#061d5d9fa7e1913b3734630942b53e40d526eb0e"
+source = "git+https://github.com/cinnabar-mc/tokio-websockets?rev=6f75363f1d892c42b853476dfba3d58e49e9d506#6f75363f1d892c42b853476dfba3d58e49e9d506"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",

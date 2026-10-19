@@ -116,8 +116,13 @@ Local BDS HTTP now uses the same HTTP/full-ICE adapter and original loopback
 family, without DNS, proxy or redirects. SDP and Login retain one original proof;
 selected account validity is unchanged and signed-out play uses self-signed SDP.
 The original ready receiver/Inbox/close owner is reused, with no second I/O loop.
-This source addition requires owning execution and actual BDS qualification. BDS
-LAN local-player support remains incomplete and fails explicitly.
+This source addition requires owning execution and actual BDS qualification.
+Local BDS LAN source now retains the original selected level and IPv4 loopback discovery
+endpoint, requires advertised offline admission and the actual Login nonce, and uses the
+existing LAN transport with no HTTP substitution. This source remains incomplete pending
+execution of the new controls, coherent dependency checks and real selected-world acceptance. Generic
+authenticated LAN and friend-session LAN remain separate gaps; the pinned Go friend
+signaling selector rejects LAN rather than defining an online friend route.
 
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the
@@ -1193,6 +1198,12 @@ screen-effect parity remain incomplete.
 - The account core keeps an optional WebSocket to the Cinnabar API (`core/cinnabarapi`). It dials
   before minting and reuses unexpired key-bound credentials with fresh challenge proofs. Negotiated
   limits, retry minima, reconnect jitter and bounded frame-rejection retries control its traffic.
+- The optional native backend owns the same product connection on the existing account event
+  executor. Its selected account mints the key-bound token after dial under one authentication
+  deadline, then releases its credential lease before the socket lifetime. Native lookups,
+  nearby playback, loadouts and release notices use the existing launcher records and caches;
+  a missing native account stays offline. The new source and loopback controls await execution
+  on the coherent dependency graph, independent review and deployed-service acceptance.
 - Player lookups prioritize new joiners, drain coalesced refresh rounds, expire visible positives and discard
   older-session replies. Release notices include manifest builds and schedule jittered checks with
   bounded retries for older signed manifests. Packaging rejects placeholder origins and announces
@@ -8617,3 +8628,12 @@ chat/forms, resource packs, and an offline local world followed by reload. Requi
 platform, parity and performance evidence must be complete for the claimed release scope.
 Keep the completion ledger consistent with this checklist; no historical green test
 or isolated fix silently completes the surrounding gate.
+
+The native Realm/Gathering service handoff now represents legacy WebSocket network
+routes separately from Player Messaging UUIDs. Both feed the existing connection,
+codec and caller-driven signaling owner on the same selected account operation
+and minted key. Only an authenticated legacy service route may allow an absent
+answer identity; present identities retain configured verification, and friend,
+JSON-RPC and local HTTP policies remain strict. This source checkpoint still needs
+a coherent released dependency graph and owning execution before acceptance;
+service/WAN/device and vanilla qualification remain open. Go stays the default.

@@ -48,6 +48,16 @@ pub(in crate::login::native_network) async fn receive<S: bedrock_net::BatchPhase
 
 #[tokio::test]
 async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
+    pack_deferred_spawn(false).await;
+}
+
+#[tokio::test]
+async fn selected_local_lan_preserves_offline_login_nonce_and_actual_network_id_through_startup() {
+    pack_deferred_spawn(true).await;
+}
+
+/// Exercises the same original discovery, Login, packs and live owner for both LAN selections.
+async fn pack_deferred_spawn(selected_local: bool) {
     tokio::time::timeout(Duration::from_secs(20), async {
         let reservation = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = reservation.local_addr().unwrap();
@@ -66,7 +76,7 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
         data.flag_b = true;
         data.session_id = "synthetic-nonce".into();
         data.connection_type = LAN_CONNECTION_TYPE;
-        data.protocol_version = crate::PROTOCOL_VERSION as u32;
+        data.protocol_version = if selected_local { 0 } else { crate::PROTOCOL_VERSION as u32 };
         signaling.set_server_data(data);
         let mut listener = NetherServer::bind_with(
             signaling,
@@ -113,7 +123,8 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
             let packets::Packet::Login(login) = &*login_packets[0].data else {
                 panic!("the real client must send Login");
             };
-            let identity = offline_login_identity(login);
+            let expected_address = if selected_local { "31".into() } else { address.to_string() };
+            let identity = offline_login_identity(login, &expected_address);
             send(
                 &peer,
                 &codec,
@@ -196,11 +207,17 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
         };
         let client = async {
             let settings = super::super::super::LoginSettings::default();
+            let target = if selected_local {
+                NativeConnectionTarget::local_lan(
+                    address,
+                    "World".into(),
+                    crate::NATIVE_JOIN_TIMEOUT,
+                ).unwrap()
+            } else {
+                NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan)
+            };
             let (mut play, runtime_id) = LoginSequence::connect_native(
-                &NativeConnectionTarget {
-                    address: address.to_string(),
-                    transport: NativeTransport::NetherNetLan,
-                },
+                &target,
                 SessionLogin {
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),
@@ -233,16 +250,29 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
 }
 
 /// Observes the UUID in this real offline Login without treating the fixture token as authority.
-fn offline_login_identity(login: &packets::Login) -> uuid::Uuid {
+fn offline_login_identity(login: &packets::Login, address: &str) -> uuid::Uuid {
     use base64::Engine;
     let bytes = &login.connection_request;
     let length = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let envelope: serde_json::Value = serde_json::from_slice(&bytes[4..4 + length]).unwrap();
+    assert_eq!(envelope["AuthenticationType"], 2);
     let token = envelope["Token"].as_str().unwrap();
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(token.split('.').nth(1).unwrap())
         .unwrap();
     let claims: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(claims["xid"], "");
+    let client_offset = 4 + length;
+    let client_length =
+        u32::from_le_bytes(bytes[client_offset..client_offset + 4].try_into().unwrap()) as usize;
+    let client =
+        std::str::from_utf8(&bytes[client_offset + 4..client_offset + 4 + client_length]).unwrap();
+    let client = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(client.split('.').nth(1).unwrap())
+        .unwrap();
+    let client: serde_json::Value = serde_json::from_slice(&client).unwrap();
+    assert_eq!(client["Nonce"], "synthetic-nonce");
+    assert_eq!(client["ServerAddress"], address);
     uuid::Uuid::parse_str(claims["leguuid"].as_str().unwrap()).unwrap()
 }
 

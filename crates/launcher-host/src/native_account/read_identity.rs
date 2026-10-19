@@ -52,7 +52,7 @@ impl ReadIdentity {
     }
 
     /// An unavailable lease or owner is not evidence that its verified identity was replaced.
-    fn current_status(&self) -> Option<bool> {
+    pub(super) fn current_status(&self) -> Option<bool> {
         let lease = match self.account.store.try_native_lease() {
             Ok(lease) => lease,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return None,

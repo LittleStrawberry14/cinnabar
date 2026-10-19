@@ -33,6 +33,13 @@ pub(super) async fn negotiate(
     authentication: Option<NativeAuthentication>,
     deadline: tokio::time::Instant,
 ) -> Result<NegotiatedConnection, ProtocolError> {
+    target.validate().map_err(failure)?;
+    if target.transport == crate::NativeTransport::LocalNetherNetLan && authentication.is_some() {
+        return Err(failure(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "local LAN requires its advertised offline admission",
+        )));
+    }
     if login.target.is_some() {
         return Err(failure(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -40,7 +47,18 @@ pub(super) async fn negotiate(
         )));
     }
     let mut credentials = Credentials::new(authentication)?;
-    let (transport, address) = if target.transport == crate::NativeTransport::LocalNetherNetHttp {
+    let (transport, address) = if target.transport == crate::NativeTransport::LocalNetherNetLan {
+        let (address, level, budget) = target.local_lan_route().map_err(failure)?;
+        let connected =
+            transport::lan::LanTransport::connect_local(address, level, budget, deadline).await;
+        match connected {
+            Ok((transport, id)) => (
+                Ok(transport::Transport::NetherNetLan(Box::new(transport))),
+                id.to_string(),
+            ),
+            Err(error) => (Err(error), target.address.clone()),
+        }
+    } else if target.transport == crate::NativeTransport::LocalNetherNetHttp {
         let address = target.local_http_address().map_err(failure)?;
         let identity = credentials
             .local_http_identity()

@@ -187,10 +187,8 @@ async fn parallel_urls() {
             parallel_resource_pack_urls: true,
             ..Default::default()
         };
-        let target = NativeConnectionTarget {
-            address: address.to_string(),
-            transport: NativeTransport::NetherNetLan,
-        };
+        let target =
+            NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
         let (attempts, mut observed) = mpsc::channel(ids.len());
         let joining = HTTP_ATTEMPTS.scope(
             attempts,

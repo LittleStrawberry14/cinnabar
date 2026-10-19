@@ -42,10 +42,6 @@ async fn answer(socket: &UdpSocket) {
 
 /// A silent first DNS answer cannot hide another usable peer in the same family.
 #[tokio::test]
-#[expect(
-    clippy::print_stderr,
-    reason = "names a missing optional IPv6 loopback fixture"
-)]
 async fn native_row_ping_uses_actual_public_core_and_all_resolved_peers() {
     for host in ["127.0.0.1:0", "[::1]:0"] {
         let live = match UdpSocket::bind(host).await {

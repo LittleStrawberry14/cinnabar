@@ -20,14 +20,14 @@ impl NativeGatheringSelection {
 
     /// Returns only the selected service namespace; it is never dialled as a hostname.
     pub fn connection_target(&self) -> protocol::NativeConnectionTarget {
-        protocol::NativeConnectionTarget {
-            address: format!(
+        protocol::NativeConnectionTarget::new(
+            format!(
                 "{}{}",
                 bridge::contract::GATHERING_TARGET_PREFIX,
                 self.experience
             ),
-            transport: protocol::NativeTransport::RakNet,
-        }
+            protocol::NativeTransport::RakNet,
+        )
     }
 
     /// Allocates once on this original account, then mints for only the actual returned route.

@@ -1,13 +1,15 @@
 //! Qualified provider credentials and their original finite validity.
 
+mod answer;
 mod hosting;
+pub(super) use answer::offline_answer_trust;
 pub use hosting::NativeHostingIdentity;
 mod messaging;
 mod provider;
 pub use provider::NativeProvider;
 mod verifier;
-pub(super) use messaging::MessagingAdmission;
 pub(super) use messaging::identity_policy;
+pub(super) use messaging::{MessagingAdmission, MessagingTarget};
 pub use verifier::NativeTokenVerifier;
 
 use crate::login::client_data::{NativeClaims, RawClientData};
@@ -113,10 +115,7 @@ pub struct NativeAuthentication {
     pub(super) identity: crate::session_wire::SessionIdentity,
     clock: NativeServiceClock,
     verifier: Arc<NativeTokenVerifier>,
-    messaging: Option<(
-        bedrock_net::messaging::PreparedMessaging,
-        crate::NativeMessagingTarget,
-    )>,
+    messaging: Option<(bedrock_net::messaging::PreparedMessaging, MessagingTarget)>,
 }
 
 impl NativeAuthentication {
@@ -205,13 +204,15 @@ impl NativeAuthentication {
         prepared: bedrock_net::messaging::PreparedMessaging,
         target: crate::NativeMessagingTarget,
     ) -> io::Result<Self> {
-        if self.messaging.is_some() || prepared.peer() != target.peer() {
+        if self.messaging.is_some()
+            || !matches!(prepared.recipient(), bedrock_net::messaging::Recipient::Messaging(peer) if *peer == target.peer())
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "native messaging target mismatch",
             ));
         }
-        self.messaging = Some((prepared, target));
+        self.messaging = Some((prepared, MessagingTarget::Joined(target)));
         Ok(self)
     }
 
@@ -220,13 +221,21 @@ impl NativeAuthentication {
     /// The caller must have obtained this exact recipient from a successful authenticated
     /// Realm or Gathering join on the same acquired account. This method checks transport
     /// consistency, not membership. These services do not supply a joined-friend admission nonce.
-    /// Provider-only answer verification and the originally minted key are retained.
+    /// Present answers retain provider verification and the originally minted key.
+    /// Only the legacy service route may omit its answer identity.
     pub fn with_service_messaging(
-        self,
+        mut self,
         prepared: bedrock_net::messaging::PreparedMessaging,
     ) -> io::Result<Self> {
-        let target = crate::NativeMessagingTarget::service(prepared.peer())?;
-        self.with_messaging(prepared, target)
+        if self.messaging.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native messaging handoff was already supplied",
+            ));
+        }
+        let target = MessagingTarget::Service(prepared.recipient().clone());
+        self.messaging = Some((prepared, target));
+        Ok(self)
     }
 
     /// Returns the original absolute Login admission deadline without extending the minted lifetime.

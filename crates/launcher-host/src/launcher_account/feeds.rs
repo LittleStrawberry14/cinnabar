@@ -117,7 +117,10 @@ pub(super) fn poll_home(
 }
 
 /// Publishes Home under its requesting account and returns it for impression reporting.
-async fn home_round(source: &impl FeedSource, shared: &Mutex<Snapshot>) -> (Option<Home>, bool) {
+pub(super) async fn home_round(
+    source: &impl FeedSource,
+    shared: &Mutex<Snapshot>,
+) -> (Option<Home>, bool) {
     let generation = super::auth_generation(shared);
     let mut failed = false;
     let home = settle("home", source.home().await, &mut failed);

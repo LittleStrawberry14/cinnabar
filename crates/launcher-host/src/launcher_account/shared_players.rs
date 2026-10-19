@@ -94,13 +94,21 @@ pub(super) fn start(
                 };
                 let Some(local) = local else { continue };
                 let result = runtime.block_on(async {
-                    tokio::time::timeout(
-                        Duration::from_secs(2),
-                        bridge::sync_cinnabar_players(&dir, &local),
-                    )
+                    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                    if let Some(api) = shared
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .native_product_api
+                        .clone()
+                    {
+                        return Ok(Ok(api.sync(local)));
+                    }
+                    tokio::time::timeout(Duration::from_secs(2), async {
+                        bridge::sync_cinnabar_players(&dir, &local).await.map(Some)
+                    })
                     .await
                 });
-                if let Ok(Ok(remote)) = result {
+                if let Ok(Ok(Some(remote))) = result {
                     publish(&shared, |snapshot| {
                         if snapshot.auth_generation == generation
                             && snapshot.shared_players.session == session

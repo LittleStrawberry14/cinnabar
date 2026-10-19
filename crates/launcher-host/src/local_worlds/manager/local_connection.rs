@@ -53,13 +53,44 @@ impl NativeLocalWorldSelection {
     pub fn connection_target(&self) -> io::Result<protocol::NativeConnectionTarget> {
         self.validate()?;
         let local = self.opening.target();
+        if (self.opening.world().backend, local.transport)
+            == (Backend::Bds, Transport::NetherNetLan)
+        {
+            let address = local
+                .lan_address
+                .as_deref()
+                .and_then(|value| value.parse::<SocketAddr>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local world returned an invalid LAN endpoint",
+                    )
+                })?;
+            let level = local
+                .level_name
+                .as_deref()
+                .filter(|level| *level == self.world_id())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local world returned another LAN level",
+                    )
+                })?;
+            return protocol::NativeConnectionTarget::local_lan(
+                address,
+                level.to_owned(),
+                std::time::Duration::from_millis(u64::from(
+                    bridge::contract::LOCAL_LAN_DISCOVERY_TIMEOUT_MS,
+                )),
+            );
+        }
         let transport = match (self.opening.world().backend, local.transport) {
             (Backend::Dragonfly, Transport::RakNet) => protocol::NativeTransport::RakNet,
             (Backend::Bds, Transport::NetherNet) => protocol::NativeTransport::LocalNetherNetHttp,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "native local BDS LAN transport is not available yet",
+                    "local world advertises an unsupported native transport",
                 ));
             }
         };
@@ -74,10 +105,10 @@ impl NativeLocalWorldSelection {
                     "local world returned an invalid loopback endpoint",
                 )
             })?;
-        Ok(protocol::NativeConnectionTarget {
-            address: address.to_string(),
+        Ok(protocol::NativeConnectionTarget::new(
+            address.to_string(),
             transport,
-        })
+        ))
     }
 
     /// Borrows the stable original world ID, solely for local presentation/session identity.

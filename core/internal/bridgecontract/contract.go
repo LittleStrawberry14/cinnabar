@@ -203,6 +203,8 @@ const (
 	MethodPresence = "presence.v1"
 	// MethodLocalWorld: Control method for local world.
 	MethodLocalWorld = "local_world.v1"
+	// LocalLANDiscoveryTimeoutMS: Original discovery budget for a selected local BDS LAN level.
+	LocalLANDiscoveryTimeoutMS = 8000
 	// MethodWorldInvite: Control method for world invite.
 	MethodWorldInvite = "world_invite.v1"
 	// RPCParseError: Control error code for parse error.
@@ -237,6 +239,8 @@ const (
 	CinnabarAPIBaseURL = "https://cinnabar-api.cinnabar-api.workers.dev"
 	// CinnabarAPIMaxLookupXUIDs: Most XUIDs in one Cinnabar player lookup.
 	CinnabarAPIMaxLookupXUIDs = 128
+	// CinnabarAPIMaxFrameBytes: Largest product API WebSocket message in bytes.
+	CinnabarAPIMaxFrameBytes = 65536
 	// CinnabarAPICacheTTLMS: Fallback lifetime of a Cinnabar lookup answer.
 	CinnabarAPICacheTTLMS = 120000
 	// CinnabarAPILookupBucketCapacity: Fallback lookup budget in XUIDs.
