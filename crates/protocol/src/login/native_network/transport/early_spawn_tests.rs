@@ -297,6 +297,7 @@ async fn fixture_route(route: Route) -> FixtureRoute {
                 .await
                 .unwrap(),
         );
+        signaling.set_server_data(ServerData::new("Fixture".into(), "World".into()));
         let address = signaling.local_addr();
         let listener = NetherServer::bind_with(
             std::sync::Arc::clone(&signaling),
