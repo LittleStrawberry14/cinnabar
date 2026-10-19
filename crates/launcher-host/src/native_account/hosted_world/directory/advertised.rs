@@ -50,7 +50,7 @@ impl Advertisement {
 impl HostDirectory {
     /// Rejects replacement publication before account or transport acquisition and retains the first cutoff.
     pub(in crate::native_account::hosted_world) fn activation_deadline(
-        &self,
+        &mut self,
         deadline: Instant,
     ) -> io::Result<Instant> {
         self.active()?;
@@ -61,6 +61,7 @@ impl HostDirectory {
         }
         let deadline = deadline.min(self.deadline);
         check_deadline(deadline)?;
+        self.deadline = deadline;
         Ok(deadline)
     }
 

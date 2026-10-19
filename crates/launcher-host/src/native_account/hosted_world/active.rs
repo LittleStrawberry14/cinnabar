@@ -48,7 +48,7 @@ impl NativeHostedWorld {
     /// Activity is acknowledged only after the same membership and process bridge are checked.
     /// Cancellation drops local IO and returns any dispatched remote obligation to its manager slot.
     pub async fn activate(mut self, deadline: Instant) -> io::Result<ActiveHostedWorld> {
-        let deadline = self.directory_ref()?.activation_deadline(deadline)?;
+        let deadline = self.directory_mut()?.activation_deadline(deadline)?;
         let acquire::Acquired {
             mut server,
             identity,
