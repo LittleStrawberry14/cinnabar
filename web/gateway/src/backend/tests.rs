@@ -49,6 +49,14 @@ impl Drop for Fixture {
 impl Fixture {
     /// Runs the actual private backend on one explicitly trusted localhost certificate and socket.
     async fn new() -> Self {
+        Self::with_upstream(None).await
+    }
+
+    /// Scopes an optional exact loopback fixture to this backend's actual serving future.
+    async fn with_upstream(upstream: Option<SocketAddr>) -> Self {
+        if let Some(address) = upstream {
+            assert!(address.ip().is_loopback() && address.port() != 0);
+        }
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let certificate = cert.der().clone();
@@ -61,7 +69,15 @@ impl Fixture {
             let connection = listener.accept().await.map(|(stream, _)| stream);
             Some((connection, listener))
         }));
-        let task = tokio::spawn(backend.run(incoming));
+        let task = tokio::spawn(async move {
+            if let Some(address) = upstream {
+                crate::upstream::FIXTURE_UPSTREAM
+                    .scope(address, backend.run(incoming))
+                    .await
+            } else {
+                backend.run(incoming).await
+            }
+        });
         let mut roots = RootCertStore::empty();
         roots.add(certificate).unwrap();
         let mut config = ClientConfig::builder_with_provider(Arc::new(
@@ -334,3 +350,4 @@ async fn completed_service_driver_retains_sessions_until_connections_retire() {
 
 mod channel;
 mod play;
+mod world;
