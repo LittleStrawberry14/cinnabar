@@ -62,7 +62,6 @@ pub const MAX_ENTRIES_PER_STACK: usize = 65_536;
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_DECLARED_BYTES_PER_PACK: u64 = 512 * 1024 * 1024;
 pub const MAX_DECLARED_BYTES_PER_STACK: u64 = 1024 * 1024 * 1024;
-pub const MAX_SUBPACKS: usize = 64;
 
 /// A stable, attacker-data-free reason why the whole selected stack was rejected.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -156,3 +155,6 @@ pub fn validate_handoff_for_device(
 
 #[cfg(test)]
 mod handoff_tests;
+
+#[cfg(test)]
+mod subpack_count_tests;

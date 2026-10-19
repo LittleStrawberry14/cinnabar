@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use bedrock_packs::jsonc::parse_jsonc_lenient;
 
-use crate::{AdmissionError, MAX_SUBPACKS, Subpack};
+use crate::{AdmissionError, Subpack};
 
 /// A `major.minor.patch` pack version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,9 +96,6 @@ pub(crate) fn read_manifest(
         return Err(AdmissionError::InvalidModules);
     }
     let subpacks = root["subpacks"].as_array().map_or(&[][..], Vec::as_slice);
-    if subpacks.len() > MAX_SUBPACKS {
-        return Err(AdmissionError::InvalidSubpack);
-    }
     let subpacks = subpacks
         .iter()
         .filter_map(|subpack| {
