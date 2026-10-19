@@ -624,6 +624,7 @@ fn native_local_bds_lan_selection_uses_the_original_process_discovery_endpoint()
 #[test]
 fn native_bds_host_intent_keeps_the_original_http_or_lan_opening() {
     for lan in [None, Some("127.0.0.1:7552".to_owned())] {
+        let has_lan = lan.is_some();
         let runner = Arc::new(FakeRunner {
             lan,
             ..Default::default()
@@ -653,10 +654,15 @@ fn native_bds_host_intent_keeps_the_original_http_or_lan_opening() {
             .unwrap();
         assert_eq!(selected.address, captured.address);
         assert_eq!(selected.transport, captured.transport);
-        assert_eq!(
-            selected.local_lan_route().unwrap(),
-            captured.local_lan_route().unwrap()
-        );
+        if has_lan {
+            assert_eq!(
+                selected.local_lan_route().unwrap(),
+                captured.local_lan_route().unwrap()
+            );
+        } else {
+            assert!(selected.local_lan_route().is_err());
+            assert!(captured.local_lan_route().is_err());
+        }
         manager.close();
         wait_for(manager, WorldState::Idle);
         manager.open(&world.id, None).unwrap();
