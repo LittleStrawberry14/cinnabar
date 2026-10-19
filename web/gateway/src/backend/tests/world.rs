@@ -129,9 +129,21 @@ async fn accepted_play_reaches_owned_bds_world() {
             () = &mut writer => panic!("actual play writer ended before world startup and close"),
         }
         writer.await;
-        test_time::eventually("actual BDS play socket and lease retired", || {
+        test_time::eventually("actual BDS play socket retired", || {
             fixture.registry.test_counts() == (1, 1)
         });
+        let attachment = fixture
+            .registry
+            .open_play(&capability.resume, capability.generation, Instant::now())
+            .unwrap();
+        let next = attachment
+            .session
+            .begin_play(attachment.generation, join + 1)
+            .await
+            .expect("original play retired before the next join owns its account");
+        next.current().unwrap();
+        drop(next);
+        drop(attachment);
         eprintln!("gateway normal play close complete");
 
         control
