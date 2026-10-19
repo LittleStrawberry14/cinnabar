@@ -1,8 +1,8 @@
 //! `shaders.properties`: the pack-wide settings file of OptiFine/Iris packs.
 //!
 //! The file is first run through a C-like conditional preprocessor (`#if`, `#ifdef`, ...),
-//! then read as java.util.Properties. Program enable rules and custom images are typed; other
-//! keys stay in `entries`.
+//! then read as java.util.Properties. Program enable rules, buffer sizes, flips, scales and
+//! custom images are typed; other keys stay in `entries`.
 //! Malformed input never fails the whole file: it becomes a [`PropertiesDiagnostic`].
 
 mod reader;
@@ -22,6 +22,12 @@ pub struct ShaderProperties {
     pub entries: Vec<(String, String)>,
     /// `program.[<dimension>/]<program>.enabled` rules, one per key.
     pub program_rules: Vec<ProgramRule>,
+    /// `size.buffer.<buffer>` rules, one per key.
+    pub buffer_sizes: Vec<BufferSize>,
+    /// `flip.<program>.<buffer>` rules, one per key.
+    pub flips: Vec<FlipRule>,
+    /// `scale.<program>` rules, one per key.
+    pub scales: Vec<ScaleRule>,
     /// `image.<name>` declarations, one per key.
     pub images: Vec<CustomImage>,
     /// Malformed lines and expressions (never fatal), with 1-based line numbers.
@@ -130,6 +136,49 @@ impl ProgramRule {
             .eval(&|name| defines.get(name).map(|value| macro_value(value)));
         !matches!(value, Ok(value) if value == 0.0)
     }
+}
+
+/// `size.buffer.<buffer>=<width> <height>`: a fixed or screen-relative render target size.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BufferSize {
+    /// Buffer name, e.g. "colortex4".
+    pub buffer: String,
+    /// Width in pixels or as a fraction of the screen width.
+    pub width: SizeValue,
+    /// Height in pixels or as a fraction of the screen height.
+    pub height: SizeValue,
+}
+
+/// Iris rule: a value containing '.' is relative to the screen size, else absolute pixels.
+/// Both kinds are always positive.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SizeValue {
+    /// Size in pixels.
+    Absolute(u32),
+    /// Multiple of the screen dimension.
+    Relative(f32),
+}
+
+/// `flip.<program>.<buffer>=true|false`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlipRule {
+    /// Program after which the flip applies.
+    pub program: String,
+    /// Ping-pong buffer to flip, e.g. "colortex6".
+    pub buffer: String,
+    /// Whether to flip the buffer.
+    pub flip: bool,
+}
+
+/// `scale.<program>=<scale> [<offsetX> <offsetY>]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScaleRule {
+    /// Program whose viewport is scaled.
+    pub program: String,
+    /// Positive viewport scale relative to the screen.
+    pub scale: f32,
+    /// Viewport offset as a fraction of the screen; `[0.0, 0.0]` when omitted.
+    pub offset: [f32; 2],
 }
 
 /// `image.<name> = <sampler> <format> <internalFormat> <pixelType> <clear> <relative> <w> <h> [<d>]`.

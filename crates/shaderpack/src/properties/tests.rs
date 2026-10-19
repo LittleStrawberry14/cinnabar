@@ -187,6 +187,80 @@ fn program_rules_prefer_dimension_and_last_occurrence() {
 }
 
 #[test]
+fn buffer_sizes_absolute_relative_and_malformed() {
+    let properties = parse(
+        "size.buffer.colortex4 = 64 64\nsize.buffer.colortex6 = 0.5 0.25\n\
+         size.buffer.colortex7 = 64\nsize.buffer.colortex8 = wide 2\nsize.buffer.colortex9 = 0 4\n\
+         size.buffer.colortex4 = 256 128\n",
+    );
+    assert_eq!(
+        properties.buffer_sizes,
+        [
+            BufferSize {
+                buffer: "colortex4".to_owned(),
+                width: SizeValue::Absolute(256),
+                height: SizeValue::Absolute(128),
+            },
+            BufferSize {
+                buffer: "colortex6".to_owned(),
+                width: SizeValue::Relative(0.5),
+                height: SizeValue::Relative(0.25),
+            },
+        ]
+    );
+    assert_eq!(diagnostic_lines(&properties), [3, 4, 5]);
+    assert_eq!(properties.entries.len(), 6);
+}
+
+#[test]
+fn flip_rules_and_malformed() {
+    let properties = parse(
+        "flip.composite2.colortex3 = true\nflip.deferred.colortex1=false\n\
+         flip.composite3.colortex4 = maybe\nflip.composite4 = true\n",
+    );
+    assert_eq!(
+        properties.flips,
+        [
+            FlipRule {
+                program: "composite2".to_owned(),
+                buffer: "colortex3".to_owned(),
+                flip: true,
+            },
+            FlipRule {
+                program: "deferred".to_owned(),
+                buffer: "colortex1".to_owned(),
+                flip: false,
+            },
+        ]
+    );
+    assert_eq!(diagnostic_lines(&properties), [3, 4]);
+}
+
+#[test]
+fn scale_rules_with_and_without_offset() {
+    let properties = parse(
+        "scale.composite5 = 0.5\nscale.composite6 = 0.25 0.5 0.75\nscale.composite7 = 0.5 0.1\n\
+         scale.composite8 = big\nscale.composite9 = 0\n",
+    );
+    assert_eq!(
+        properties.scales,
+        [
+            ScaleRule {
+                program: "composite5".to_owned(),
+                scale: 0.5,
+                offset: [0.0, 0.0],
+            },
+            ScaleRule {
+                program: "composite6".to_owned(),
+                scale: 0.25,
+                offset: [0.5, 0.75],
+            },
+        ]
+    );
+    assert_eq!(diagnostic_lines(&properties), [3, 4, 5]);
+}
+
+#[test]
 fn custom_images_relative_absolute_and_malformed() {
     let properties = parse(
         "image.halfImg = halfSampler rgba rgba16f half_float true true 0.5 0.5\n\

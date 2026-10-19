@@ -1,6 +1,9 @@
 //! Typed parsing of the recognised `shaders.properties` keys.
 
-use super::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+use super::{
+    BufferSize, CustomImage, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic, ScaleRule,
+    ShaderProperties, SizeValue,
+};
 use crate::expr::Expr;
 
 /// Records the typed rule for a recognised `key`; a malformed value adds a diagnostic
@@ -28,6 +31,22 @@ fn apply_rule(
         properties
             .program_rules
             .push(program_rule(target, value, line)?);
+    } else if let Some(buffer) = key.strip_prefix("size.buffer.") {
+        let (width, height) = first_of_two(value)?;
+        properties.buffer_sizes.push(BufferSize {
+            buffer: name(buffer, "buffer")?,
+            width: size_value(width)?,
+            height: size_value(height)?,
+        });
+    } else if let Some(target) = key.strip_prefix("flip.") {
+        let (program, buffer) = split_target(target, "program", "buffer")?;
+        properties.flips.push(FlipRule {
+            program,
+            buffer,
+            flip: parse_bool(value)?,
+        });
+    } else if let Some(program) = key.strip_prefix("scale.") {
+        properties.scales.push(scale_rule(program, value)?);
     } else if let Some(image) = key.strip_prefix("image.") {
         properties.images.push(custom_image(image, value)?);
     }
@@ -40,6 +59,23 @@ fn name(segment: &str, what: &str) -> Result<String, String> {
         return Err(format!("missing {what} name"));
     }
     Ok(segment.to_owned())
+}
+
+/// Splits `<first>.<rest>` at the first `.`; both parts must be non-empty.
+fn split_target(target: &str, first: &str, rest: &str) -> Result<(String, String), String> {
+    let Some((head, tail)) = target.split_once('.') else {
+        return Err(format!("expected `<{first}>.<{rest}>`"));
+    };
+    Ok((name(head, first)?, name(tail, rest)?))
+}
+
+/// The two whitespace-separated tokens of `value`.
+fn first_of_two(value: &str) -> Result<(&str, &str), String> {
+    let mut tokens = value.split_whitespace();
+    match (tokens.next(), tokens.next(), tokens.next()) {
+        (Some(first), Some(second), None) => Ok((first, second)),
+        _ => Err(format!("expected two values, found `{value}`")),
+    }
 }
 
 /// Parses true or false without regard to case, rejecting other values.
@@ -92,6 +128,40 @@ fn program_rule(target: &str, value: &str, line: u32) -> Result<ProgramRule, Str
         program: name(program, "program")?,
         expr,
         line,
+    })
+}
+
+/// Iris rule: a value containing '.' is a screen-relative fraction, else pixels.
+fn size_value(text: &str) -> Result<SizeValue, String> {
+    if text.contains('.') {
+        positive_f32(text).map(SizeValue::Relative)
+    } else {
+        positive_u32(text).map(SizeValue::Absolute)
+    }
+}
+
+/// Parses a positive viewport scale and its optional offset.
+fn scale_rule(program: &str, value: &str) -> Result<ScaleRule, String> {
+    let numbers = value
+        .split_whitespace()
+        .map(parse_f32)
+        .collect::<Result<Vec<_>, _>>()?;
+    let (scale, offset) = match *numbers.as_slice() {
+        [scale] => (scale, [0.0, 0.0]),
+        [scale, x, y] => (scale, [x, y]),
+        _ => {
+            return Err(format!(
+                "expected `<scale> [<offsetX> <offsetY>]`, found `{value}`"
+            ));
+        }
+    };
+    if scale <= 0.0 {
+        return Err(format!("scale `{scale}` must be positive"));
+    }
+    Ok(ScaleRule {
+        program: name(program, "program")?,
+        scale,
+        offset,
     })
 }
 

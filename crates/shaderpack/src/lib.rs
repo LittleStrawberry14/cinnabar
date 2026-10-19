@@ -24,5 +24,8 @@ pub use programs::{
     GEOMETRY_FALLBACKS, ProgramGroup, ProgramKind, ProgramSource, StageKind, geometry_fallback,
     program_group,
 };
-pub use properties::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+pub use properties::{
+    BufferSize, CustomImage, FlipRule, ImageSize, ProgramRule, PropertiesDiagnostic, ScaleRule,
+    ShaderProperties, SizeValue,
+};
 pub use source::{PackError, PackOrigin, PackSource};
