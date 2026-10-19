@@ -195,7 +195,7 @@ mod session {
             )
             .await;
             pair.transport.set_relay(relay.clone());
-            await_spawn(&mut pair.transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
+            let _ready = await_spawn(&mut pair.transport, DEFAULT_CHUNK_RADIUS, |_, _| {})
                 .await
                 .expect("the original prerequisites still complete spawn");
             let Inbound::Packet(radius) = pair.transport.recv().await.unwrap() else {
