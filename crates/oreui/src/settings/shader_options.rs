@@ -132,7 +132,7 @@ fn cell(
                 canvas,
                 view,
                 face,
-                &format!("{} ›", element.label),
+                &format!("{} >", element.label),
                 Some(next),
             )?;
             Ok(engaged(view, &[next]))
@@ -280,14 +280,14 @@ fn arrows(
         canvas,
         view,
         [row[0], row[1], row[0] + width, row[3]],
-        "‹",
+        "<",
         Some(previous),
     )?;
     button::action(
         canvas,
         view,
         [row[2] - width, row[1], row[2], row[3]],
-        "›",
+        ">",
         Some(next),
     )
 }
