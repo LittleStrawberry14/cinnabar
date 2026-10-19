@@ -21,11 +21,6 @@ use std::{
 use tokio_rustls::rustls;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-tokio::task_local! {
-    static ACCEPTED_PREFIX: tokio::sync::mpsc::Sender<()>;
-}
-
 pub(crate) type Transport = WebTransportSession<h3_quinn::Connection, Bytes>;
 pub(super) type Bidi = h3_webtransport::stream::BidiStream<h3_quinn::BidiStream<Bytes>, Bytes>;
 
@@ -172,7 +167,7 @@ async fn open(
         .await
         .map_err(failed)?
         .ok_or_else(closed)?;
-    let (request, mut response) = resolver.resolve().await.map_err(failed)?;
+    let (request, mut response) = resolver.resolve_request().await.map_err(failed)?;
     current(deadline)?;
     if let Err(status) = inspect(&request, origins) {
         response
@@ -230,18 +225,12 @@ fn inspect(request: &Request<()>, origins: &[String]) -> Result<(), StatusCode> 
 /// Owns the taken stream and its partial protocol prefix across unrelated select completions.
 async fn next_bi(transport: Arc<Transport>) -> io::Result<Bidi> {
     loop {
-        let resolver = transport
+        let accepted = transport
             .accept_bi()
             .await
             .map_err(failed)?
             .ok_or_else(closed)?;
-        #[cfg(test)]
-        let _ = ACCEPTED_PREFIX.try_with(|observed| {
-            observed
-                .try_send(())
-                .expect("bounded accepted-prefix observations")
-        });
-        match resolver.resolve().await.map_err(failed)? {
+        match accepted {
             AcceptedBi::BidiStream(session, mut stream) => {
                 if session == transport.session_id() {
                     return Ok(stream);

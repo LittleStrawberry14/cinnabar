@@ -1,31 +1,26 @@
-//! Thin real Quinn peer using maintained HTTP/3/QPACK and stream-header codecs.
+//! Real Quinn peer retaining the maintained public HTTP/3 client and stream owners.
 
 use super::*;
-use bytes::{Buf, BytesMut};
+use bytes::Buf;
 use futures::future::poll_fn;
 use h3::{
-    frame::FrameStream,
-    proto::{
-        frame::{Frame, SettingId, Settings},
-        headers::Header,
-    },
-    quic::{Connection, OpenStreams, SendStream},
-    stream::{BidiStreamHeader, BufRecvStream, UniStreamHeader, WriteBuf},
+    stream::{BidiStreamHeader, WriteBuf},
     webtransport::SessionId,
 };
 use std::net::{Ipv4Addr, SocketAddr};
+use std::{future::Future, sync::Mutex, task::Poll};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 
-type RequestStream = FrameStream<h3_quinn::BidiStream<Bytes>, Bytes>;
+type RequestStream = h3::client::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>;
+type Driver = Mutex<h3::client::Connection<h3_quinn::Connection, Bytes>>;
 
 pub(super) struct Fixture {
     pub(super) registry: Arc<Registry>,
     pub(super) tcp: SocketAddr,
-    pub(super) prefixes: tokio::sync::mpsc::Receiver<()>,
     udp: quinn::Endpoint,
     client: quinn::Endpoint,
     task: JoinHandle<io::Result<()>>,
@@ -34,6 +29,16 @@ pub(super) struct Fixture {
 impl Fixture {
     /// Supplies one actual certificate, paired listeners, registry and original serving future.
     pub(super) async fn new(upstream: Option<SocketAddr>) -> Self {
+        Self::configured(upstream, false).await
+    }
+
+    /// Limits actual receive credit so a split-prefix test can prove the server consumed a byte.
+    pub(super) async fn with_prefix_credit() -> Self {
+        Self::configured(None, true).await
+    }
+
+    /// Retains the original paired service; only the causal prefix fixture changes stream credit.
+    async fn configured(upstream: Option<SocketAddr>, prefix_credit: bool) -> Self {
         if let Some(upstream) = upstream {
             assert!(upstream.ip().is_loopback() && upstream.port() != 0);
         }
@@ -46,11 +51,11 @@ impl Fixture {
         let registry = Arc::clone(&gateway.registry);
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let tcp = listener.local_addr().unwrap();
-        let udp = quinn::Endpoint::server(
-            gateway.quic_config().unwrap(),
-            (Ipv4Addr::LOCALHOST, 0).into(),
-        )
-        .unwrap();
+        let mut config = gateway.quic_config().unwrap();
+        if prefix_credit {
+            Arc::make_mut(&mut config.transport).stream_receive_window(1_u32.into());
+        }
+        let udp = quinn::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let tcp_incoming = Box::pin(futures::stream::unfold(listener, |listener| async {
             Some((listener.accept().await.map(|(socket, _)| socket), listener))
         }));
@@ -60,12 +65,8 @@ impl Fixture {
                 .await
                 .map(|incoming| (Ok(incoming), endpoint))
         }));
-        let (observations, prefixes) = tokio::sync::mpsc::channel(QUEUED_FRAMES);
         let task = tokio::spawn(async move {
-            let run = super::super::ACCEPTED_PREFIX.scope(
-                observations,
-                gateway.run_paired(tcp_incoming, quic_incoming),
-            );
+            let run = gateway.run_paired(tcp_incoming, quic_incoming);
             if let Some(upstream) = upstream {
                 crate::upstream::FIXTURE_UPSTREAM.scope(upstream, run).await
             } else {
@@ -88,7 +89,6 @@ impl Fixture {
         Self {
             registry,
             tcp,
-            prefixes,
             udp,
             client,
             task,
@@ -103,32 +103,27 @@ impl Fixture {
             .await
     }
 
-    /// Opens a real retained HTTP/3 control stream and one CONNECT request using original codecs.
+    /// Uses the maintained public client builder and retains its original control driver.
     pub(super) async fn peer(&self, path: &str, origin: Option<&str>) -> Peer {
         let connection = self.connect().await.unwrap();
-        let quic = h3_quinn::Connection::new(connection.clone());
-        let mut opener = <h3_quinn::Connection as Connection<Bytes>>::opener(&quic);
-        let mut settings = Settings::default();
-        for id in [
-            SettingId::ENABLE_CONNECT_PROTOCOL,
-            SettingId::H3_DATAGRAM,
-            SettingId::ENABLE_WEBTRANSPORT,
-            SettingId::WEBTRANSPORT_MAX_SESSIONS,
-        ] {
-            settings.insert(id, 1).unwrap();
-        }
-        let mut control = poll_fn(|cx| opener.poll_open_send(cx)).await.unwrap();
-        control
-            .send_data(WriteBuf::<Bytes>::from(UniStreamHeader::Control(settings)))
+        let mut builder = h3::client::builder();
+        builder
+            .enable_webtransport(true)
+            .enable_extended_connect(true)
+            .enable_datagram(true)
+            .max_webtransport_sessions(1)
+            .max_field_section_size(u64::try_from(RELAY_CONTROL_BYTES).unwrap())
+            .send_grease(false);
+        let (driver, requests) = builder
+            .build(h3_quinn::Connection::new(connection.clone()))
+            .await
             .unwrap();
-        poll_fn(|cx| control.poll_ready(cx)).await.unwrap();
         let mut peer = Peer {
             connection,
-            opener,
+            requests,
+            driver: Mutex::new(driver),
             session: SessionId::try_from(0).unwrap(),
             connect: None,
-            _settings: control,
-            critical: std::sync::Mutex::new(Vec::new()),
         };
         let request = peer.request(path, origin).await;
         peer.session = request.id().into();
@@ -164,39 +159,37 @@ impl Drop for Fixture {
 pub(super) struct Peer {
     pub(super) connection: quinn::Connection,
     pub(super) session: SessionId,
-    opener: h3_quinn::OpenStreams,
+    requests: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
+    driver: Driver,
     connect: Option<RequestStream>,
-    _settings: h3_quinn::SendStream<Bytes>,
-    critical: std::sync::Mutex<Vec<quinn::RecvStream>>,
 }
 
 impl Peer {
-    /// Uses maintained header and QPACK encoders; the fixture supplies no HTTP parser or factory.
+    /// Sends a real CONNECT with the maintained public request/Protocol encoder.
     pub(super) async fn request(&mut self, path: &str, origin: Option<&str>) -> RequestStream {
-        let mut stream = poll_fn(|cx| self.opener.poll_open_bidi(cx)).await.unwrap();
-        let mut fields = http::HeaderMap::new();
+        let mut request = Request::builder()
+            .method(Method::CONNECT)
+            .uri(format!("https://localhost{path}"))
+            .extension(Protocol::WEB_TRANSPORT);
         if let Some(origin) = origin {
-            fields.insert(http::header::ORIGIN, origin.parse().unwrap());
+            request = request.header(http::header::ORIGIN, origin);
         }
-        let mut extensions = http::Extensions::new();
-        extensions.insert(Protocol::WEB_TRANSPORT);
-        let headers = Header::request(
-            Method::CONNECT,
-            format!("https://localhost{path}").parse().unwrap(),
-            fields,
-            extensions,
+        drive(
+            &self.driver,
+            self.requests.send_request(request.body(()).unwrap()),
         )
-        .unwrap();
-        let mut encoded = BytesMut::new();
-        h3::qpack::encode_stateless(&mut encoded, headers).unwrap();
-        stream.send_data(Frame::Headers(encoded.freeze())).unwrap();
-        poll_fn(|cx| stream.poll_ready(cx)).await.unwrap();
-        FrameStream::new(BufRecvStream::new(stream))
+        .await
+        .unwrap()
     }
 
     /// Observes actual HEADERS on the original CONNECT before using application streams.
     pub(super) async fn status(&mut self) -> StatusCode {
-        response(self.connect.as_mut().unwrap()).await
+        response(&self.driver, self.connect.as_mut().unwrap()).await
+    }
+
+    /// Decodes the extra request response through that same public client and original driver.
+    pub(super) async fn response(&self, stream: &mut RequestStream) -> StatusCode {
+        response(&self.driver, stream).await
     }
 
     /// Produces the maintained protocol preface for this actual CONNECT stream's identity.
@@ -212,42 +205,41 @@ impl Peer {
         tokio::io::join(recv, send)
     }
 
-    /// Observes original CONNECT DATA then FIN while the actual QUIC owner remains retained.
+    /// Observes original CONNECT DATA and validated FIN while retaining the same HTTP/3 owner.
     pub(super) async fn connect_end(&mut self) -> usize {
         let stream = self.connect.as_mut().unwrap();
-        let mut bytes = 0;
-        loop {
-            match poll_fn(|cx| stream.poll_next(cx)).await.unwrap() {
-                Some(Frame::Data(_)) => {
-                    while let Some(chunk) = poll_fn(|cx| stream.poll_data(cx)).await.unwrap() {
-                        bytes += chunk.remaining();
-                    }
-                }
-                None => return bytes,
-                _ => panic!("unexpected CONNECT close frame"),
+        drive(&self.driver, async {
+            let mut bytes = 0;
+            while let Some(chunk) = stream.recv_data().await.unwrap() {
+                bytes += chunk.remaining();
             }
-        }
+            assert!(stream.recv_trailers().await.unwrap().is_none());
+            bytes
+        })
+        .await
     }
 
-    /// Consumes only maintained WT headers; the existing web receiver checks join/hash/frames/FIN.
-    pub(super) async fn pack_stream(&self) -> quinn::RecvStream {
-        use h3::proto::stream::StreamType;
-        loop {
-            let mut stream = self.connection.accept_uni().await.unwrap();
-            let kind = read_varint(&mut stream).await;
-            if kind == StreamType::WEBTRANSPORT_UNI.value() {
-                let session =
-                    h3::webtransport::SessionId::try_from(read_varint(&mut stream).await).unwrap();
-                assert_eq!(
-                    session, self.session,
-                    "archive stays on the actual CONNECT session"
-                );
-                return stream;
+    /// Takes the actual WT uni discovered by the original HTTP/3 control/stream driver.
+    pub(super) async fn pack_stream(
+        &self,
+    ) -> h3_webtransport::stream::RecvStream<h3_quinn::RecvStream, Bytes> {
+        poll_fn(|cx| {
+            let mut driver = self.driver.lock().unwrap();
+            if let Poll::Ready(error) = driver.poll_close(cx) {
+                panic!("actual HTTP/3 peer retired before its pack stream: {error}");
             }
-            let mut critical = self.critical.lock().unwrap();
-            assert!(critical.len() < RELAY_QUIC_UNIDIRECTIONAL_STREAMS);
-            critical.push(stream);
-        }
+            match driver.inner.accepted_streams_mut().wt_uni_streams.pop() {
+                Some((session, stream)) => {
+                    assert_eq!(
+                        session, self.session,
+                        "archive stays on the actual CONNECT session"
+                    );
+                    Poll::Ready(h3_webtransport::stream::RecvStream::new(stream))
+                }
+                None => Poll::Pending,
+            }
+        })
+        .await
     }
 
     /// Aborts only this actual fixture connection; the original gateway performs application cleanup.
@@ -256,28 +248,21 @@ impl Peer {
     }
 }
 
-/// Uses maintained HTTP/3 and QPACK decoding to observe the actual server response.
-pub(super) async fn response(stream: &mut RequestStream) -> StatusCode {
-    let Some(Frame::Headers(mut encoded)) = poll_fn(|cx| stream.poll_next(cx)).await.unwrap()
-    else {
-        panic!("actual HEADERS response")
-    };
-    let decoded =
-        h3::qpack::decode_stateless(&mut encoded, u64::try_from(RELAY_CONTROL_BYTES).unwrap())
-            .unwrap();
-    Header::try_from(decoded.fields)
+/// Decodes actual response headers through the original public client request stream.
+async fn response(driver: &Driver, stream: &mut RequestStream) -> StatusCode {
+    drive(driver, stream.recv_response())
+        .await
         .unwrap()
-        .into_response_parts()
-        .unwrap()
-        .0
+        .status()
 }
 
-/// Uses the maintained decoder and encoded-size contract, retaining no advertised body buffer.
-async fn read_varint(stream: &mut quinn::RecvStream) -> u64 {
-    use h3::proto::varint::VarInt;
-    let mut encoded = [0; VarInt::MAX_SIZE];
-    stream.read_exact(&mut encoded[..1]).await.unwrap();
-    let size = VarInt::encoded_size(encoded[0]);
-    stream.read_exact(&mut encoded[1..size]).await.unwrap();
-    VarInt::decode(&mut &encoded[..size]).unwrap().into_inner()
+/// Drives the same maintained client without a separate task, reader or parser.
+async fn drive<T>(driver: &Driver, operation: impl Future<Output = T>) -> T {
+    tokio::pin!(operation);
+    tokio::select! { biased;
+        result = &mut operation => result,
+        error = poll_fn(|cx| driver.lock().unwrap().poll_close(cx)) => {
+            panic!("actual HTTP/3 peer retired before its operation: {error}");
+        }
+    }
 }
