@@ -1,39 +1,19 @@
 //! Invite-screen friends from the selected account's existing PeopleHub owner.
 
+use super::read_identity::ReadIdentity;
 use super::*;
 use bedrock_services::xbox::social::{PeopleList, ProfileDetail, User};
 
 /// Retains the verified reader while the existing artwork worker fills local paths.
 pub(crate) struct NativePeople {
     pub(crate) people: Vec<bridge::Person>,
-    account: Arc<NativeAccount>,
-    generation: String,
-    xuid: String,
+    identity: ReadIdentity,
 }
 
 impl NativePeople {
     /// Rechecks protected account selection after all artwork awaits, without authenticating.
     pub(crate) fn into_current(self) -> Option<Vec<bridge::Person>> {
-        let lease = self.account.store.try_native_lease().ok()?;
-        let state = self.account.state.try_lock().ok()?;
-        let cached = state.cached.as_ref()?;
-        (!state.busy
-            && cached.generation == self.generation
-            && lease.generation() == self.generation
-            && cached.binding == lease.binding()
-            && lease
-                .selected_id()
-                .is_none_or(|selected| selected == self.xuid)
-            && self
-                .account
-                .selected_id
-                .as_deref()
-                .is_none_or(|selected| lease.selected_id() == Some(selected))
-            && cached
-                .identity
-                .as_ref()
-                .is_some_and(|identity| identity.current_credential && identity.xuid == self.xuid))
-        .then_some(self.people)
+        self.identity.current().then_some(self.people)
     }
 }
 
@@ -42,14 +22,7 @@ impl NativeAccount {
     /// The existing invite worker supplies the original timeout and cancellation.
     pub(crate) async fn read_people(self: Arc<Self>) -> io::Result<NativePeople> {
         let mut operation = Arc::clone(&self).acquire_verified().await?;
-        let cached = operation.cached.as_ref().expect("verified account");
-        let generation = cached.generation.clone();
-        let xuid = cached
-            .identity
-            .as_ref()
-            .expect("verified identity")
-            .xuid
-            .clone();
+        let identity = ReadIdentity::capture(&operation);
         let response = operation
             .social()
             .await?
@@ -58,12 +31,7 @@ impl NativeAccount {
         operation.persist()?;
         let people = project(response.map_err(service_error)?);
         drop(operation);
-        Ok(NativePeople {
-            people,
-            account: self,
-            generation,
-            xuid,
-        })
+        Ok(NativePeople { people, identity })
     }
 }
 

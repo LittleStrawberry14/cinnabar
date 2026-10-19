@@ -14,6 +14,7 @@ mod people;
 mod prepare;
 pub(crate) mod presence;
 mod profile;
+mod read_identity;
 mod realms;
 mod restore;
 mod world_metadata;
@@ -31,6 +32,7 @@ pub use hosted_world::{
 pub(crate) use people::NativePeople;
 pub(crate) use profile::NativeProfile;
 pub use realms::is_realm_target;
+pub(crate) use realms::membership::{PreparedRealmMembership, RealmMembershipResult};
 
 use bedrock_services::{
     minecraft,

@@ -132,8 +132,16 @@ acceptance remain open.
 Native invitation sending and inbox adoption need their concrete account/session
 consumers; a people row does not provide membership or invitation authority.
 
+The existing Realm invitation UI now selects the same native account for preview
+and explicit acceptance. Preparation retains its verified credential lease;
+possible acceptance writes remain observed under one original worker deadline
+through UI retirement, with no automatic resubmission. Preview never updates the
+catalog or connects. The default path keeps Go. Source controls cover the shared
+code extractor, stale request generation, missing native owner and retained I/O;
+their execution and live native membership acceptance remain open.
+
 Incomplete: advertised native hosting and its Messaging acceptor, invitation sending
-and inbox consumers, Realm membership UI and signed Realm NetherNet acceptance,
+and inbox consumers, qualified Realm membership UI and signed Realm NetherNet acceptance,
 remaining account-event/catalog consumers, real-browser rendering, remote provider-key
 refresh and broad service/transport cancellation acceptance. Real-account/device/server/
 network validation, comparative performance analysis, source-based vanilla parity and
