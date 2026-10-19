@@ -9,12 +9,14 @@
 //! shadow maps, `shadowcomp*` compute passes, `prepare*`, `gbuffers_skybasic` over the sky
 //! discs, opaque terrain with the `gbuffers_terrain*` programs, `deferred*`, translucent
 //! terrain, `composite*` and `final`, before tonemapping and the UI. Terrain comes from the
-//! geometry adapter (`geometry`) and the block atlas (`atlas`). What it does not draw (actors,
-//! block entities, the hand, particles, clouds, weather and the other effects) is taken from
-//! the Vanilla scene where it is nearer than the pack's geometry. The Vanilla terrain and
-//! far-terrain passes skip the pack's cameras (`ShaderPackDrawnCategories` `terrain`), so a
-//! section not expanded yet shows the pack's sky or fog, as Iris draws no unbuilt section.
-//! Packs without terrain programs get the Vanilla scene copied into `colortex0` instead.
+//! geometry adapter (`geometry`) and the block atlas (`atlas`). The pack also draws the sun,
+//! moon, stars, particles, clouds, weather, lightning, block cracks and the selection outline
+//! through its own programs (`effects`). What it does not draw (actors, block entities and the
+//! hand) is taken from the Vanilla scene where it is nearer than the pack's geometry. The
+//! Vanilla terrain and far-terrain passes skip the pack's cameras (`ShaderPackDrawnCategories`
+//! `terrain`), so a section not expanded yet shows the pack's sky or fog, as Iris draws no
+//! unbuilt section. Packs without terrain programs get the Vanilla scene copied into
+//! `colortex0` instead.
 //!
 //! Conventions: pack buffers are stored bottom-up and gamma-encoded as in OpenGL Minecraft
 //! (the translator flips clip-space Y and remaps clip depth), uniforms use OpenGL matrices,
@@ -26,6 +28,8 @@ mod alpha_test;
 pub(crate) mod atlas;
 #[cfg(feature = "shaderpacks")]
 mod draws;
+#[cfg(feature = "shaderpacks")]
+mod effects;
 #[cfg(feature = "shaderpacks")]
 mod frame_geometry;
 #[cfg(feature = "shaderpacks")]

@@ -221,6 +221,7 @@ fn render_frames(
     let context = super::passes::DrawContext {
         chunk_offset: Vec3::ZERO,
         atlas_size: [0; 2],
+        particle_atlas_size: [0; 2],
     };
     state.write_uniforms(&gpu.queue, &frame, 0.016, &context);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);

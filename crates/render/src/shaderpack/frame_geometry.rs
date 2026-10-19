@@ -1,8 +1,10 @@
 //! Recording the pack's geometry: the shadow pass, the sky, opaque and translucent terrain,
-//! the depth copies Iris's `depthtex*`/`shadowtex*` semantics need, and the Vanilla overlay
-//! that stands in for geometry the host does not draw yet.
+//! the effects (see `effects`), the depth copies Iris's `depthtex*`/`shadowtex*` semantics
+//! need, and the Vanilla overlay that stands in for geometry the host does not draw yet.
 
 use super::draws::DrawKind;
+use super::effects::textures::ShaderpackEffectTextures;
+use super::effects::{Effect, EffectInputs, prepare_effects};
 use super::geometry::{
     CONSTANT_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, GeometryCategory, TerrainLayout,
 };
@@ -38,7 +40,11 @@ pub(crate) struct FrameGeometry<'a> {
     pub terrain: &'a dyn TerrainDraws,
     /// The block atlases and their generation, once built.
     pub atlas: Option<(AtlasViews<'a>, u64)>,
+    /// The effects' textures, once the render world has them.
+    pub effect_textures: Option<&'a ShaderpackEffectTextures>,
     pub sky: SkyInputs,
+    /// What the effects are built from.
+    pub effects: EffectInputs<'a>,
     /// Eye distance within which every section is expanded (`f32::MAX` when all are); the
     /// Vanilla overlay passes nothing beyond it.
     pub overlay_radius: f32,
@@ -129,7 +135,7 @@ pub(crate) fn open_kind<'e>(
     Some((render, index))
 }
 
-/// Records the terrain or sky draw of `kind` with the draw's own bind groups.
+/// Records the terrain, sky or effect draw of `kind` with the draw's own bind groups.
 fn record_kind(
     encoder: &mut CommandEncoder,
     state: &mut ViewState,
@@ -140,6 +146,13 @@ fn record_kind(
     sky: Option<&SkyGeometry>,
 ) {
     let pack = std::sync::Arc::clone(&state.pack);
+    let effect = match kind {
+        DrawKind::Effect(effect) => match state.effects.range(effect) {
+            Some(range) => Some(range),
+            None => return,
+        },
+        _ => None,
+    };
     let Some((render, index)) = open_kind(encoder, state, kind, write_alt, depth) else {
         return;
     };
@@ -159,6 +172,18 @@ fn record_kind(
                 raw.set_bind_group(i as u32, group, &[]);
             }
         }
+    }
+    if let Some(range) = effect {
+        let (Some(vertices), Some(indices)) = (&state.effects.vertices, &state.effects.indices)
+        else {
+            return;
+        };
+        let raw = tracked.wgpu_pass();
+        raw.set_vertex_buffer(GEOMETRY_VERTEX_BUFFER, vertices.slice(..));
+        raw.set_vertex_buffer(CONSTANT_VERTEX_BUFFER, pack.host.constant_stream.slice(..));
+        raw.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+        raw.draw_indexed(range, 0, 0..1);
+        return;
     }
     match kind.category() {
         Some(category) => {
@@ -273,9 +298,12 @@ fn copy_shadow_depth(
     }
 }
 
-/// Brings the view's draw bind groups up to date with the atlas.
+/// Brings the view's draw bind groups up to date with the atlas and effect textures.
 pub(crate) fn bind_geometry(device: &Device, state: &mut ViewState, geometry: &FrameGeometry<'_>) {
-    let generation = geometry.atlas.as_ref().map(|(_, g)| *g);
+    let generation = (
+        geometry.atlas.as_ref().map(|(_, g)| *g),
+        geometry.effect_textures.map(|t| t.generation),
+    );
     if state.atlas_generation == Some(generation) {
         return;
     }
@@ -283,8 +311,34 @@ pub(crate) fn bind_geometry(device: &Device, state: &mut ViewState, geometry: &F
     let atlas = geometry.atlas.as_ref().map(|(views, _)| *views);
     state
         .bindings
-        .bind_draws(device, &pack, &mut state.targets, |_| atlas);
+        .bind_draws(device, &pack, &mut state.targets, |kind| match kind {
+            DrawKind::Effect(effect) => geometry.effect_textures?.views(effect),
+            _ => atlas,
+        });
     state.atlas_generation = Some(generation);
+}
+
+/// Records the effects of `effects` that draw in this phase, in order, over `write_alt`.
+fn record_effects(
+    encoder: &mut CommandEncoder,
+    state: &mut ViewState,
+    geometry: &FrameGeometry<'_>,
+    effects: impl IntoIterator<Item = Effect>,
+    write_alt: u32,
+    depth: Option<(&TextureView, [u32; 2])>,
+) {
+    for effect in effects {
+        let depth = depth.filter(|_| !effect.sky());
+        record_kind(
+            encoder,
+            state,
+            geometry,
+            DrawKind::Effect(effect),
+            write_alt,
+            depth,
+            None,
+        );
+    }
 }
 
 /// The shadow pass: shadow colour clears, opaque shadow casters into `shadowtex1`, then
@@ -342,7 +396,8 @@ pub(crate) fn record_shadow(
     }
 }
 
-/// The sky (no depth), then opaque terrain against a cleared depth attachment, the copy into
+/// The sky (no depth) with the sun, moon and stars, then opaque terrain against a cleared
+/// depth attachment and the effects Iris draws before the deferred passes, the copy into
 /// `depthtex2` when sampled, then the copy into `depthtex1`, which also stands in for
 /// `depthtex0` until translucents draw. Solid and cutout terrain are timed as the terrain
 /// stages during aggregate profiling.
@@ -360,9 +415,18 @@ pub(crate) fn record_opaque(
         queue.write_buffer(buffer, 0, &sky.bytes);
     }
     let pack = std::sync::Arc::clone(&state.pack);
+    prepare_effects(device, queue, &pack, &mut state.effects, &geometry.effects);
     for kind in [DrawKind::Sky, DrawKind::Sunset] {
         record_kind(encoder, state, geometry, kind, scene_alt, None, Some(&sky));
     }
+    record_effects(
+        encoder,
+        state,
+        geometry,
+        [Effect::Sun, Effect::Moon, Effect::Stars],
+        scene_alt,
+        None,
+    );
     let Some(depth) = state.targets.geometry_depth.as_ref() else {
         return;
     };
@@ -386,6 +450,24 @@ pub(crate) fn record_opaque(
             );
         });
     }
+    let before = [
+        Effect::Lightning,
+        Effect::DamagedBlock,
+        Effect::Outline,
+        Effect::Particles,
+        Effect::ParticlesTranslucent,
+        Effect::ParticlesAdditive,
+    ]
+    .into_iter()
+    .filter(|effect| !pack.effects.after_deferred(*effect));
+    record_effects(
+        encoder,
+        state,
+        geometry,
+        before,
+        scene_alt,
+        Some((&view, size)),
+    );
     // Iris's `depthtex2` holds the depth before the hand, `depthtex1` before translucents.
     let before_hand: &[usize] = if pack.depth_sampled[2] { &[2] } else { &[] };
     copy_view_depth(device, encoder, state, before_hand, &[2]);
@@ -394,7 +476,8 @@ pub(crate) fn record_opaque(
 }
 
 /// What Vanilla drew in front of the pack's opaque geometry, then translucent terrain after
-/// the deferred passes, into the geometry depth `depthtex0` reads.
+/// the deferred passes and the effects Iris draws after them (particles by the pack's
+/// ordering, clouds, weather), all into the geometry depth `depthtex0` reads.
 pub(crate) fn record_translucent(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -418,15 +501,33 @@ pub(crate) fn record_translucent(
         Some((&view, size)),
         None,
     );
+    let pack = std::sync::Arc::clone(&state.pack);
+    let after = [
+        Effect::Particles,
+        Effect::ParticlesTranslucent,
+        Effect::ParticlesAdditive,
+        Effect::Clouds,
+        Effect::Weather,
+    ]
+    .into_iter()
+    .filter(|effect| pack.effects.after_deferred(*effect));
+    record_effects(
+        encoder,
+        state,
+        geometry,
+        after,
+        translucent_alt,
+        Some((&view, size)),
+    );
     copy_view_depth(device, encoder, state, &[], &[0]);
 }
 
 /// Composites the Vanilla scene where it is clearly nearer than the pack's opaque geometry
 /// into `colortex0` (gamma-encoded, on the side composite passes read) and the depth
 /// attachment, before translucent geometry draws over it.
-/// What the pack does not draw itself (actors, block entities, the hand and the effects)
-/// reaches the pack this way, already lit by Vanilla and without gbuffer data; Vanilla
-/// leaves out the categories the pack draws (`ShaderPackDrawnCategories`).
+/// What the pack does not draw itself (actors, block entities and the hand) reaches the
+/// pack this way, already lit by Vanilla and without gbuffer data; Vanilla leaves out the
+/// categories and effects the pack draws (`ShaderPackDrawnCategories`, `ShaderPackEffects`).
 fn record_vanilla_overlay(
     device: &Device,
     encoder: &mut CommandEncoder,

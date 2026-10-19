@@ -148,6 +148,9 @@ fn install(app: &mut App) {
 #[path = "gpu/vertices.rs"]
 mod vertices;
 use vertices::VertexList;
+#[cfg(feature = "shaderpacks")]
+#[path = "gpu/shaderpack_source.rs"]
+mod shaderpack_source;
 
 /// The vertex lists last passed to each [`VertexList::upload`], shared rather than copied.
 #[derive(Default)]
@@ -162,7 +165,7 @@ struct UploadedLists {
 }
 
 #[derive(Resource)]
-struct BlockEntityGpu {
+pub(crate) struct BlockEntityGpu {
     solid: VertexList,
     overlay: VertexList,
     outline: VertexList,
@@ -227,7 +230,7 @@ fn init_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
 }
 
-fn prepare_resources(
+pub(crate) fn prepare_resources(
     frame: Res<render_scene::BlockEntityFrameResource>,
     selection: Res<render_scene::BlockSelectionFrameResource>,
     atmosphere: Option<Res<render_scene::AtmosphereFrame>>,
@@ -272,7 +275,7 @@ fn prepare_resources(
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
+            view_formats: crate::actor::gpu::ARTWORK_VIEW_FORMATS,
         });
         write_rows(
             &uploads.queue,
@@ -596,9 +599,14 @@ fn queue_overlay(
         pipeline,
         phases,
         &views,
+        |_| false,
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_outline(
     pipeline_cache: Res<PipelineCache>,
     pipeline: ResMut<BlockEntityPipeline>,
@@ -612,6 +620,7 @@ fn queue_outline(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawOutlineCommands>();
     queue_blended(
@@ -622,9 +631,14 @@ fn queue_outline(
         pipeline,
         phases,
         &views,
+        |view| pack.replaces(view, |drawn| drawn.selection),
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_crack(
     pipeline_cache: Res<PipelineCache>,
     pipeline: ResMut<BlockEntityPipeline>,
@@ -638,6 +652,7 @@ fn queue_crack(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawCrackCommands>();
     queue_blended(
@@ -648,6 +663,7 @@ fn queue_crack(
         pipeline,
         phases,
         &views,
+        |view| pack.replaces(view, |drawn| drawn.cracks),
     );
 }
 
@@ -674,9 +690,16 @@ fn queue_additive(
         pipeline,
         phases,
         &views,
+        |_| false,
     );
 }
 
+/// Queues `list` on every camera `skip` does not reject (views whose pack draws the list
+/// itself).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one blended list's queue inputs and its view filter"
+)]
 fn queue_blended(
     list: &VertexList,
     mode: PipelineMode,
@@ -691,11 +714,15 @@ fn queue_blended(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    skip: impl Fn(Entity) -> bool,
 ) {
     if list.count == 0 || list.bind_group.is_none() {
         return;
     }
     for (view_entity, main_entity, view, extracted_camera, msaa) in views {
+        if skip(view_entity) {
+            continue;
+        }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };

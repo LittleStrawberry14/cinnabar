@@ -720,6 +720,9 @@ fn uniform_buffer(device: &Device, name: &str, block: &shaderpack::UniformBlock)
 pub(crate) fn draw_reads(pack: &PackGpu, draw: &GeometryDraw) -> BufferReads {
     let frame = &pack.frame;
     let (base, mips) = match draw.kind {
+        DrawKind::Effect(effect) if pack.effects.after_deferred(effect) => {
+            (frame.translucent_alt, frame.translucent_mips)
+        }
         kind if kind.shadow() => return BufferReads::default(),
         kind if kind.after_deferred() => (frame.translucent_alt, frame.translucent_mips),
         _ => (frame.scene_alt, frame.scene_mips),
@@ -814,8 +817,8 @@ impl ViewBindings {
         }
     }
 
-    /// Rebuilds every draw's bind groups over the block atlas `views` gives its kind (the
-    /// placeholder while `None`).
+    /// Rebuilds every draw's bind groups over the textures `views` gives its kind (the
+    /// placeholder while `None`): the block atlas for terrain, an effect's own texture.
     pub(crate) fn bind_draws<'a>(
         &mut self,
         device: &Device,

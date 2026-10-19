@@ -197,6 +197,37 @@ impl Default for ShaderPackFrameInputs {
     }
 }
 
+/// The effects the loaded pack draws itself on [`ShaderPackRendering`] cameras, through its
+/// own programs or not at all (`clouds=off`); the Vanilla renderers leave them out of those
+/// views. Written in the render world by the pack host.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderPackEffects {
+    pub particles: bool,
+    pub weather: bool,
+    pub lightning: bool,
+    pub clouds: bool,
+    /// The block selection outline.
+    pub selection: bool,
+    /// Block cracks (with the selection highlight, which shares their draw).
+    pub cracks: bool,
+}
+
+/// Which render-world views the pack draws an effect for, for the Vanilla renderers' queue
+/// systems.
+#[derive(SystemParam)]
+pub struct ShaderPackDrawnEffects<'w, 's> {
+    effects: Option<Res<'w, ShaderPackEffects>>,
+    cameras: Query<'w, 's, (), With<ShaderPackRendering>>,
+}
+
+impl ShaderPackDrawnEffects<'_, '_> {
+    /// Whether the pack draws the effect `which` picks on render-world view `view`.
+    #[must_use]
+    pub fn replaces(&self, view: Entity, which: impl Fn(&ShaderPackEffects) -> bool) -> bool {
+        self.effects.as_deref().is_some_and(which) && self.cameras.contains(view)
+    }
+}
+
 /// Resolves a Bedrock identifier (`minecraft:ender_crystal`) to the loaded pack's id.
 pub type ShaderPackIdLookup = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
 

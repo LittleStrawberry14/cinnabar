@@ -7,6 +7,7 @@
 //! directory, keyed by the pack's content hash, the translation settings and the adapter.
 
 use super::draws::{GeometryDraw, GeometryStage, geometry_draws, select_draws};
+use super::effects::EffectSettings;
 use super::host_pipelines::{HostPipelines, host_pipelines};
 use super::pipeline_cache::PipelineCacheFile;
 use super::pipelines::{
@@ -163,6 +164,8 @@ pub(crate) struct PackGpu {
     /// Pack-wide `lightmap` texture some geometry program samples; rewritten each frame the
     /// world lightmap changes.
     pub lightmap: Option<usize>,
+    /// The pack's effect directives (clouds, sun, moon, stars, weather, particle ordering).
+    pub effects: EffectSettings,
 }
 
 impl PackGpu {
@@ -453,7 +456,17 @@ pub(crate) fn build(
     let (runnable, plans) = runnable_programs(&translation)?;
     let (block_ids, actor_ids) =
         super::ids::id_tables(pack.id_maps(&config.environment, &config.options), name);
-    let (geometry, selected_draws) = select_draws(&translation.programs);
+    let effects = EffectSettings::read(
+        &translation.properties,
+        runnable
+            .iter()
+            .any(|p| p.program.group == ProgramGroup::Deferred),
+        assets::facts::entity::NativeEntityClass::LightningBolt
+            .identifier()
+            .and_then(|lightning| actor_ids.entity_id(lightning)),
+    );
+    let (geometry, selected_draws) =
+        select_draws(&translation.programs, |kind| kind.drawn_by(&effects));
     let shadowcomp: Vec<&ProgramTranslation> = translation
         .programs
         .iter()
@@ -771,6 +784,7 @@ pub(crate) fn build(
         &geometry_stages,
         &programs,
         &translation.properties,
+        &effects,
         &buffer_formats,
         &shadow_slots,
     );
@@ -902,6 +916,7 @@ pub(crate) fn build(
         old_lighting: flag("oldLighting"),
         atlas_placeholder,
         lightmap,
+        effects,
     })
 }
 
