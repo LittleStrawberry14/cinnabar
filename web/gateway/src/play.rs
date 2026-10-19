@@ -203,10 +203,13 @@ impl Playing {
             .and_then(|result| result.map_err(invalid))
         {
             if let Some(terminal) = socket.take_terminal() {
-                frames
-                    .send(session_wire::encode_core_message(&terminal).map_err(invalid)?)
-                    .await
-                    .map_err(invalid)?;
+                duplex::write(
+                    &self.lease,
+                    &frames,
+                    session_wire::encode_core_message(&terminal).map_err(invalid)?,
+                    Some(deadline),
+                )
+                .await?;
             }
             return Err(error);
         }
