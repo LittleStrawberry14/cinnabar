@@ -1,6 +1,6 @@
 //! Actual accepting Login/pack/world continuations paired with the running Go world.
 
-mod play;
+pub(super) mod play;
 mod send;
 pub use play::{ClosingHostedPeer, NativeHostedPeer};
 use send::SendAuthority;

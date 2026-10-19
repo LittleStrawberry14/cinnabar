@@ -5,7 +5,7 @@ use bytes::Bytes;
 use std::{io, time::Instant};
 
 #[derive(Default)]
-pub(super) enum Output {
+pub(in crate::native_account::hosted_world) enum Output {
     #[default]
     Idle,
     Forwarding(Instant),
@@ -14,7 +14,7 @@ pub(super) enum Output {
 
 impl Output {
     /// Records backend delivery before any service postcheck can discard its selected result.
-    pub(super) fn stage(
+    pub(in crate::native_account::hosted_world) fn stage(
         &mut self,
         wire: &mut NativeAcceptingIo,
         packet: Bytes,
@@ -37,7 +37,7 @@ impl Output {
     }
 
     /// Resumes the same prepared effect; successful completion remains retained until received succeeds.
-    pub(super) async fn forward(
+    pub(in crate::native_account::hosted_world) async fn forward(
         &mut self,
         host: &mut NativeHostedWorld,
         approval: &HostedApproval,
@@ -59,7 +59,10 @@ impl Output {
     }
 
     /// Records actual received completion before its service wrapper can fail a later postcheck.
-    pub(super) fn acknowledged(&mut self, wire: &mut NativeAcceptingIo) -> io::Result<()> {
+    pub(in crate::native_account::hosted_world) fn acknowledged(
+        &mut self,
+        wire: &mut NativeAcceptingIo,
+    ) -> io::Result<()> {
         if !matches!(self, Self::Acknowledging(_)) {
             return Err(invalid());
         }

@@ -1,6 +1,6 @@
 //! One concrete paired play lifetime, owned and polled by the existing application worker.
 
-mod output;
+pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
 
 use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
