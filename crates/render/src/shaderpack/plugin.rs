@@ -1,11 +1,22 @@
-//! Bevy wiring: the main-world load worker, extraction, the pack's id maps, per-view
-//! preparation and the render-graph system.
+//! Bevy wiring: the main-world load worker, extraction, the geometry adapter's settings and
+//! block ids, the pack's id maps, the Vanilla hand-off, per-view preparation and the
+//! render-graph system.
 
+use super::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
+use super::draws::DrawKind;
+use super::frame_geometry::{FrameGeometry, TerrainDraws};
+use super::geometry::{
+    GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
+    ShaderpackGeometrySettings, ShadowFrustum, device_geometry_budget,
+};
 use super::loader::{PackGpu, load};
-use super::passes::{FrameIo, ViewState, record_frame};
+use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
 use super::pipelines::GpuContext;
 use super::resources::vanilla::VanillaTextures;
+use super::sky::SkyInputs;
+use super::targets::AtlasViews;
 use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
+use bevy::render::render_phase::TrackedRenderPass;
 use bevy::{
     core_pipeline::{Core3d, Core3dSystems},
     prelude::*,
@@ -17,9 +28,10 @@ use bevy::{
         view::{ExtractedView, ViewDepthStencilTexture, ViewTarget},
     },
 };
+use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
-    ShaderPackFrameInputs, ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest,
-    ShaderPackStatus,
+    ShaderPackDrawnCategories, ShaderPackFrameInputs, ShaderPackIdMaps, ShaderPackRendering,
+    ShaderPackRequest, ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -35,6 +47,9 @@ pub(crate) const JAVA_DIMENSIONS: [&str; 3] = [
     "minecraft:the_nether",
     "minecraft:the_end",
 ];
+
+/// The least `far` a pack sees: Java's smallest render distance, two chunks.
+const MIN_PACK_FAR: f32 = 32.0;
 
 /// The loaded pack, shared with the render world.
 #[derive(Resource, ExtractResource, Clone, Default)]
@@ -158,7 +173,70 @@ struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
 
 type PreparedView = (Entity, &'static ExtractedView);
 
-/// Allocates or resizes view targets and writes this frame's uniforms.
+/// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
+/// with the pack's `separateAo`/`oldLighting` and a vertex budget sized to the device,
+/// publishes its block ids and tells the Vanilla terrain passes whether the pack draws
+/// terrain itself.
+#[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
+fn configure_geometry(
+    mut commands: Commands,
+    pack: Option<Res<LoadedShaderPack>>,
+    cameras: Query<(), With<ShaderPackRendering>>,
+    (mut settings, geometry): (
+        ResMut<ShaderpackGeometrySettings>,
+        Option<Res<ShaderpackGeometry>>,
+    ),
+    mut drawn: ResMut<ShaderPackDrawnCategories>,
+    ids: Option<Res<ShaderpackBlockIds>>,
+    memory: Option<Res<DedicatedGraphicsMemory>>,
+    mut shown: Local<Option<usize>>,
+) {
+    let pack = pack
+        .and_then(|p| p.0.clone())
+        .filter(|p| !p.draws.is_empty() && !cameras.is_empty());
+    let wanted = ShaderpackGeometrySettings {
+        enabled: pack.is_some(),
+        separate_ao: pack.as_ref().is_some_and(|p| p.separate_ao),
+        old_lighting: pack.as_ref().is_some_and(|p| p.old_lighting),
+        budget_bytes: device_geometry_budget(memory.map_or(0, |memory| memory.0)),
+        layout: pack
+            .as_ref()
+            .map_or(super::geometry::TerrainLayout::WIDE, |p| p.terrain_layout),
+    };
+    if *settings != wanted {
+        *settings = wanted;
+    }
+    let draws = |kind: DrawKind| {
+        pack.as_ref()
+            .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
+    };
+    let expands_terrain = geometry.is_some_and(|geometry| geometry.supported());
+    drawn.set_if_neq(ShaderPackDrawnCategories {
+        terrain: expands_terrain
+            && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
+    });
+    let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
+    if *shown == key {
+        return;
+    }
+    *shown = key;
+    let table = pack.and_then(|p| p.block_ids.clone());
+    match table {
+        Some(table) => {
+            let revision = ids.map_or(1, |ids| ids.revision + 1);
+            commands.insert_resource(ShaderpackBlockIds {
+                block_entity_id: Arc::new(move |state| {
+                    table.get(state as usize).copied().unwrap_or(-1)
+                }),
+                revision,
+            });
+        }
+        None => commands.remove_resource::<ShaderpackBlockIds>(),
+    }
+}
+
+/// Allocates or resizes view targets, writes this frame's uniforms and builds each view's
+/// shadow-pass terrain list from the pack's shadow culling.
 #[allow(clippy::too_many_arguments, reason = "one frame's view inputs")]
 fn prepare_views(
     mut views: ResMut<ShaderPackViews>,
@@ -168,6 +246,8 @@ fn prepare_views(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     time: Option<Res<Time>>,
+    mut geometry: Option<ResMut<ShaderpackGeometry>>,
+    atlas: Option<Res<ShaderpackAtlas>>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
     let _timer = profiler
@@ -179,6 +259,11 @@ fn prepare_views(
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
+    let render_distance = inputs.render_distance;
+    let inputs = pack_inputs(&inputs, geometry.as_deref());
+    if let Some(geometry) = geometry.as_deref_mut() {
+        geometry.retain_shadow_views(|view| cameras.contains(view) && pack.shadow.is_some());
+    }
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
@@ -205,7 +290,34 @@ fn prepare_views(
             clock,
             &mut state.history,
         );
-        state.write_uniforms(&queue, &frame, clock.delta_seconds);
+        let chunk_offset = geometry
+            .as_ref()
+            .and_then(|g| g.chunk_offset(position.as_dvec3()))
+            .unwrap_or(Vec3::ZERO);
+        let atlas_size = atlas.as_ref().map_or([0; 2], |atlas| {
+            atlas.size.to_array().map(|side| side as i32)
+        });
+        let context = DrawContext {
+            chunk_offset,
+            atlas_size,
+        };
+        state.write_uniforms(&queue, &frame, clock.delta_seconds, &context);
+        if let Some(geometry) = geometry.as_deref_mut()
+            && pack.shadow.is_some()
+        {
+            let light = frame
+                .shadow_model_view()
+                .inverse()
+                .transform_vector3(Vec3::Z);
+            let frustum = ShadowFrustum::new(
+                &pack.shadow_culling,
+                render_distance,
+                position.as_dvec3(),
+                frame.projection() * frame.model_view(),
+                light,
+            );
+            geometry.prepare_shadow_view(entity, &frustum, &device, &queue);
+        }
     }
 }
 
@@ -215,7 +327,69 @@ type PostQuery = (
     &'static ExtractedView,
 );
 
-/// Runs the pack's full-screen chain over the frame's Vanilla scene and presents `final`.
+/// The game state the pack sees. `far` is the render distance, as Iris gives it, except
+/// that it stops where the vertex budget leaves terrain undrawn: Iris draws terrain to `far`
+/// and packs fade it into the sky there, so a larger `far` would leave the edge of what
+/// the pack draws unfogged against the sky.
+fn pack_inputs(
+    inputs: &ShaderPackFrameInputs,
+    geometry: Option<&ShaderpackGeometry>,
+) -> ShaderPackFrameInputs {
+    let mut inputs = *inputs;
+    if let Some(horizon) = geometry.and_then(ShaderpackGeometry::budget_horizon) {
+        inputs.render_distance = inputs.render_distance.min(horizon.max(MIN_PACK_FAR));
+    }
+    inputs
+}
+
+/// The camera view's terrain through the geometry adapter.
+struct ViewTerrain<'a> {
+    geometry: &'a ShaderpackGeometry,
+    view: Entity,
+}
+
+impl TerrainDraws for ViewTerrain<'_> {
+    fn draw<'w>(
+        &'w self,
+        pass: &mut TrackedRenderPass<'w>,
+        category: GeometryCategory,
+        shadow: bool,
+    ) -> u32 {
+        self.geometry.draw(pass, category, self.view, shadow)
+    }
+
+    fn layout(&self) -> super::geometry::TerrainLayout {
+        self.geometry.layout()
+    }
+}
+
+/// The terrain the pack's frames draw, once it has an origin; until then frames copy the
+/// Vanilla scene instead (`passes::copy_scene`).
+fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
+    world
+        .get_resource::<ShaderpackGeometry>()
+        .filter(|geometry| geometry.supported() && geometry.origin().is_some())
+}
+
+/// Whether the pack draws `view`'s sky and world itself this frame, so nothing of the Vanilla
+/// scene behind its geometry reaches the screen: [`shaderpack_post`] takes the geometry
+/// path, and the Vanilla overlay only keeps what is nearer than the pack's depth.
+pub(crate) fn draws_world(world: &World, view: Entity) -> bool {
+    pack_terrain(world).is_some()
+        && world
+            .get_resource::<ShaderPackViews>()
+            .is_some_and(|views| {
+                views
+                    .0
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&view)
+                    .is_some_and(|state| !state.pack.draws.is_empty())
+            })
+}
+
+/// Runs the pack over the frame: its shadow pass, geometry and full-screen chain, and
+/// presents `final`.
 fn shaderpack_post(
     world: &World,
     query: ViewQuery<PostQuery, With<ShaderPackRendering>>,
@@ -230,24 +404,61 @@ fn shaderpack_post(
     let Some(state) = states.get_mut(&entity) else {
         return Ok(());
     };
-    let inputs = world
-        .get_resource::<ShaderPackFrameInputs>()
-        .copied()
-        .unwrap_or_default();
-    let device = world.resource::<RenderDevice>().wgpu_device().clone();
+    let inputs = pack_inputs(
+        &world
+            .get_resource::<ShaderPackFrameInputs>()
+            .copied()
+            .unwrap_or_default(),
+        world.get_resource::<ShaderpackGeometry>(),
+    );
+    let render_device = world.resource::<RenderDevice>();
+    let device = render_device.wgpu_device().clone();
     let queue: wgpu::Queue = (**world.resource::<RenderQueue>()).clone();
     let destination_format = target.main_texture_format();
+    let terrain = pack_terrain(world).map(|geometry| ViewTerrain {
+        geometry,
+        view: entity,
+    });
+    let atlas = world.get_resource::<ShaderpackAtlas>().map(|atlas| {
+        (
+            AtlasViews {
+                color: &atlas.color,
+                normals: &atlas.normals,
+                specular: &atlas.specular,
+            },
+            atlas.generation,
+        )
+    });
     let (_, rotation, position) = view.world_from_view.to_scale_rotation_translation();
     let colours = super::uniforms::sky_fog(&inputs, rotation, position);
+    let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
+        device: render_device,
+        terrain,
+        atlas,
+        sky: SkyInputs {
+            sky_color: colours.sky,
+            fog_color: colours.fog,
+            render_distance: inputs.render_distance,
+            celestial_angle: inputs.celestial_angle,
+            camera_y: position.y,
+            sunrise: inputs.dimension == 0,
+        },
+        overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
+    });
     let post = target.post_process_write();
     let io = FrameIo {
         scene_colour: post.source,
         scene_depth: crate::scene_sampling::view_depth(depth),
         scene_near: view.clip_from_view.w_axis.z,
+        inverse_focal: [
+            view.clip_from_view.x_axis.x.recip(),
+            view.clip_from_view.y_axis.y.recip(),
+        ],
         render_distance: inputs.render_distance,
         fog_color: colours.fog,
         destination: post.destination,
         destination_format,
+        geometry,
         timestamps: world.get_resource::<crate::gpu_timing::GpuTimestamps>(),
     };
     let _timer = world
@@ -313,6 +524,9 @@ pub(super) fn build(app: &mut App) {
             ExtractComponentPlugin::<ShaderPackRendering>::default(),
             ExtractResourcePlugin::<LoadedShaderPack>::default(),
             ExtractResourcePlugin::<ShaderPackFrameInputs>::default(),
+            ExtractResourcePlugin::<DedicatedGraphicsMemory>::default(),
+            ShaderpackGeometryPlugin,
+            ShaderpackAtlasPlugin,
         ))
         .add_systems(Update, (drive_loader, publish_id_maps).chain());
 }
@@ -321,11 +535,21 @@ pub(super) fn finish(app: &mut App) {
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
-    render_app.init_resource::<ShaderPackViews>().add_systems(
-        Render,
-        prepare_views
-            .in_set(RenderSystems::PrepareResources)
-            .after(bevy::render::view::prepare_view_targets),
-    );
+    render_app
+        .init_resource::<ShaderPackViews>()
+        .init_resource::<ShaderPackDrawnCategories>()
+        .add_systems(
+            Render,
+            (
+                configure_geometry
+                    .in_set(RenderSystems::PrepareResources)
+                    .before(super::geometry::prepare_shaderpack_geometry),
+                prepare_views
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(bevy::render::view::prepare_view_targets)
+                    .after(super::geometry::prepare_shaderpack_geometry),
+                super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
+            ),
+        );
     install_graph(render_app.world_mut());
 }

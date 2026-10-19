@@ -1,18 +1,34 @@
-//! Records a frame of a pack: clears, `prepare*`, the Vanilla scene copy into `colortex0`
-//! and `depthtex*`, `deferred*`, `composite*` (with compute variants), `final` into the
-//! screen, the copy-back (or exchange of textures) of buffers that end flipped, and the
-//! screen's presentation into the view.
+//! Records a frame of a pack: clears, the shadow pass, `prepare*`, the sky and opaque
+//! geometry (or the Vanilla scene copy into `colortex0` and `depthtex*` for packs without
+//! terrain programs), `deferred*`, translucent geometry, `composite*` (with compute
+//! variants), `final` into the screen, the copy-back (or exchange of textures) of buffers
+//! that end flipped, and the screen's presentation into the view.
 
+use super::frame_geometry::{
+    FrameGeometry, bind_geometry, record_opaque, record_shadow, record_translucent,
+};
 use super::loader::{PackGpu, ProgramPipeline};
 use super::plan::PassStep;
 use super::targets::{Groups, ViewBindings, ViewTargets, is_compute};
-use super::uniforms::{FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block};
+use super::uniforms::{
+    DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
+};
 use crate::gpu_timing::{GpuTimestamps, within_stage};
+use bevy::math::Vec3;
 use render_scene::RuntimeStage;
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
+
+/// Per-view values the geometry draws need beyond the frame's uniforms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawContext {
+    /// The terrain origin relative to the camera (terrain draws' `chunkOffset`).
+    pub chunk_offset: Vec3,
+    /// The block atlas's texel size (terrain draws' `atlasSize`).
+    pub atlas_size: [i32; 2],
+}
 
 /// One view's resources and per-frame state for a loaded pack.
 pub(crate) struct ViewState {
@@ -26,8 +42,11 @@ pub(crate) struct ViewState {
     unknown_logged: bool,
     /// The developer uniform dump, when [`super::uniform_audit::DUMP_ENV`] names a file.
     audit: Option<super::uniform_audit::UniformAudit>,
-    /// Programs already reported as skipped.
-    skipped: BTreeSet<String>,
+    /// Programs and draws already reported as skipped.
+    pub skipped: BTreeSet<String>,
+    /// The atlas generation the draw bind groups were built over (`None` inside: the
+    /// placeholder); `None` before the first frame.
+    pub atlas_generation: Option<Option<u64>>,
     /// Whether a frame has seen the player's biome: see [`Self::enter_world`].
     in_world: bool,
 }
@@ -55,6 +74,7 @@ impl ViewState {
             unknown_logged: false,
             audit: super::uniform_audit::UniformAudit::from_env(),
             skipped: BTreeSet::new(),
+            atlas_generation: None,
             in_world: false,
         }
     }
@@ -78,8 +98,15 @@ impl ViewState {
         }
     }
 
-    /// Evaluates custom uniforms and writes every program's uniform block.
-    pub(crate) fn write_uniforms(&mut self, queue: &Queue, frame: &FrameUniforms, frame_time: f32) {
+    /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
+    /// block.
+    pub(crate) fn write_uniforms(
+        &mut self,
+        queue: &Queue,
+        frame: &FrameUniforms,
+        frame_time: f32,
+        context: &DrawContext,
+    ) {
         let builtin = |name: &str| -> Option<shaderpack::UniformValue> {
             if let Some(value) = frame.value(name) {
                 return value.to_custom();
@@ -129,6 +156,42 @@ impl ViewState {
                 audit.block(&format!("program {}", program.name), block, &lookup);
             }
         }
+        for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
+            let program = &self.pack.programs[draw.program];
+            let (Some(block), Some(buffer)) = (&program.reflection.uniforms, &binding.uniforms)
+            else {
+                continue;
+            };
+            let (model_view, projection) = if draw.kind.shadow() {
+                (frame.shadow_model_view(), frame.shadow_projection())
+            } else {
+                (frame.model_view(), frame.projection())
+            };
+            let terrain = draw.kind.category().is_some();
+            let values = DrawUniforms {
+                model_view,
+                projection,
+                chunk_offset: if terrain {
+                    context.chunk_offset
+                } else {
+                    Vec3::ZERO
+                },
+                render_stage: draw.kind.render_stage(),
+                lightmap_matrix: draw.kind.lightmap_matrix(),
+                atlas_size: if terrain { context.atlas_size } else { [0; 2] },
+                entity_id: -1,
+            };
+            let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
+            pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
+            queue.write_buffer(buffer, 0, &self.scratch);
+            if let Some(audit) = &mut self.audit {
+                audit.block(
+                    &format!("draw {:?} with {}", draw.kind, program.name),
+                    block,
+                    &lookup,
+                );
+            }
+        }
         if let Some(audit) = &mut self.audit {
             audit.finish(custom, missing_inputs.iter().map(String::as_str));
         }
@@ -151,6 +214,8 @@ pub(crate) struct FrameIo<'a> {
     pub scene_depth: &'a TextureView,
     /// Near plane of the scene projection.
     pub scene_near: f32,
+    /// `1 /` the scene projection's x and y scales.
+    pub inverse_focal: [f32; 2],
     /// `far`: the render distance in blocks.
     pub render_distance: f32,
     /// `fogColor`, which `colortex0` clears to by default.
@@ -158,6 +223,9 @@ pub(crate) struct FrameIo<'a> {
     /// Where the presented frame goes, and its format.
     pub destination: &'a TextureView,
     pub destination_format: TextureFormat,
+    /// Terrain, atlas and sky for the pack's geometry programs; without it (or without
+    /// terrain programs) the Vanilla scene is copied into `colortex0` instead.
+    pub geometry: Option<FrameGeometry<'a>>,
     /// GPU timestamps, which time the pack's pass groups during aggregate profiling.
     pub timestamps: Option<&'a GpuTimestamps>,
 }
@@ -239,14 +307,36 @@ pub(crate) fn record_frame(
             );
         }
     }
+    let geometry = io.geometry.as_ref().filter(|_| !pack.draws.is_empty());
     let timestamps = io.timestamps;
+    if let Some(geometry) = geometry {
+        bind_geometry(device, state, geometry);
+        within_stage(
+            timestamps,
+            RuntimeStage::GpuShaderpackShadow,
+            encoder,
+            |encoder| {
+                record_shadow(device, encoder, state, geometry);
+                let shadow_size = pack
+                    .shadow
+                    .as_ref()
+                    .map_or(state.targets.screen_size, |s| [s.slots.resolution; 2]);
+                run_steps(encoder, state, Steps::Shadowcomp, shadow_size);
+            },
+        );
+    }
     within_stage(
         timestamps,
         RuntimeStage::GpuShaderpackOpaque,
         encoder,
         |encoder| {
             run_steps(encoder, state, Steps::Prepare, state.targets.screen_size);
-            copy_scene(device, encoder, &pack, &state.targets, io);
+            match geometry {
+                Some(geometry) => {
+                    record_opaque(device, queue, encoder, state, geometry, timestamps);
+                }
+                None => copy_scene(device, encoder, &pack, &state.targets, io),
+            }
         },
     );
     within_stage(
@@ -255,6 +345,22 @@ pub(crate) fn record_frame(
         encoder,
         |encoder| run_steps(encoder, state, Steps::Deferred, state.targets.screen_size),
     );
+    if let Some(geometry) = geometry {
+        within_stage(
+            timestamps,
+            RuntimeStage::GpuShaderpackTranslucent,
+            encoder,
+            |encoder| {
+                record_translucent(
+                    device,
+                    encoder,
+                    state,
+                    geometry,
+                    (io.scene_colour, io.scene_depth),
+                );
+            },
+        );
+    }
     within_stage(
         timestamps,
         RuntimeStage::GpuShaderpackComposite,
@@ -302,10 +408,26 @@ fn record_composite(encoder: &mut CommandEncoder, state: &mut ViewState, io: &Fr
     state.targets.swap_sides(&pack.frame.exchange);
 }
 
-/// Writes the planes the host's depth conversions use.
+/// Writes the planes and limits the host's depth conversions and the Vanilla overlay use.
 fn write_depth_parameters(queue: &Queue, pack: &PackGpu, io: &FrameIo<'_>) {
     let far = io.render_distance.max(16.0) * FAR_PLANE_SCALE;
-    let parameters = [io.scene_near, GL_NEAR, far, 0.0];
+    // Vanilla content beyond `far` (its far-terrain impostors) has no pack geometry behind it
+    // and never comes through; inside, only what lies within the fully expanded radius does.
+    let overlay_radius = io
+        .geometry
+        .as_ref()
+        .map_or(f32::MAX, |g| g.overlay_radius)
+        .min(io.render_distance.max(16.0));
+    let parameters = [
+        io.scene_near,
+        GL_NEAR,
+        far,
+        overlay_radius,
+        io.inverse_focal[0],
+        io.inverse_focal[1],
+        0.0,
+        0.0,
+    ];
     let bytes: Vec<u8> = parameters.iter().flat_map(|v| v.to_le_bytes()).collect();
     queue.write_buffer(&pack.host.depth_parameters, 0, &bytes);
 }
@@ -313,6 +435,7 @@ fn write_depth_parameters(queue: &Queue, pack: &PackGpu, io: &FrameIo<'_>) {
 /// Which of the pack's pass lists to run.
 #[derive(Clone, Copy)]
 enum Steps {
+    Shadowcomp,
     Prepare,
     Deferred,
     Composite,
@@ -323,6 +446,7 @@ fn run_steps(encoder: &mut CommandEncoder, state: &mut ViewState, steps: Steps, 
     let pack = Arc::clone(&state.pack);
     let start = pack.frame.composite_start;
     let (steps, groups) = match steps {
+        Steps::Shadowcomp => (&pack.shadowcomp[..], &state.bindings.shadowcomp[..]),
         Steps::Prepare => (&pack.frame.prepare[..], &state.bindings.prepare[..]),
         Steps::Deferred => (&pack.frame.post[..start], &state.bindings.post[..start]),
         Steps::Composite => (&pack.frame.post[start..], &state.bindings.post[start..]),
@@ -342,7 +466,8 @@ fn run_steps(encoder: &mut CommandEncoder, state: &mut ViewState, steps: Steps, 
     }
 }
 
-/// Copies the scene colour into `colortex0` and the scene depth into `depthtex*`.
+/// Copies the scene colour into `colortex0` and the scene depth into `depthtex*` and the
+/// geometry depth, which `depthtex0` reads.
 fn copy_scene(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -400,7 +525,8 @@ fn copy_scene(
     drop(render);
     if let Some(pipeline) = &host.scene_depth_attachment {
         let group = depth_group(pipeline);
-        for target in targets.depth_compare.iter().flatten() {
+        let depths = targets.depth_compare.iter().flatten();
+        for target in depths.chain(&targets.geometry_depth) {
             let depth = wgpu::RenderPassDepthStencilAttachment {
                 view: &target.view,
                 depth_ops: Some(wgpu::Operations {
@@ -463,7 +589,7 @@ fn generate_mipmaps(
 
 /// Runs one program; render passes whose attachments disagree in size are skipped (logged
 /// once per program), as OpenGL cannot draw into them either. Render-relative compute
-/// dispatches scale `size`, the screen.
+/// dispatches scale `size` (the screen, or the shadow map for `shadowcomp`).
 #[allow(clippy::too_many_arguments, reason = "one pass's frame state")]
 fn run_step(
     encoder: &mut CommandEncoder,
@@ -481,7 +607,7 @@ fn run_step(
     let program = &pack.programs[step.program];
     targets.take_snapshots(encoder, program, step.read_alt);
     match &program.pipeline {
-        ProgramPipeline::Inert => {}
+        ProgramPipeline::Geometry | ProgramPipeline::Inert => {}
         ProgramPipeline::Compute(pipeline) => {
             let Some(dispatch) = &program.reflection.compute else {
                 return;

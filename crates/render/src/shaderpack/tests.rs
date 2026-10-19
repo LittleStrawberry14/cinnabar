@@ -218,7 +218,11 @@ fn render_frames(
         },
         &mut state.history,
     );
-    state.write_uniforms(&gpu.queue, &frame, 0.016);
+    let context = super::passes::DrawContext {
+        chunk_offset: Vec3::ZERO,
+        atlas_size: [0; 2],
+    };
+    state.write_uniforms(&gpu.queue, &frame, 0.016, &context);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     let clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -241,10 +245,12 @@ fn render_frames(
         scene_colour: &scene.create_view(&Default::default()),
         scene_depth: &depth.create_view(&Default::default()),
         scene_near: 0.1,
+        inverse_focal: [1.0, 1.0],
         render_distance: game.render_distance,
         fog_color: super::uniforms::sky_fog(&game, Quat::IDENTITY, Vec3::new(0.0, 64.0, 0.0)).fog,
         destination: &output.create_view(&Default::default()),
         destination_format: format,
+        geometry: None,
         timestamps: None,
     };
     for _ in 0..frames {
@@ -665,6 +671,8 @@ void main() {
 }
 ";
 
+/// `dot` rounds like the reference OpenGL driver, `fma(a.y, b.y, a.x * b.x)`, so hash noise
+/// built on it matches Java Iris instead of the device's own `dot` rounding.
 #[test]
 fn dot_rounds_like_the_reference_opengl_driver() {
     let Some(gpu) = gpu() else {

@@ -1,5 +1,5 @@
-//! The host's own full-screen passes around a pack (`blit.wgsl`): scene copies, presenting
-//! and mip downsampling.
+//! The host's own full-screen passes around a pack (`blit.wgsl`): scene copies, depth copies,
+//! the Vanilla overlay, presenting and mip downsampling.
 
 use super::pipelines::GpuContext;
 use super::plan::MAX_COLOR_BUFFERS;
@@ -9,18 +9,26 @@ use wgpu::TextureFormat;
 pub(crate) struct HostPipelines {
     pub scene_colour: wgpu::RenderPipeline,
     pub scene_depth: wgpu::RenderPipeline,
-    /// Writes the scene depth into the comparison `depthtex*`.
+    /// Writes the scene depth into a depth texture: the comparison `depthtex*` and the
+    /// geometry depth, which the Vanilla scene stands in for until the pack draws terrain.
     pub scene_depth_attachment: Option<wgpu::RenderPipeline>,
+    /// Copies the geometry depth attachment into a float `depthtex`/`shadowtex`.
+    pub depth_copy: wgpu::RenderPipeline,
+    /// Overlays what the Vanilla scene draws in front of the pack's opaque geometry (actors,
+    /// particles, clouds) onto `colortex0` and the depth attachment.
+    pub vanilla_overlay: wgpu::RenderPipeline,
     /// `present` per view target format.
     pub present: Vec<(TextureFormat, wgpu::RenderPipeline)>,
     /// `downsample` per mipmapped buffer format.
     pub downsample: Vec<(TextureFormat, wgpu::RenderPipeline)>,
     pub depth_parameters: wgpu::Buffer,
     pub linear: wgpu::Sampler,
+    /// The geometry adapter's zero-stride constant stream, for host-built sky vertices.
+    pub constant_stream: wgpu::Buffer,
 }
 
 /// Builds the host passes for a pack's buffer and depth formats; `depth_targets` when the
-/// pack has comparison `depthtex*` for the scene depth to fill, and
+/// pack has a geometry depth or comparison `depthtex*` for the scene depth to fill, and
 /// `float_depths` the float `depthtex*` copies it allocates (`targets::float_depths`).
 pub(super) fn host_pipelines(
     gpu: &GpuContext,
@@ -83,6 +91,8 @@ pub(super) fn host_pipelines(
         ),
         scene_depth_attachment: depth_targets
             .then(|| pipeline("scene_depth_attachment", &[], true)),
+        depth_copy: pipeline("depth_copy", &[target(depth_format)], false),
+        vanilla_overlay: pipeline("vanilla_overlay", &[target(colour0)], true),
         present: [
             render_scene::SCENE_COLOR_FORMAT,
             render_scene::SCENE_HDR_FORMAT,
@@ -96,7 +106,7 @@ pub(super) fn host_pipelines(
             .collect(),
         depth_parameters: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shader pack depth parameters"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -106,5 +116,17 @@ pub(super) fn host_pipelines(
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         }),
+        constant_stream: {
+            let words = super::geometry::CONSTANT_STREAM_WORDS;
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shader pack sky constants"),
+                size: std::mem::size_of_val(&words) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            gpu.queue
+                .write_buffer(&buffer, 0, bytemuck::cast_slice(&words));
+            buffer
+        },
     }
 }
