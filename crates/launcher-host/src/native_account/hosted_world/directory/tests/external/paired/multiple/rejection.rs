@@ -24,11 +24,7 @@ async fn rejected_second_login_preserves_the_first_actual_world_connection() {
             .unwrap()
             .min(VISITOR_LIMIT);
         authority.host.peers = Peers::new(limit);
-        let mut process = authority
-            .host
-            .prepare_backend(deadline)
-            .await
-            .unwrap();
+        let mut process = authority.host.prepare_backend(deadline).await.unwrap();
         let first_key = Arc::new(SigningKey::generate());
         let second_key = Arc::new(SigningKey::generate());
         let SignedAssociation {
