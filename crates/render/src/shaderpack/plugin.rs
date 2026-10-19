@@ -83,6 +83,10 @@ type MainWorldGpu<'w> = (
 /// A dimension change of the shown pack keeps it on screen until the new folder is ready.
 /// The pack's `minecraft:` texture references resolve against the vanilla textures loaded
 /// when its load starts.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system reading each resource the load starts from and publishes to"
+)]
 fn drive_loader(
     request: Res<ShaderPackRequest>,
     inputs: Res<ShaderPackFrameInputs>,
