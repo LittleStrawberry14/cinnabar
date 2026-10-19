@@ -140,7 +140,12 @@ async fn host_process_duplex_receipts_and_final_close_keep_the_same_payload_slot
         assert!(futures::poll!(finishing.as_mut()).is_pending());
         let peer = finishing.await.unwrap();
         assert_eq!(peer.world(), b"original-world");
-        let mut peer = peer.initialized(true, 2, deadline).await.unwrap();
+        let mut peer = peer
+            .begin_initialized(true, 2, deadline)
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
         peer.queue_send(b"client-input", deadline).unwrap();
         assert_eq!(
             peer.flush_send().await.unwrap_err().kind(),

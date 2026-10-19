@@ -7,7 +7,7 @@ mod process;
 mod wire;
 pub use peer::{
     ActiveBackendPeer, AttachingBackendPeer, BackendWorldReady, ClosingBackendPeer,
-    PendingBackendPeer,
+    InitializingBackendPeer, PendingBackendPeer,
 };
 pub use process::{HostProcess, PendingHostProcess};
 pub use wire::{Frame, Reader, Writer, split};

@@ -37,7 +37,7 @@ impl NativeHostedWorld {
         Ok(backend)
     }
 
-    /// Checks original membership around the existing backend Initialized operation.
+    /// Applies current service state and original membership before synchronous Initialized admission.
     /// Cryptographic Login and typed ServerInitialized::finish remain with the caller.
     pub(super) async fn initialize_backend(
         &mut self,
@@ -47,13 +47,12 @@ impl NativeHostedWorld {
         radius: u32,
         deadline: Instant,
     ) -> io::Result<ActiveBackendPeer> {
-        self.recheck_approval(approval)?;
-        let backend = self
-            .peer_io(
-                Some(deadline),
-                backend.initialized(cache_enabled, radius, deadline),
-            )
+        self.directory_mut()?
+            .service_barrier(Some(deadline))
             .await?;
+        self.recheck_approval(approval)?;
+        let backend = backend.begin_initialized(cache_enabled, radius, deadline)?;
+        let backend = self.peer_io(Some(deadline), backend.finish()).await?;
         self.recheck_approval(approval)?;
         Ok(backend)
     }

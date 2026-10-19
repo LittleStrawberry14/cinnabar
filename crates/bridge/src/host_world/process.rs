@@ -231,14 +231,23 @@ async fn accept(
     }
 }
 
-/// Encodes only bounded generated metadata; failures never include the original record.
-pub(super) async fn send_json(
+/// Encodes and admits one bounded generated record; failures never include its contents.
+pub(super) fn admit_json(
     writer: &mut Writer,
     kind: Kind,
     record: &impl Serialize,
 ) -> io::Result<()> {
     let bytes = serde_json::to_vec(record).map_err(|_| invalid())?;
-    writer.admit(kind, &bytes)?;
+    writer.admit(kind, &bytes)
+}
+
+/// Admits and flushes bounded generated metadata through the same output slot.
+pub(super) async fn send_json(
+    writer: &mut Writer,
+    kind: Kind,
+    record: &impl Serialize,
+) -> io::Result<()> {
+    admit_json(writer, kind, record)?;
     writer.flush().await
 }
 

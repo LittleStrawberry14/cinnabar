@@ -4,7 +4,7 @@ use super::{
     Frame, Reader, Writer,
     contract::*,
     invalid,
-    process::{bounded, check_deadline, parse, send_json},
+    process::{admit_json, bounded, check_deadline, parse},
 };
 use bytes::Bytes;
 use std::{io, time::Instant};
@@ -37,6 +37,15 @@ pub struct BackendWorldReady {
     writer: Writer,
     world: Bytes,
 }
+
+/// One admitted Initialized, retaining its original socket halves and finite deadline.
+#[must_use = "finish this admitted Initialized or drop it to retire its socket"]
+pub struct InitializingBackendPeer {
+    reader: Reader,
+    writer: Writer,
+    deadline: Instant,
+}
+
 /// Initialized backend peer; no constructor can bypass the preceding private-process phases.
 pub struct ActiveBackendPeer {
     reader: Reader,
@@ -171,26 +180,39 @@ impl BackendWorldReady {
         &self.world
     }
 
-    /// Call only after actual ServerInitialized::finish and current application authority checks.
-    pub async fn initialized(
+    /// Admits Initialized synchronously after actual ServerInitialized::finish and current authority checks.
+    pub fn begin_initialized(
         mut self,
         cache_enabled: bool,
         radius: u32,
         deadline: Instant,
-    ) -> io::Result<ActiveBackendPeer> {
+    ) -> io::Result<InitializingBackendPeer> {
         if radius == 0 {
             return Err(invalid());
         }
-        bounded(deadline, async move {
-            send_json(
-                &mut self.writer,
-                Kind::Initialized,
-                &Initialized {
-                    cache_enabled,
-                    radius,
-                },
-            )
-            .await?;
+        check_deadline(deadline)?;
+        admit_json(
+            &mut self.writer,
+            Kind::Initialized,
+            &Initialized {
+                cache_enabled,
+                radius,
+            },
+        )?;
+        Ok(InitializingBackendPeer {
+            reader: self.reader,
+            writer: self.writer,
+            deadline,
+        })
+    }
+}
+
+impl InitializingBackendPeer {
+    /// Flushes only the admitted Initialized before handing off the original play owner.
+    /// Keep this future pinned; canceling the owning operation drops its actual socket.
+    pub async fn finish(mut self) -> io::Result<ActiveBackendPeer> {
+        bounded(self.deadline, async move {
+            self.writer.flush().await?;
             Ok(ActiveBackendPeer {
                 reader: self.reader,
                 writer: self.writer,
