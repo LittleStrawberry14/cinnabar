@@ -133,6 +133,7 @@ impl NativeRelayConnecting {
             packs::Acquisition::InBand,
         )
         .await?;
+        let packs = packs.handoff;
         self.connection.replay_deferred();
         loop {
             let raw = self.connection.next_raw().await.map_err(failure)?;

@@ -56,7 +56,8 @@ impl Transport {
     /// Takes a private capacity handle only from the same established accepted association.
     pub(super) fn accepted_sender(&self) -> io::Result<nethernet_tokio::SessionSender> {
         match self {
-            Self::Accepted(accepted) => accepted.sender(),
+            Self::Accepted(accepted) | Self::Http(accepted) => accepted.sender(),
+            Self::NetherNetLan(lan) => lan.connection.sender(),
             _ => Err(prepared_unsupported()),
         }
     }
@@ -67,7 +68,8 @@ impl Transport {
         progress: impl Future<Output = T> + Send,
     ) -> io::Result<T> {
         match self {
-            Self::Accepted(accepted) => accepted.progress(progress).await,
+            Self::Accepted(accepted) | Self::Http(accepted) => accepted.progress(progress).await,
+            Self::NetherNetLan(lan) => lan.connection.progress(progress).await,
             _ => Err(prepared_unsupported()),
         }
     }
@@ -78,7 +80,8 @@ impl Transport {
         progress: impl Future<Output = T> + Send,
     ) -> io::Result<T> {
         match self {
-            Self::Accepted(accepted) => accepted.settle(progress).await,
+            Self::Accepted(accepted) | Self::Http(accepted) => accepted.settle(progress).await,
+            Self::NetherNetLan(lan) => lan.connection.settle(progress).await,
             _ => Err(prepared_unsupported()),
         }
     }

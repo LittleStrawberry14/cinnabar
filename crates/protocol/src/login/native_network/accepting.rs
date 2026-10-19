@@ -1,7 +1,7 @@
 //! Concrete wire ownership for an already admitted NetherNet server association.
 
 mod packs;
-mod send;
+pub(super) mod send;
 mod world;
 pub use packs::native_host_packs;
 pub use send::{
@@ -23,7 +23,7 @@ use std::{io, sync::Arc, time::Instant};
 /// Construction grants no Login, hosted membership or selected-world authority.
 #[must_use]
 pub struct NativeAcceptingIo {
-    connection: Connection,
+    pub(in crate::login::native_network) connection: Connection,
     skipped: u64,
 }
 

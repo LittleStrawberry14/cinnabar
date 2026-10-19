@@ -202,10 +202,12 @@ pub use login::{
     ClientDataRefusal, NativeAcceptingCapacity, NativeAcceptingIo, NativeAcceptingRetired,
     NativeAcceptingSend, NativeAcceptingSendOutcome, NativeAcceptingSendRetirement,
     NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeHostWorld,
-    NativeHostingIdentity, NativeProvider, NativeRelayClosing, NativeRelayConnecting,
-    NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff, NativeRelayInbound,
-    NativeRelayRetired, NativeRelaySender, NativeRelayWritten, NativeServiceClock,
-    NativeTokenVerifier, RawClientData, ValidatedClientData, native_host_packs, relay_url_host,
+    NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress, NativeHostedUpstream,
+    NativeHostedUpstreamClosing, NativeHostingIdentity, NativeProvider, NativeRelayClosing,
+    NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff,
+    NativeRelayInbound, NativeRelayRetired, NativeRelaySender, NativeRelayWritten,
+    NativeServiceClock, NativeTokenVerifier, RawClientData, ValidatedClientData, native_host_packs,
+    relay_url_host,
 };
 pub use movement::{
     BlockAction, BlockActionKind, BlockActions, BlockActionsFull, BlockItemInteraction,

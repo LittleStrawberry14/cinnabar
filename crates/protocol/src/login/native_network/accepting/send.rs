@@ -11,7 +11,7 @@ pub use super::super::connection::send::NativeAcceptingSendOutcome;
 /// Borrowed progress for one encoded effect. Dropping this borrow retains its exact progress.
 #[must_use = "drive or explicitly retire the original retained send"]
 pub struct NativeAcceptingSend<'a> {
-    connection: &'a mut Connection,
+    pub(in crate::login::native_network) connection: &'a mut Connection,
 }
 
 /// A borrowed original queue permit. Application authority must be current at commit.
@@ -25,7 +25,7 @@ pub struct NativeAcceptingCapacity<'a> {
 /// Dropping this borrow retains that receipt and the first cleanup cutoff.
 #[must_use = "settle the original receipt before normal global transport retirement"]
 pub struct NativeAcceptingSendRetirement<'a> {
-    connection: &'a mut Connection,
+    pub(in crate::login::native_network) connection: &'a mut Connection,
 }
 
 impl NativeAcceptingIo {
@@ -138,4 +138,4 @@ impl NativeAcceptingSendRetirement<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::login::native_network) mod tests;

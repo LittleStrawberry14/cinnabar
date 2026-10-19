@@ -41,10 +41,12 @@ pub(crate) mod native_network;
 pub use native_network::{
     NativeAcceptingCapacity, NativeAcceptingIo, NativeAcceptingRetired, NativeAcceptingSend,
     NativeAcceptingSendOutcome, NativeAcceptingSendRetirement, NativeAuthentication,
-    NativeCredential, NativeHostWorld, NativeHostingIdentity, NativeProvider, NativeRelayClosing,
-    NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff,
-    NativeRelayInbound, NativeRelayRetired, NativeRelaySender, NativeRelayWritten,
-    NativeServiceClock, NativeTokenVerifier, native_host_packs,
+    NativeCredential, NativeHostWorld, NativeHostedRelay, NativeHostedRelayClosing,
+    NativeHostedRelayProgress, NativeHostedUpstream, NativeHostedUpstreamClosing,
+    NativeHostingIdentity, NativeProvider, NativeRelayClosing, NativeRelayConnecting,
+    NativeRelayConnection, NativeRelayDriver, NativeRelayHandoff, NativeRelayInbound,
+    NativeRelayRetired, NativeRelaySender, NativeRelayWritten, NativeServiceClock,
+    NativeTokenVerifier, native_host_packs,
 };
 mod unused_packets;
 mod web_handoff;

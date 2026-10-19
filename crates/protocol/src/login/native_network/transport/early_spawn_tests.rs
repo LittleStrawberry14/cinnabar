@@ -64,10 +64,11 @@ async fn addressed_http_trust_precedes_login_and_preserves_original_startup_and_
 }
 
 #[derive(Clone, Copy)]
-enum Route {
+pub(in crate::login::native_network) enum Route {
     Lan,
     LocalLan,
     AddressedHttp,
+    LocalHttp,
 }
 
 /// Exercises the same original Login, packs and live owner for each actual selected transport.
@@ -116,10 +117,10 @@ async fn pack_deferred_spawn(route: Route) {
             };
             let expected_address = match route {
                 Route::LocalLan => "31".into(),
-                Route::AddressedHttp => format!("http://{address}:{}", address.port()),
+                Route::AddressedHttp | Route::LocalHttp => format!("http://{address}:{}", address.port()),
                 Route::Lan => address.to_string(),
             };
-            let nonce = if matches!(route, Route::AddressedHttp) { "" } else { "synthetic-nonce" };
+            let nonce = if matches!(route, Route::AddressedHttp | Route::LocalHttp) { "" } else { "synthetic-nonce" };
             let identity = offline_login_identity(login, &expected_address, nonce);
             send(
                 &peer,
@@ -240,12 +241,13 @@ async fn pack_deferred_spawn(route: Route) {
     .expect("finite actual native pack/startup fixture stalled");
 }
 
-struct FixtureRoute {
-    listener: NetherServer,
-    address: SocketAddr,
-    target: NativeConnectionTarget,
-    http: Option<std::sync::Arc<nethernet_tokio::signaling::http::HttpSignalingServer>>,
-    approval: Option<(
+pub(in crate::login::native_network) struct FixtureRoute {
+    pub(in crate::login::native_network) listener: NetherServer,
+    pub(in crate::login::native_network) address: SocketAddr,
+    pub(in crate::login::native_network) target: NativeConnectionTarget,
+    pub(in crate::login::native_network) http:
+        Option<std::sync::Arc<nethernet_tokio::signaling::http::HttpSignalingServer>>,
+    pub(in crate::login::native_network) approval: Option<(
         tokio::sync::oneshot::Receiver<()>,
         tokio::sync::oneshot::Sender<bool>,
     )>,
@@ -285,8 +287,8 @@ impl crate::NativeServerTrust for HttpApproval {
 }
 
 /// Reuses the original finite server owner and actual wire script; only route acquisition differs.
-async fn fixture_route(route: Route) -> FixtureRoute {
-    if matches!(route, Route::AddressedHttp) {
+pub(in crate::login::native_network) async fn fixture_route(route: Route) -> FixtureRoute {
+    if matches!(route, Route::AddressedHttp | Route::LocalHttp) {
         use nethernet_tokio::signaling::http::{HttpServerConfig, HttpSignalingServer};
         let identity = std::sync::Arc::new(
             nethernet::identity::ServerIdentity::generate("self", std::time::SystemTime::now())
@@ -314,6 +316,18 @@ async fn fixture_route(route: Route) -> FixtureRoute {
         )
         .await
         .unwrap();
+        if matches!(route, Route::LocalHttp) {
+            return FixtureRoute {
+                listener,
+                address,
+                target: NativeConnectionTarget::new(
+                    address.to_string(),
+                    NativeTransport::LocalNetherNetHttp,
+                ),
+                http: Some(signaling),
+                approval: None,
+            };
+        }
         let (shown, question) = tokio::sync::oneshot::channel();
         let (answer, approved) = tokio::sync::oneshot::channel();
         let trust = std::sync::Arc::new(HttpApproval {
@@ -380,7 +394,11 @@ async fn fixture_route(route: Route) -> FixtureRoute {
 }
 
 /// Observes the UUID in this real offline Login without treating the fixture token as authority.
-fn offline_login_identity(login: &packets::Login, address: &str, nonce: &str) -> uuid::Uuid {
+pub(in crate::login::native_network) fn offline_login_identity(
+    login: &packets::Login,
+    address: &str,
+    nonce: &str,
+) -> uuid::Uuid {
     use base64::Engine;
     let bytes = &login.connection_request;
     let length = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;

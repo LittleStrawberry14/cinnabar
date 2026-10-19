@@ -1,34 +1,20 @@
 //! The actual ready LAN client and its same receiver queues after local retirement.
 
 use super::identity::TransportIdentity;
-use super::{Inbox, LAN_CONNECTION_TYPE};
+use super::{AcceptedTransport, LAN_CONNECTION_TYPE};
 use bytes::Bytes;
-use nethernet_tokio::{
-    AcceptedSession, ClientIceConfig, ConnectionConfig, LanConfig, LanSignaling, NetherClient,
-    Retired,
-};
+use nethernet_tokio::{ClientIceConfig, ConnectionConfig, LanConfig, LanSignaling, NetherClient};
 use std::{io, net::SocketAddr, time::Instant};
 
 pub(in crate::login::native_network) struct LanTransport {
-    connection: Option<Connection>,
+    pub(super) connection: AcceptedTransport,
     nonce: String,
-    inbox: Inbox,
-}
-
-enum Connection {
-    Established(NetherClient),
-    Retired(AcceptedSession<Retired>),
 }
 
 impl LanTransport {
     /// Observes the same established transport without retaining its send capability.
     pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
-        match self.connection.as_ref()? {
-            Connection::Established(connection) => Some(crate::RoundTripTime::nethernet(
-                connection.sender().observe_rtt(),
-            )),
-            _ => None,
-        }
+        self.connection.observe_rtt()
     }
 
     /// Discovers and connects one compatible IPv4 endpoint under the selection owner's cutoff.
@@ -241,9 +227,8 @@ impl LanTransport {
     /// Retains only an actual ready client and its discovery challenge on the same owner.
     pub(super) fn new(connection: NetherClient, nonce: String) -> Self {
         Self {
-            connection: Some(Connection::Established(connection)),
+            connection: AcceptedTransport::new(connection.into_accepted()),
             nonce,
-            inbox: Inbox::default(),
         }
     }
 
@@ -261,63 +246,21 @@ impl LanTransport {
         if let Some(deadline) = deadline {
             super::super::authentication::ensure_current(deadline, Instant::now())?;
         }
-        let Connection::Established(connection) = self
-            .connection
-            .as_mut()
-            .expect("synchronous transport transition")
-        else {
-            return Err(super::closing());
-        };
-        let sender = connection.sender();
-        let sending = async {
-            match deadline {
-                Some(deadline) => sender.send_before(message, deadline).await,
-                None => sender.send(message).await,
-            }
-            .map_err(io::Error::other)
-        };
-        let incoming = futures::stream::unfold(connection, |connection| async move {
-            match connection.recv().await {
-                Ok(Some(message)) => Some((Ok(message), connection)),
-                Ok(None) => None,
-                Err(error) => Some((Err(io::Error::other(error)), connection)),
-            }
-        });
-        let result = self.inbox.send(sending, incoming).await;
+        let result = self.connection.send_until(message, deadline).await;
         if let Some(deadline) = deadline {
             super::super::authentication::ensure_current(deadline, Instant::now())?;
         }
         result
     }
 
-    /// Drains previously accepted wire messages before the retained live or retired receiver.
+    /// Drains the same ready/retired receiver and retained original send prefix.
     pub(super) async fn recv(&mut self) -> io::Result<Bytes> {
-        if let Some(message) = self.inbox.pop() {
-            return Ok(message);
-        }
-        let result = match self
-            .connection
-            .as_mut()
-            .expect("synchronous transport transition")
-        {
-            Connection::Established(connection) => connection.recv().await,
-            Connection::Retired(connection) => connection.reliable.recv().await,
-        };
-        result
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "NetherNet peer closed"))
+        self.connection.recv().await
     }
 
-    /// Consumes the ready lifecycle synchronously and retains both original accepted receivers.
+    /// Consumes ready admission while preserving the same original receiver queues.
     pub(super) fn close(&mut self) {
-        let current = self
-            .connection
-            .take()
-            .expect("synchronous transport transition");
-        self.connection = Some(match current {
-            Connection::Established(connection) => Connection::Retired(connection.close()),
-            retired @ Connection::Retired(_) => retired,
-        });
+        self.connection.close();
     }
 }
 

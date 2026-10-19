@@ -29,6 +29,13 @@ pub(super) enum Acquisition<'a> {
         parallel_urls: bool,
     },
     InBand,
+    Hosted,
+}
+
+/// Original verified archive handoff and opt-in upstream metadata from the same pack owner.
+pub(super) struct Acquired {
+    pub(super) handoff: ResourcePackHandoff,
+    pub(super) metadata: Option<Box<bedrock_client::packs::PackMetadata>>,
 }
 
 /// Drives the same typed pack negotiation without constructing HTTP or filesystem work for an in-band caller.
@@ -36,10 +43,10 @@ pub(super) async fn acquire(
     connection: &mut Connection,
     mut preloading: ClientPackOffer,
     policy: Acquisition<'_>,
-) -> Result<ResourcePackHandoff, ProtocolError> {
+) -> Result<Acquired, ProtocolError> {
     let cancelled = acquisition::Cancellation::new();
     let offers = preloading.offers().cloned().collect::<Vec<_>>();
-    let cache = if offers.is_empty() || matches!(policy, Acquisition::InBand) {
+    let cache = if offers.is_empty() || !matches!(policy, Acquisition::Desktop { .. }) {
         None
     } else {
         let Acquisition::Desktop { cache_root, .. } = policy else {
@@ -106,9 +113,15 @@ pub(super) async fn acquire(
                 send_packets(connection, packets).await?;
             }
             PacksEvent::Finished(complete) => {
-                let (response, handoff) = complete.into_parts();
+                let (response, handoff, metadata) = if matches!(policy, Acquisition::Hosted) {
+                    let (response, handoff, metadata) = complete.into_parts_with_metadata();
+                    (response, handoff, metadata.map(Box::new))
+                } else {
+                    let (response, handoff) = complete.into_parts();
+                    (response, handoff, None)
+                };
                 connection.send(response).await?;
-                return Ok(handoff);
+                return Ok(Acquired { handoff, metadata });
             }
             PacksEvent::KeyExchange(exchange) => {
                 negotiation = apply_key_exchange(connection, exchange).await?;

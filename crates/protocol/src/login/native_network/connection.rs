@@ -49,6 +49,7 @@ pub(crate) struct Connection {
     send_retirement: Option<SendRetirement>,
     send_sealed: bool,
     negotiation_skips: u64,
+    primary_only: bool,
     pub(super) identity: Option<crate::session_wire::SessionIdentity>,
     #[cfg(test)]
     observed_batches: Option<BatchLifetimes>,
@@ -57,6 +58,12 @@ pub(crate) struct Connection {
 /// Weak observations of actual socket input allocations; never retains the bytes being measured.
 #[cfg(test)]
 type BatchLifetimes = std::sync::Arc<std::sync::Mutex<Vec<(usize, std::sync::Weak<()>)>>>;
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Scopes existing weak batch observations to an actual public connection future.
+    pub(super) static OBSERVE_BATCHES: BatchLifetimes;
+}
 
 /// Field order releases the real input allocation before its observation becomes expired.
 #[cfg(test)]
@@ -106,10 +113,16 @@ impl Connection {
             send_retirement: None,
             send_sealed: false,
             negotiation_skips: 0,
+            primary_only: false,
             identity: None,
             #[cfg(test)]
-            observed_batches: None,
+            observed_batches: OBSERVE_BATCHES.try_with(std::sync::Arc::clone).ok(),
         }
+    }
+
+    /// Applies the local relay's primary-player policy before any generated body is decoded.
+    pub(super) fn primary_only(&mut self) {
+        self.primary_only = true;
     }
 
     /// Instruments actual received batch ownership without replacing transport or codec behavior.
@@ -339,7 +352,25 @@ impl Connection {
                             "skipped empty native batch entries"
                         );
                     }
-                    self.pending.extend(packets);
+                    if self.primary_only {
+                        for packet in packets {
+                            let mut reader = wire::Reader::from_shared(&packet);
+                            let header = wire::PacketHeader::from_raw(
+                                reader.read_var_u32().map_err(io::Error::other)?,
+                            );
+                            if header.sender_subclient != 0 || header.target_subclient != 0 {
+                                self.negotiation_skips = self.negotiation_skips.saturating_add(1);
+                                tracing::debug!(
+                                    skipped = self.negotiation_skips,
+                                    "skipped unused local relay subclient"
+                                );
+                                continue;
+                            }
+                            self.pending.push_back(packet);
+                        }
+                    } else {
+                        self.pending.extend(packets);
+                    }
                 }
                 DecodeOutcome::Dropped(reason) => tracing::debug!(?reason, "dropped native batch"),
             }
@@ -398,28 +429,40 @@ impl Connection {
 
     /// Decodes one handshake packet while preserving every sibling from its batch.
     pub(super) async fn next_packet(&mut self) -> io::Result<Packet> {
-        self.current = None;
-        self.fill().await?;
-        let bytes = self.pending.pop_front().expect("fill supplies packets");
-        let mut reader = wire::Reader::from_shared(&bytes);
-        let header = wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
-        let id = packets::PacketId::from_raw(header.id).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unknown native handshake packet",
-            )
-        })?;
-        let body = bytes.slice(reader.position()..);
-        let data = crate::codec::decode_body(id, &body).map_err(io::Error::other)?;
-        self.current = Some(bytes);
-        Ok(Packet::from_parts(
-            GameHeader {
-                id,
-                from_subclient: header.sender_subclient.into(),
-                to_subclient: header.target_subclient.into(),
-            },
-            data,
-        ))
+        loop {
+            self.current = None;
+            self.fill().await?;
+            let bytes = self.pending.pop_front().expect("fill supplies packets");
+            let mut reader = wire::Reader::from_shared(&bytes);
+            let header =
+                wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
+            if self.primary_only && packets::PacketId::from_raw(header.id).is_none() {
+                self.negotiation_skips = self.negotiation_skips.saturating_add(1);
+                tracing::debug!(
+                    skipped = self.negotiation_skips,
+                    id = header.id,
+                    "skipped unused local relay negotiation packet"
+                );
+                continue;
+            }
+            let id = packets::PacketId::from_raw(header.id).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unknown native handshake packet",
+                )
+            })?;
+            let body = bytes.slice(reader.position()..);
+            let data = crate::codec::decode_body(id, &body).map_err(io::Error::other)?;
+            self.current = Some(bytes);
+            return Ok(Packet::from_parts(
+                GameHeader {
+                    id,
+                    from_subclient: header.sender_subclient.into(),
+                    to_subclient: header.target_subclient.into(),
+                },
+                data,
+            ));
+        }
     }
 
     /// Handles terminals immediately and retains other unhandled input in its original wire form.
