@@ -32,6 +32,8 @@
     {"rust_name": "RELAY_ACTION_BURST", "go_name": "RelayActionBurst", "value": 6, "rust_type": "u32", "doc": "Per-peer admission action token-bucket burst."},
     {"rust_name": "RELAY_MAX_ACTION_CLIENTS", "go_name": "RelayMaxActionClients", "value": 1024, "rust_type": "usize", "doc": "Maximum remembered peer action limiters."},
     {"rust_name": "RELAY_SIGN_IN_SECONDS", "go_name": "RelaySignInSeconds", "value": 900, "rust_type": "u32", "doc": "Original overall interactive sign-in budget."},
+    {"rust_name": "AUTH_XBOX_SIGNUP_SECONDS", "go_name": "AuthXboxSignupSeconds", "value": 1200, "rust_type": "u32", "doc": "Overall budget for completing the hosted Xbox profile page."},
+    {"rust_name": "AUTH_XBOX_SIGNUP_RETRY_SECONDS", "go_name": "AuthXboxSignupRetrySeconds", "value": 3, "rust_type": "u32", "doc": "Retry interval for the original hosted Xbox profile authorization."},
     {"rust_name": "RELAY_UPLOAD_BYTES_PER_SECOND", "go_name": "RelayUploadBytesPerSecond", "value": 262144, "rust_type": "u32", "doc": "Original play upload pacing rate."},
     {"rust_name": "RELAY_PROGRESS_COALESCE_MILLIS", "go_name": "RelayProgressCoalesceMillis", "value": 100, "rust_type": "u32", "doc": "Original delay coalescing control join progress."},
     {"rust_name": "RELAY_VERSION", "go_name": "RelayVersion", "value": 2, "rust_type": "u32", "doc": "Browser relay protocol version."},

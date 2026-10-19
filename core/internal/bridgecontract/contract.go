@@ -65,6 +65,10 @@ const (
 	RelayMaxActionClients = 1024
 	// RelaySignInSeconds: Original overall interactive sign-in budget.
 	RelaySignInSeconds = 900
+	// AuthXboxSignupSeconds: Overall budget for completing the hosted Xbox profile page.
+	AuthXboxSignupSeconds = 1200
+	// AuthXboxSignupRetrySeconds: Retry interval for the original hosted Xbox profile authorization.
+	AuthXboxSignupRetrySeconds = 3
 	// RelayUploadBytesPerSecond: Original play upload pacing rate.
 	RelayUploadBytesPerSecond = 262144
 	// RelayProgressCoalesceMillis: Original delay coalescing control join progress.
