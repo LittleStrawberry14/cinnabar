@@ -93,20 +93,30 @@ const MAX_EXPANSIONS: usize = 1024;
 
 /// Expands object-like macros, as Iris's preprocessor does in content and conditions. Numbers
 /// and the spacing between tokens are left unchanged; in a condition, the operand of `defined`
-/// stays a name.
+/// stays a name. As in C, a macro met inside its own expansion is not expanded again: it stays
+/// a name in content and counts as 0 in a condition.
 fn expand(text: &str, defines: &BTreeMap<String, String>, condition: bool) -> String {
     let mut budget = MAX_EXPANSIONS;
     let mut out = String::with_capacity(text.len());
-    expand_into(text, defines, condition, &mut budget, &mut out);
+    expand_into(
+        text,
+        defines,
+        condition,
+        &mut budget,
+        &mut Vec::new(),
+        &mut out,
+    );
     out
 }
 
-/// Appends `text` to `out`, replacing each defined identifier while `budget` lasts.
-fn expand_into(
+/// Appends `text` to `out`, replacing each defined identifier that is not already being
+/// expanded (`active`) while `budget` lasts.
+fn expand_into<'a>(
     text: &str,
-    defines: &BTreeMap<String, String>,
+    defines: &'a BTreeMap<String, String>,
     condition: bool,
     budget: &mut usize,
+    active: &mut Vec<&'a str>,
     out: &mut String,
 ) {
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
@@ -117,12 +127,18 @@ fn expand_into(
         let len = rest[start..].bytes().take_while(|&b| is_word(b)).count();
         let word = &rest[start..start + len];
         rest = &rest[start + len..];
-        match defines.get(word) {
-            Some(value)
-                if *budget > 0 && !after_defined && !word.as_bytes()[0].is_ascii_digit() =>
+        match defines.get_key_value(word) {
+            Some(_) if condition && active.contains(&word) && !after_defined => out.push('0'),
+            Some((name, value))
+                if *budget > 0
+                    && !after_defined
+                    && !word.as_bytes()[0].is_ascii_digit()
+                    && !active.contains(&word) =>
             {
                 *budget -= 1;
-                expand_into(flag_value(value), defines, condition, budget, out);
+                active.push(name.as_str());
+                expand_into(flag_value(value), defines, condition, budget, active, out);
+                active.pop();
             }
             _ => out.push_str(word),
         }

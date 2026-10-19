@@ -329,3 +329,20 @@ fn values_expand_object_like_macros() {
     );
     assert_eq!(properties.get("flag"), Some("1 0.5"));
 }
+
+#[test]
+fn a_macro_is_not_expanded_inside_its_own_expansion() {
+    let properties = parse_with(
+        "#define WIDTH WIDTH * 2\nwidth = WIDTH\nmutual = SELF + 1\n\
+         #if SELF\nself_condition=1\n#endif\n#if SELF == 0 && defined SELF\nzero=1\n#endif\n",
+        &[("SELF", "SELF + ALIAS"), ("ALIAS", "SELF")],
+    );
+    assert_eq!(properties.get("width"), Some("WIDTH * 2"));
+    assert_eq!(properties.get("mutual"), Some("SELF + SELF + 1"));
+    assert_eq!(keys(&properties), ["width", "mutual", "zero"]);
+    assert!(
+        properties.diagnostics.is_empty(),
+        "{:?}",
+        properties.diagnostics
+    );
+}
