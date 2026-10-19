@@ -15,6 +15,7 @@ enum Case {
     Healthy,
     Settings,
     Offer,
+    LargeOffer,
     Stack,
     MalformedHeader,
     MalformedSettings,
@@ -35,7 +36,7 @@ impl Case {
             Self::Settings | Self::MalformedHeader | Self::MalformedSettings => {
                 Some(Stage::Settings)
             }
-            Self::Offer => Some(Stage::Offer),
+            Self::Offer | Self::LargeOffer => Some(Stage::Offer),
             Self::Stack => Some(Stage::Stack),
         }
     }
@@ -57,7 +58,9 @@ impl Case {
         wire::Writer::with_limit(&mut bytes, BatchLimits::default().max_decoded_bytes)
             .write_var_u32(wire::PacketHeader::new(id).to_raw())
             .unwrap();
-        if !matches!(self, Self::MalformedSettings) {
+        if matches!(self, Self::LargeOffer) {
+            bytes.resize(BatchLimits::default().max_decoded_bytes + 1, b'x');
+        } else if !matches!(self, Self::MalformedSettings) {
             bytes.extend_from_slice(b"unused extension body");
         }
         bytes.into()
@@ -81,7 +84,19 @@ async fn send<S: BatchPhase>(
             .iter()
             .map(crate::session_transport::tests::packet_bytes),
     );
-    for message in codec.encode(&entries).map_err(io::Error::other)? {
+    let messages = codec.encode(&entries).map_err(io::Error::other)?;
+    if matches!(case, Case::LargeOffer)
+        && stage == Stage::Offer
+        && (messages.len() != 1
+            || messages[0].first().copied()
+                != u8::try_from(CompressionAlgorithm::Deflate.network_id()).ok()
+            || messages[0].len() > nethernet::session::Channel::Reliable.max_message_size())
+    {
+        return Err(io::Error::other(
+            "large decoded fixture must fit one compressed original reliable message",
+        ));
+    }
+    for message in messages {
         peer.session.send(message).await.map_err(io::Error::other)?;
     }
     Ok(())
@@ -117,7 +132,11 @@ async fn receive<S: BatchPhase>(
 
 /// Drives the original empty-pack, real StartGame/radius and Initialized exchange.
 async fn serve(peer: &mut AcceptedSession, case: Case) -> io::Result<()> {
-    let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
+    let mut limits = BatchLimits::default();
+    if matches!(case, Case::LargeOffer) {
+        limits.max_decoded_bytes *= 2;
+    }
+    let codec = BatchCodec::new(BatchHeader::NetherNet, limits);
     if !matches!(
         receive(peer, &codec).await?.first(),
         Some(packets::Packet::RequestNetworkSettings(_))
@@ -317,6 +336,15 @@ async fn native_startup_unknown_during_packs_keeps_original_join() {
 async fn native_startup_healthy_peer_keeps_original_join() {
     let (client, server) = exercise(Case::Healthy).await;
     client.unwrap();
+    server.unwrap();
+}
+
+#[tokio::test]
+async fn native_startup_compressed_upstream_batch_above_default_bytes_keeps_original_join() {
+    let (client, server) = exercise(Case::LargeOffer).await;
+    client.expect(
+        "valid compressed upstream batch above the default decoded limit stopped the original join",
+    );
     server.unwrap();
 }
 
