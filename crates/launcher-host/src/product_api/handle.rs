@@ -155,8 +155,12 @@ impl Client {
 
     /// Coalesces the newest local player intent and reads aged, watched remote state without socket I/O.
     pub(crate) fn sync(&self, local: CinnabarPlayerState) -> PlayerSync {
-        let Some((epoch, scope)) = self.with(|state| Some((state.epoch, state.scope.clone()?)))
-        else {
+        let Some((epoch, scope)) = self.with(|state| {
+            if state.stopped || state.live.is_none() {
+                return None;
+            }
+            Some((state.epoch, state.scope.clone()?))
+        }) else {
             return PlayerSync::Unavailable;
         };
         match scope.current() {
