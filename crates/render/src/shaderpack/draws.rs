@@ -526,14 +526,15 @@ pub(crate) fn draw_pipeline(
         let mut module = inputs.fragment.clone();
         inject_alpha_test(&mut module, test).then_some(module)
     });
-    let fragment = inputs
-        .device
-        .create_shader_module(wgpu::ShaderModuleDescriptor {
+    let fragment = super::pipelines::pack_shader_module(
+        inputs.device,
+        wgpu::ShaderModuleDescriptor {
             label: Some(&format!("shader pack {} {kind:?} fsh", inputs.name)),
             source: wgpu::ShaderSource::Naga(Cow::Owned(
                 tested.unwrap_or_else(|| inputs.fragment.clone()),
             )),
-        });
+        },
+    );
     let entry = |stage: StageKind| {
         reflection
             .entry_points

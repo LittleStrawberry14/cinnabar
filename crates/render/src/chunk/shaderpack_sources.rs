@@ -66,6 +66,13 @@ impl PackedChunkSources<'_> {
             .as_deref()
             .is_some_and(|hidden| hidden.contains(entity))
     }
+
+    /// Moves whenever the cave culler's hidden set changes.
+    pub(crate) fn hidden_revision(&self) -> u64 {
+        self.hidden
+            .as_deref()
+            .map_or(0, ChunkHiddenEntities::revision)
+    }
 }
 
 /// Resident packed sections and their changes this frame.
