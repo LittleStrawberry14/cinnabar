@@ -13,6 +13,10 @@ const (
 	PingWorkers = 8
 	// PingTimeoutMillis: Original whole-attempt server-row ping deadline.
 	PingTimeoutMillis = 2000
+	// MaxPacketDelayMS: Maximum opt-in delay of post-login application packets in either direction.
+	MaxPacketDelayMS = 1000
+	// PacketDelayLeaseMillis: Lifetime of one explicit packet-delay heartbeat.
+	PacketDelayLeaseMillis = 3000
 	// SessionKindConnect: Client session setup carrying JSON login data.
 	SessionKindConnect = 1
 	// SessionKindBatch: A batch of length-prefixed packets in either direction.
