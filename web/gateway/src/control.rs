@@ -56,7 +56,7 @@ where
 async fn serve(
     registry: &Arc<Registry>,
     client: IpAddr,
-    mut reader: impl FrameRead + Unpin,
+    mut reader: impl FrameRead,
     frames: FrameQueue,
 ) -> io::Result<()> {
     let hello = read_hello(&mut reader, RELAY_CHANNEL_CONTROL).await?;

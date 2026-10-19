@@ -32,6 +32,10 @@ struct Playing {
     lease: PlayLease,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the same owned connection moves between inline phases without per-phase allocation"
+)]
 enum Socket {
     Connecting(NativeRelayConnecting),
     Pumping(NativeRelayDriver),

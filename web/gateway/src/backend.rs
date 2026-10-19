@@ -33,8 +33,11 @@ use tokio_rustls::{
 
 type Work = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
 
-/// Caller-owned native listener edge; defaults and process configuration remain with its application.
-pub(super) struct Backend {
+/// A native TLS/WebSocket gateway driven by its application's accepted TCP stream.
+///
+/// Owns ephemeral account sessions and their control/play connections. The application supplies
+/// its TLS material, accepted sockets and Tokio runtime; construction starts no background work.
+pub struct Gateway {
     registry: Arc<Registry>,
     tls: TlsAcceptor,
     origins: Arc<[String]>,
@@ -53,9 +56,16 @@ impl Drop for Running {
     }
 }
 
-impl Backend {
-    /// Uses only supplied certificates and TLS 1.3; no process-global provider or trust mutation.
-    pub(super) fn new(
+impl Gateway {
+    /// Configures TLS 1.3 using supplied certificates and key without changing global TLS state.
+    ///
+    /// With an empty `origins` list, a nonempty HTTP Origin must have the request Host's authority.
+    /// Otherwise it must match a configured origin exactly. An absent Origin remains permitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TLS configuration or certificate/key pair is rejected.
+    pub fn new(
         certificates: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
         origins: Vec<String>,
@@ -77,9 +87,16 @@ impl Backend {
         })
     }
 
-    /// Drives accepted sockets and retained account work on the caller's existing runtime.
-    /// Incoming EOF or cancellation stops admission and retires handlers before erasing accounts.
-    pub(super) async fn run(
+    /// Drives accepted sockets and account work on the caller's Tokio runtime with I/O and timers.
+    ///
+    /// Ending `incoming` stops admission, cancels active work and retires connection handlers
+    /// before erasing accounts. Dropping this future drops its handlers instead of awaiting
+    /// their retirement. Individual connection refusals do not stop the gateway.
+    ///
+    /// # Errors
+    ///
+    /// Returns an accepted-stream or account-service driver error after retiring active handlers.
+    pub async fn run(
         self,
         mut incoming: impl Stream<Item = io::Result<TcpStream>> + Unpin,
     ) -> io::Result<()> {
