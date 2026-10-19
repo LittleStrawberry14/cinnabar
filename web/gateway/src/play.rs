@@ -161,7 +161,7 @@ impl Playing {
 
     /// Publishes the generated refusal before cleanup, under the original caller's bounded write.
     async fn refuse(
-        &self,
+        &mut self,
         frames: &FrameQueue,
         refusal: ClientDataRefusal,
         deadline: Instant,
