@@ -53,6 +53,13 @@ async fn catalog_generation_is_rejected_before_credential_restore_or_authenticat
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     assert!(account.state.lock().unwrap().cached.is_none());
     assert!(account.store.try_native_lease().is_ok());
+    let error = Arc::clone(&account)
+        .validate_generation("retired-generation")
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(account.state.lock().unwrap().cached.is_none());
+    assert!(account.store.try_native_lease().is_ok());
 }
 
 /// Dropping a later-stage acquisition preserves the SDK-visible refresh and retires replaced generations.

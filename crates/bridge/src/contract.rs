@@ -95,6 +95,12 @@ pub const RELAY_MAX_ACTION_CLIENTS: usize = 1024;
 /// Original overall interactive sign-in budget.
 pub const RELAY_SIGN_IN_SECONDS: u32 = 900;
 
+/// Overall budget for completing the hosted Xbox profile page.
+pub const AUTH_XBOX_SIGNUP_SECONDS: u32 = 1200;
+
+/// Retry interval for the original hosted Xbox profile authorization.
+pub const AUTH_XBOX_SIGNUP_RETRY_SECONDS: u32 = 3;
+
 /// Original play upload pacing rate.
 pub const RELAY_UPLOAD_BYTES_PER_SECOND: u32 = 262144;
 
@@ -121,6 +127,12 @@ pub const RELAY_UPLOAD_BURST_BYTES: usize = 8388608;
 
 /// Concurrent browser streams for control, active play and retiring play.
 pub const RELAY_BIDIRECTIONAL_STREAMS: usize = 3;
+
+/// QUIC bidirectional stream admission, including HTTP/3 request streams.
+pub const RELAY_QUIC_BIDIRECTIONAL_STREAMS: usize = 8;
+
+/// QUIC unidirectional stream admission, including HTTP/3 control streams.
+pub const RELAY_QUIC_UNIDIRECTIONAL_STREAMS: usize = 4;
 
 /// Interval between control keepalives.
 pub const RELAY_KEEPALIVE_SECONDS: u32 = 30;

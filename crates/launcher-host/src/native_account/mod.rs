@@ -232,10 +232,10 @@ fn import_credentials(lease: &NativeLease, policy: &xbox::Config) -> io::Result<
 
 /// Keeps HTTP bodies, URLs and credential values out of the application error surface.
 fn service_error(error: bedrock_services::Error) -> io::Error {
-    if matches!(error, bedrock_services::Error::SignInRequired) {
-        io::Error::other(RenewSignIn)
-    } else {
-        io::Error::other("native account service acquisition failed; retry or sign in again")
+    match error {
+        bedrock_services::Error::SignInRequired => io::Error::other(RenewSignIn),
+        bedrock_services::Error::AccountCreationRequired(challenge) => io::Error::other(challenge),
+        _ => io::Error::other("native account service acquisition failed; retry or sign in again"),
     }
 }
 
