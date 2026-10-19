@@ -19,6 +19,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
 mod duplex;
+mod upload;
 
 #[cfg(test)]
 tokio::task_local! {
@@ -66,7 +67,7 @@ where
     let stream = super::prefix::Prefix::new(parts.io, parts.read_buf.freeze());
     let (read, write) = tokio::io::split(stream);
     let (reader, frames, writer) = bridge::tasks::prepare_bounded_connection(
-        read,
+        upload::Upload::new(read),
         write,
         bridge::MAX_FRAME_LEN,
         RELAY_QUEUED_FRAME_BYTES,
@@ -203,10 +204,13 @@ impl Playing {
             .and_then(|result| result.map_err(invalid))
         {
             if let Some(terminal) = socket.take_terminal() {
-                frames
-                    .send(session_wire::encode_core_message(&terminal).map_err(invalid)?)
-                    .await
-                    .map_err(invalid)?;
+                duplex::write(
+                    &self.lease,
+                    &frames,
+                    session_wire::encode_core_message(&terminal).map_err(invalid)?,
+                    Some(deadline),
+                )
+                .await?;
             }
             return Err(error);
         }

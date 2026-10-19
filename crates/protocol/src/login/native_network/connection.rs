@@ -386,7 +386,7 @@ impl Connection {
     pub(super) fn current_terminal(&self) -> io::Result<Option<crate::session_wire::CoreMessage>> {
         self.current
             .as_ref()
-            .map(|bytes| super::relay::terminal(bytes))
+            .map(super::relay::terminal)
             .transpose()
             .map(Option::flatten)
     }

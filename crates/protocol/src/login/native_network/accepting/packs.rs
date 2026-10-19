@@ -92,7 +92,7 @@ fn checksum(value: &str) -> io::Result<[u8; 32]> {
     if value.len() != hash.len() * 2 {
         return Err(invalid());
     }
-    for (byte, digits) in hash.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+    for (byte, digits) in hash.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
         let high = char::from(digits[0]).to_digit(16).ok_or_else(invalid)?;
         let low = char::from(digits[1]).to_digit(16).ok_or_else(invalid)?;
         *byte = ((high << 4) | low) as u8;
