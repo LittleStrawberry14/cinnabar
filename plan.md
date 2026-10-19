@@ -79,6 +79,12 @@ A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.
 Owning process, account and production session regressions still require execution.
 
+Native menu services now have a source candidate that attaches the original account
+and local-world workers without a Go Core executable or control endpoint. Replacement
+still waits for the original publisher and any real child to retire. The missing-Core
+baseline failed its owning attachment control; the correction and real Core-to-native
+transition still require execution. Backend defaults and native friend UI gates are unchanged.
+
 Complete host messaging and renewal acceptance, addressed HTTP joins and trust,
 remaining account event ownership, and current client integration. Native friend
 UI joining remains gated on end-to-end qualification. Real-account lifecycle,

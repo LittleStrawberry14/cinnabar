@@ -222,14 +222,14 @@ impl Lookups {
 
 /// Starts the lookup worker; it stops when the returned sender is dropped.
 pub(super) fn start(
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     runtime: Handle,
     tasks: TaskTracker,
 ) -> Sender<Roster> {
     let (rosters, requests) = unbounded();
     thread::spawn(crate::worker::tracked(
-        move || run(&socket_dir, &shared, &requests, &runtime),
+        move || run(socket_dir.as_deref(), &shared, &requests, &runtime),
         &tasks,
     ));
     rosters
@@ -237,7 +237,7 @@ pub(super) fn start(
 
 /// Schedules lookups and expirations while the network thread handles a single pending request.
 fn run(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     shared: &Mutex<Snapshot>,
     requests: &Receiver<Roster>,
     runtime: &Handle,
@@ -260,7 +260,11 @@ fn run(
                                 return api.lookup(&batch).await;
                             }
                         }
-                        bridge::lookup_cinnabar_players(socket_dir, &batch).await
+                        bridge::lookup_cinnabar_players(
+                            super::workers::require_core_directory(socket_dir)?,
+                            &batch,
+                        )
+                        .await
                     })
                     .await
                 });

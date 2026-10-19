@@ -18,7 +18,7 @@ pub(super) enum Loaded {
 
 impl Source {
     /// Never substitutes an unrelated Go account when the selected native owner is missing.
-    pub(super) async fn fetch(&self, socket_dir: &std::path::Path) -> Result<Loaded, ()> {
+    pub(super) async fn fetch(&self, socket_dir: Option<&std::path::Path>) -> Result<Loaded, ()> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if let Self::Native(account) = self {
             return match account {
@@ -30,10 +30,12 @@ impl Source {
                 None => Err(()),
             };
         }
-        bridge::list_people(socket_dir)
-            .await
-            .map(Loaded::Core)
-            .map_err(|_| ())
+        bridge::list_people(
+            super::super::workers::require_core_directory(socket_dir).map_err(|_| ())?,
+        )
+        .await
+        .map(Loaded::Core)
+        .map_err(|_| ())
     }
 
     /// Compares the original concrete account without leases or authentication on the frame.

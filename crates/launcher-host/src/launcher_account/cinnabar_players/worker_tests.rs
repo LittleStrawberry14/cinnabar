@@ -57,7 +57,8 @@ fn a_lookup_answer_publishes_without_roster_churn() {
     let (worker_dir, worker_shared) = (dir.clone(), Arc::clone(&shared));
     let runtime = worker_runtime();
     let executor = runtime.handle().clone();
-    let worker = thread::spawn(move || run(&worker_dir, &worker_shared, &requests, &executor));
+    let worker =
+        thread::spawn(move || run(Some(&worker_dir), &worker_shared, &requests, &executor));
     sender
         .send(Roster {
             session: 1,

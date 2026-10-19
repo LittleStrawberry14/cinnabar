@@ -9,7 +9,7 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Starts a dedicated reporter; dropping the account link cancels queued retries.
 pub(super) fn start(
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
     mut changed: tokio::sync::watch::Receiver<home_feed::Wake>,
@@ -24,7 +24,7 @@ pub(super) fn start(
                 &stop,
                 RETRY_INTERVAL,
                 |report: &home_feed::Report| {
-                    runtime.block_on(report.send(&socket_dir, &shared, &mut changed))
+                    runtime.block_on(report.send(socket_dir.as_deref(), &shared, &mut changed))
                         != home_feed::ReportOutcome::Retry
                 },
             );

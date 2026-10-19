@@ -1,5 +1,5 @@
-//! [`AccountControl`] over the core's launcher control endpoint. Workers poll
-//! auth/events often, catalogs and Home/public feeds rarely. Profile has an
+//! [`AccountControl`] over the selected native services or a real Core control endpoint.
+//! Workers poll auth/events often, catalogs and Home/public feeds rarely. Profile has an
 //! independent worker woken by opening, retry and account changes, so it never
 //! waits on unrelated feeds. Sign-out requests queue to the events worker.
 
@@ -259,7 +259,7 @@ impl Snapshot {
     }
 }
 
-/// The menu's link to a running core's launcher control endpoint.
+/// The menu's selected account services and their optional real legacy control transport.
 pub struct LauncherAccount {
     snapshot: Arc<Mutex<Snapshot>>,
     sign_out: Sender<()>,
@@ -270,7 +270,7 @@ pub struct LauncherAccount {
     cinnabar_rosters: Sender<cinnabar_players::Roster>,
     /// Dropping it stops the catalog and feed workers.
     _alive: Sender<()>,
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     presence_lifetime: TitlePresenceLifetime,
 }
 
@@ -306,14 +306,19 @@ impl LauncherAccount {
     /// the workers stop when this is dropped. Events, the slow catalog and the screen feeds
     /// each poll on their own worker, publishing every answer as it arrives.
     pub fn new(socket_dir: PathBuf, artwork: PathBuf, runtime: Handle, tasks: TaskTracker) -> Self {
-        Self::start(socket_dir, artwork, Snapshot::default(), runtime, tasks)
+        Self::start(
+            Some(socket_dir),
+            artwork,
+            Snapshot::default(),
+            runtime,
+            tasks,
+        )
     }
 
-    /// Starts native account services after the previous core was reaped.
-    /// They share the menu's selected owner with catalog and game operations.
+    /// Starts native services without a Core endpoint on the application's existing reactor.
+    /// Account operations share the menu's original selected owner; absence never selects Core.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub fn with_native_presence(
-        socket_dir: PathBuf,
+    pub fn native(
         artwork: PathBuf,
         account: Option<Arc<crate::native_account::NativeAccount>>,
         language: &str,
@@ -321,7 +326,7 @@ impl LauncherAccount {
         tasks: TaskTracker,
     ) -> Self {
         Self::start(
-            socket_dir,
+            None,
             artwork,
             Snapshot::native(account, language),
             runtime,
@@ -429,9 +434,9 @@ impl LauncherAccount {
         self.with(|snapshot| Arc::clone(&snapshot.cinnabar_players))
     }
 
-    /// The control endpoint directory this link polls.
-    pub fn socket_dir(&self) -> &std::path::Path {
-        &self.socket_dir
+    /// The actual legacy control directory; native services have no Core transport.
+    pub fn core_directory(&self) -> Option<&std::path::Path> {
+        self.socket_dir.as_deref()
     }
 
     fn with<T>(&self, read: impl FnOnce(&mut Snapshot) -> T) -> T {
@@ -511,7 +516,7 @@ fn wait_catalog(stop: &Receiver<()>, changes: &Receiver<()>) -> bool {
 fn poll_events(socket_dir: &std::path::Path, shared: &Mutex<Snapshot>, requests: &Receiver<()>) {
     let runtime = worker_runtime();
     events::poll(
-        socket_dir,
+        Some(socket_dir),
         shared,
         requests,
         &TitlePresenceLifetime::new(),
@@ -533,7 +538,7 @@ fn new_release<'a>(
 }
 
 fn poll_catalog(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
@@ -603,10 +608,11 @@ const SHOWN_SURFACES: [&str; 1] = [bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON
 
 fn report_impressions(
     runtime: &Handle,
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     home: &Home,
     reported: &mut HashSet<String>,
 ) {
+    let Some(socket_dir) = socket_dir else { return };
     for message in &home.messages {
         if !SHOWN_SURFACES.contains(&message.surface.as_str())
             || !reported.insert(message.instance_id.clone())
@@ -804,9 +810,12 @@ impl AccountControl for LauncherAccount {
     }
 
     fn answer_server_trust(&mut self, id: u64, trusted: bool) {
+        let Some(directory) = self.socket_dir.clone() else {
+            return;
+        };
         self.with(|snapshot| snapshot.answered_trust = Some(id));
         let snapshot = Arc::clone(&self.snapshot);
-        super::server_trust::send(self.socket_dir.clone(), id, trusted, move || {
+        super::server_trust::send(directory, id, trusted, move || {
             let mut snapshot = snapshot.lock().unwrap_or_else(|poison| poison.into_inner());
             if snapshot.answered_trust == Some(id) {
                 snapshot.answered_trust = None;

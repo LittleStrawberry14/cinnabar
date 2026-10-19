@@ -43,7 +43,7 @@ fn verified_native_join_does_not_wait_for_the_account_core() {
         menu.auth_process = Some(native_state(AuthState::Authenticated));
         menu.auth_attempted = true;
         menu.feeds.account_active_id = Some("123".into());
-        menu.account_core = Some(super::super::launcher_core::AccountCore::default());
+        menu.account_core = Some(super::super::launcher_services::AccountCore::default());
         menu.request_connect(target);
         menu.intents.join_sign_in_deadline =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(10));

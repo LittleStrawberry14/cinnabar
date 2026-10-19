@@ -22,13 +22,14 @@ pub(super) trait FeedSource {
 /// The core's feeds; with `art`, Home and featured artwork already on disk is filled in and the
 /// rest is queued, so a slow image host never delays a publish.
 pub(super) struct CoreFeeds<'a> {
-    pub(super) socket_dir: &'a Path,
+    pub(super) socket_dir: Option<&'a Path>,
     pub(super) art: Option<&'a FeedArt>,
 }
 
 impl FeedSource for CoreFeeds<'_> {
     async fn home(&self) -> Result<Home, BridgeError> {
-        let mut home = bridge::home(self.socket_dir).await?;
+        let mut home =
+            bridge::home(super::workers::require_core_directory(self.socket_dir)?).await?;
         if let Some(art) = self.art {
             art.fill_cached(artwork::home_slots(&mut home));
         }
@@ -39,9 +40,13 @@ impl FeedSource for CoreFeeds<'_> {
         include_player_counts: bool,
     ) -> Result<Vec<FeaturedServer>, BridgeError> {
         let mut servers = if include_player_counts {
-            bridge::list_featured_servers_with_counts(self.socket_dir).await
+            bridge::list_featured_servers_with_counts(super::workers::require_core_directory(
+                self.socket_dir,
+            )?)
+            .await
         } else {
-            bridge::list_featured_servers(self.socket_dir).await
+            bridge::list_featured_servers(super::workers::require_core_directory(self.socket_dir)?)
+                .await
         }?;
         if let Some(art) = self.art {
             art.fill_cached(artwork::featured_slots(&mut servers));
@@ -49,16 +54,16 @@ impl FeedSource for CoreFeeds<'_> {
         Ok(servers)
     }
     async fn realms(&self) -> Result<Vec<Realm>, BridgeError> {
-        bridge::list_realms(self.socket_dir).await
+        bridge::list_realms(super::workers::require_core_directory(self.socket_dir)?).await
     }
     async fn friends(&self) -> Result<Vec<Friend>, BridgeError> {
-        bridge::list_friends(self.socket_dir).await
+        bridge::list_friends(super::workers::require_core_directory(self.socket_dir)?).await
     }
 }
 
 /// Polls featured data independently so opening details never waits for Home or its reports.
 pub(super) fn poll_featured(
-    socket_dir: &Path,
+    socket_dir: Option<&Path>,
     art: &FeedArt,
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
@@ -86,7 +91,7 @@ pub(super) fn poll_featured(
 
 /// Polls Home and reports its impressions without blocking other screen feeds.
 pub(super) fn poll_home(
-    socket_dir: &Path,
+    socket_dir: Option<&Path>,
     art: &FeedArt,
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,

@@ -59,7 +59,7 @@ impl LauncherAccount {
 
 /// Polls only loopback control; the core coalesces WebSocket writes and bounds received leases.
 pub(super) fn start(
-    dir: PathBuf,
+    dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
     runtime: Handle,
@@ -104,7 +104,12 @@ pub(super) fn start(
                         return Ok(Ok(api.sync(local)));
                     }
                     tokio::time::timeout(Duration::from_secs(2), async {
-                        bridge::sync_cinnabar_players(&dir, &local).await.map(Some)
+                        bridge::sync_cinnabar_players(
+                            super::workers::require_core_directory(dir.as_deref())?,
+                            &local,
+                        )
+                        .await
+                        .map(Some)
                     })
                     .await
                 });
@@ -147,7 +152,7 @@ mod tests {
         let (alive, stop) = bounded(0);
         let runtime = worker_runtime();
         let worker = start(
-            dir.clone(),
+            Some(dir.clone()),
             Arc::clone(&shared),
             stop,
             runtime.handle().clone(),

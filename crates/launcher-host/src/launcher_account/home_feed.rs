@@ -175,7 +175,7 @@ impl Report {
     /// Uses the original ordered reporter; retirement ends only this obsolete request's retries.
     pub(super) async fn send(
         &self,
-        socket_dir: &std::path::Path,
+        socket_dir: Option<&std::path::Path>,
         shared: &Mutex<Snapshot>,
         changed: &mut watch::Receiver<Wake>,
     ) -> ReportOutcome {
@@ -200,6 +200,9 @@ impl Report {
         // The existing Core dispatcher retains its own account and report semantics.
         let _ = (shared, changed);
         let _ = &self.scope;
+        let Ok(socket_dir) = super::workers::require_core_directory(socket_dir) else {
+            return ReportOutcome::Retry;
+        };
         match bridge::report_message_event(socket_dir, &self.event).await {
             Ok(()) => ReportOutcome::Complete,
             Err(error) => {

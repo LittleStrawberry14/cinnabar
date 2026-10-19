@@ -28,7 +28,13 @@ async fn core_invite_people_keep_the_existing_rpc_and_rows() {
     let selected = Selection::capture(&shared.lock().unwrap());
     let (wake, mut changed) = watch::channel(Wake::Account);
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     let server = async {
         let (mut stream, request) = request(&listener).await;
         retire(&wake);
@@ -66,7 +72,13 @@ async fn account_retirement_cancels_the_actual_invite_people_rpc() {
     });
     let selected = Selection::capture(&shared.lock().unwrap());
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     tokio::pin!(reading);
     let (mut stream, _) = tokio::select! {
         request = request(&listener) => request,
@@ -101,7 +113,13 @@ async fn stopping_invite_worker_cancels_the_actual_people_rpc() {
     let shared = Mutex::new(Snapshot::default());
     let selected = Selection::capture(&shared.lock().unwrap());
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     tokio::pin!(reading);
     let (mut stream, _) = tokio::select! {
         request = request(&listener) => request,
@@ -128,7 +146,12 @@ async fn missing_native_people_owner_never_falls_back_to_core() {
     let listener =
         std::os::unix::net::UnixListener::bind(directory.path().join("control.sock")).unwrap();
     listener.set_nonblocking(true).unwrap();
-    assert!(Source::Native(None).fetch(directory.path()).await.is_err());
+    assert!(
+        Source::Native(None)
+            .fetch(Some(directory.path()))
+            .await
+            .is_err()
+    );
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
@@ -145,7 +168,7 @@ async fn unavailable_native_invitation_never_dispatches_core_rpc() {
     listener.set_nonblocking(true).unwrap();
     assert!(
         Destination::Native(None)
-            .send(directory.path(), "456")
+            .send(Some(directory.path()), "456")
             .await
             .is_err()
     );

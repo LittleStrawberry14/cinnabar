@@ -235,7 +235,7 @@ fn account_responses_from_before_sign_out_are_discarded() {
         sign_out,
         profile_refresh: profile_worker::channel().0,
         _alive: alive,
-        socket_dir: PathBuf::new(),
+        socket_dir: Some(PathBuf::new()),
         message_reports: crossbeam_channel::unbounded().0,
         invites: invites::Requests::disconnected(),
         realm_membership: realm_membership::Requests::disconnected(),

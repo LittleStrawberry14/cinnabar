@@ -691,7 +691,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         debug_overlay: args.dev_debug_overlay,
     });
     // Account feeds also serve Profile in direct-address and external-socket runs.
-    app.init_resource::<client_shell::menu::LauncherCoreSlot>();
+    app.init_resource::<client_shell::menu::LauncherServices>();
     app.add_plugins(render::PresentModePolicyPlugin::new(present_mode_policy));
     if diagnostics_enabled {
         app.add_plugins(RenderDiagnosticsPlugin);

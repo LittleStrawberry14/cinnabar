@@ -59,7 +59,7 @@ impl Selection {
 
 /// Publishes a terminal result even if a control endpoint accepts but never answers.
 pub(super) fn poll(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     artwork_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     requests: tokio::sync::watch::Receiver<Wake>,
@@ -77,7 +77,7 @@ pub(super) fn poll(
 
 /// Uses the same request source and publication rules with a shorter deadline in fixtures.
 fn poll_with_timeout(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     artwork_dir: &std::path::Path,
     shared: &Mutex<Snapshot>,
     mut requests: tokio::sync::watch::Receiver<Wake>,
@@ -226,7 +226,7 @@ mod tests {
         let executor = runtime.handle().clone();
         let worker = thread::spawn(move || {
             poll_with_timeout(
-                &endpoint,
+                Some(&endpoint),
                 &endpoint.join("artwork"),
                 &snapshot,
                 requests,
