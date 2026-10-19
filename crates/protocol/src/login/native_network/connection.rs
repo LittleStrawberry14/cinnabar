@@ -43,6 +43,7 @@ pub(crate) struct Connection {
     pub(super) transport: Transport,
     codec: Option<Codec>,
     limits: BatchLimits,
+    incoming_decoded_limit: usize,
     pending: PendingPackets,
     current: Option<Bytes>,
     deferred: DeferredPackets,
@@ -100,17 +101,20 @@ impl Connection {
             }
         }
     }
-    /// Starts an uncompressed session and retains all later state on this same owner.
+    /// Starts an upstream session, retaining its larger incoming policy until actual settings.
     pub(super) fn new(transport: Transport) -> Self {
-        Self::with_limits(transport, BatchLimits::default())
+        let mut connection = Self::with_limits(transport, BatchLimits::default());
+        connection.incoming_decoded_limit = bridge::contract::MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES;
+        connection
     }
 
-    /// Binds the original role's count policy before any bytes or codec transition.
+    /// Binds the accepting role's original byte/count policy before any codec transition.
     pub(super) fn with_limits(transport: Transport, limits: BatchLimits) -> Self {
         Self {
             codec: Some(Codec::Plain(BatchCodec::new(transport.header(), limits))),
             transport,
             limits,
+            incoming_decoded_limit: limits.max_decoded_bytes,
             pending: PendingPackets::default(),
             current: None,
             deferred: DeferredPackets::default(),
@@ -165,7 +169,11 @@ impl Connection {
         let current = self.codec.take().expect("codec transition is synchronous");
         match current {
             Codec::Plain(codec) => {
-                self.codec = Some(Codec::Negotiated(codec.negotiate(settings)));
+                self.codec = Some(Codec::Negotiated(
+                    codec
+                        .negotiate(settings)
+                        .with_incoming_decoded_limit(self.incoming_decoded_limit),
+                ));
                 Ok(())
             }
             configured @ Codec::Negotiated(_) => {

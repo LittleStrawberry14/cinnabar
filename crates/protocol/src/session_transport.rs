@@ -25,7 +25,8 @@ pub(crate) mod native;
 /// A server may batch a whole pack transfer, or a large item registry, into one batch,
 /// so the local leg accepts batches far larger than a typical client's 16 MiB default.
 /// The core already bounds pack transfers before they reach this hop.
-pub(crate) const MAX_SESSION_BATCH_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_SESSION_BATCH_BYTES: usize =
+    bridge::contract::MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES;
 /// Bounds frames read while packs prepare or the world consumer is full; past it the core waits.
 pub(crate) const MAX_READ_AHEAD_BYTES: usize = 64 * 1024 * 1024;
 
