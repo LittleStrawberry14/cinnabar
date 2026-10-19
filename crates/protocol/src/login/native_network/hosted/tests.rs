@@ -12,7 +12,7 @@ fn preloaded(archive: Vec<u8>, id: uuid::Uuid) -> packs::Acquired {
     let mut offer = PackOffer::new_with_metadata(
         packets::ResourcePacksInfo {
             resource_packs: vec![offered],
-            texture_pack_required: true,
+            resource_pack_required: true,
             ..Default::default()
         },
         PackTransferLimits::default(),
