@@ -99,3 +99,21 @@ fn selection_keeps_the_actual_service_handle_and_reference_without_admitting_adv
     assert_eq!(selected.recipient.as_deref(), Some("123"));
     assert_eq!(selected.reference.name(), "invited-world");
 }
+
+/// A joined legacy-only world supplies the same original player's nonce without a JSON-RPC fallback.
+#[test]
+fn joined_legacy_snapshot_admits_its_own_member_nonce() {
+    let mut value = snapshot();
+    value["properties"]["custom"]["SupportedConnections"] = json!([
+        {"ConnectionType":super::super::world_metadata::WEBSOCKET_SIGNALING,
+            "RakNetGUID":"42"}
+    ]);
+    let description = serde_json::from_value(value).unwrap();
+    let result = world::admission(&description, &scope(), "456");
+    assert!(
+        result.is_ok(),
+        "a verified joined legacy-only world was refused before preparing its original service route"
+    );
+    let admission = result.unwrap().expect("joined player's original nonce");
+    assert_eq!(admission.into_parts().1, "synthetic-player-admission");
+}
