@@ -34,101 +34,17 @@ fn authority(origin: &str) -> Option<String> {
     {
         return None;
     }
-    if let Some(literal) = host.strip_prefix('[') {
-        let (literal, port) = literal.rsplit_once(']')?;
-        if !optional_port(port) {
-            return None;
-        }
-        let decoded = match literal.find("%25") {
-            Some(index) => {
-                let mut decoded = unescape(&literal[..index], false)?;
-                decoded.push_str(&unescape(&literal[index..], true)?);
-                decoded
-            }
-            None => unescape(literal, false)?,
-        };
-        let address = match decoded.split_once('%') {
+    let decoded = protocol::relay_url_host(host)?;
+    if let Some(literal) = decoded.strip_prefix('[') {
+        let (literal, _) = literal.rsplit_once(']')?;
+        let address = match literal.split_once('%') {
             Some((address, zone)) if !zone.is_empty() => address,
             Some(_) => return None,
-            None => &decoded,
+            None => literal,
         };
         address.parse::<Ipv6Addr>().ok()?;
-        return Some(format!("[{decoded}]{port}"));
     }
-    if host.contains('[') {
-        return None;
-    }
-    if let Some((_, port)) = host.split_once(':')
-        && !port.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    unescape(host, false)
-}
-
-/// A present port may be empty but otherwise contains only decimal digits, without range rewriting.
-fn optional_port(port: &str) -> bool {
-    port.is_empty()
-        || port
-            .strip_prefix(':')
-            .is_some_and(|port| port.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-/// Decodes host escapes and the IPv6 zone exception while rejecting control/authority delimiters.
-fn unescape(raw: &str, zone: bool) -> Option<String> {
-    let mut result = Vec::with_capacity(raw.len());
-    let mut bytes = raw.bytes();
-    while let Some(byte) = bytes.next() {
-        if byte == b'%' {
-            let high = char::from(bytes.next()?).to_digit(16)?;
-            let low = char::from(bytes.next()?).to_digit(16)?;
-            let decoded = u8::try_from(high * 16 + low).ok()?;
-            if decoded != b'%'
-                && if zone {
-                    decoded != b' ' && !host_byte(decoded)
-                } else {
-                    decoded.is_ascii()
-                }
-            {
-                return None;
-            }
-            result.push(decoded);
-        } else {
-            if byte.is_ascii() && !host_byte(byte) {
-                return None;
-            }
-            result.push(byte);
-        }
-    }
-    String::from_utf8(result).ok()
-}
-
-/// URL host characters, including Go's retained host sub-delimiters; not a DNS allowlist.
-fn host_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'-' | b'_'
-                | b'.'
-                | b'~'
-                | b'!'
-                | b'$'
-                | b'&'
-                | b'\''
-                | b'('
-                | b')'
-                | b'*'
-                | b'+'
-                | b','
-                | b';'
-                | b'='
-                | b':'
-                | b'['
-                | b']'
-                | b'<'
-                | b'>'
-                | b'"'
-        )
+    Some(decoded)
 }
 
 #[cfg(test)]

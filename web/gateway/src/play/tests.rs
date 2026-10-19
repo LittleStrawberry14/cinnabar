@@ -56,8 +56,9 @@ async fn empty_upload_half_eof_retires_the_actual_pump_while_output_is_blocked()
             let random = protocol::ClientRandomId::new(1).unwrap();
             let value = protocol::login_client_data("Fixture", random, None, &protocol::LoginSettings::default());
             let raw = serde_json::value::RawValue::from_string(serde_json::to_string(&value).unwrap()).unwrap();
-            let mut claims = RawClientData::from_raw(&raw).unwrap();
-            session.guest_claims(&mut claims, 1, "Fixture").unwrap();
+            let claims = RawClientData::from_raw(&raw).unwrap();
+            let claims = session.validate_guest(claims, protocol::PROTOCOL_VERSION).unwrap();
+            let claims = session.guest_claims(claims).unwrap();
             let deadline = Instant::now().checked_add(protocol::NATIVE_JOIN_TIMEOUT).unwrap();
             let result = {
                 let negotiating = playing.negotiate(reader, frames, claims, false, None, deadline);

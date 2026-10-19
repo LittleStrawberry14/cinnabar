@@ -8,7 +8,8 @@ use bedrock_services::{
 use bridge::{Account as Observation, AuthState, contract::*};
 use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 use protocol::{
-    NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider, RawClientData,
+    ClientDataRefusal, NativeAuthentication, NativeCredential, NativeDeviceProfile, NativeProvider,
+    RawClientData, ValidatedClientData,
 };
 use rand::rngs::SysRng;
 use std::{
@@ -106,17 +107,24 @@ impl Account {
         }
     }
 
+    /// Applies this actual account's owned profile without dispatching credential or transport work.
+    pub(super) fn validate(
+        &self,
+        claims: RawClientData,
+        protocol: i32,
+    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+        self.profile.validate_relay(claims, protocol)
+    }
+
     /// Mints on this same SDK account under the caller's original play admission deadline.
     pub(super) async fn prepare(
         &mut self,
-        mut claims: RawClientData,
-        random_id: i64,
+        claims: ValidatedClientData,
         deadline: Instant,
     ) -> io::Result<NativeAuthentication> {
         tokio::time::timeout_at(deadline.into(), async {
             current(deadline)?;
-            self.profile
-                .apply_relay(&mut claims, random_id, &self.gamertag)?;
+            let claims = claims.into_relay_claims(&self.gamertag)?;
             let key = SigningKey::try_generate_from_rng(&mut SysRng).map_err(failed)?;
             let token = self
                 .services

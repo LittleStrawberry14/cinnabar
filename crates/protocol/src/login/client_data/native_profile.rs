@@ -1,6 +1,6 @@
 //! Pure device metadata shared by protected desktop and ephemeral gateway account owners.
 
-use super::{DISPLAY_NAME, RawClientData};
+use super::{ClientDataRefusal, DISPLAY_NAME, RawClientData, ValidatedClientData};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -79,38 +79,70 @@ impl NativeDeviceProfile {
         Ok(())
     }
 
-    /// Applies the same owned device values while retaining raw relay metadata and full wire IDs.
-    /// The application must validate the original name/skin/title data before credential work.
-    pub fn apply_relay(
+    /// Validates downstream metadata under this profile before publishing a derived identity.
+    /// This checks metadata only; account and selected-socket authority remain their owners.
+    /// Incoming address DNS/OS-service resolution is deliberately omitted; no IO is performed.
+    ///
+    /// # Errors
+    /// Returns a redacted refusal preserving the owning Go admission phase and presentation key.
+    pub fn validate_relay(
         &self,
-        claims: &mut RawClientData,
-        random_id: i64,
-        gamertag: &str,
-    ) -> io::Result<()> {
+        claims: RawClientData,
+        protocol: i32,
+    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+        claims.validate_relay(self, protocol)
+    }
+
+    /// Applies only claimed device fields, leaving original name and SelfSignedId for validation.
+    pub(super) fn apply_relay_device(&self, claims: &mut RawClientData) -> io::Result<()> {
         let platform_default = claims.integer("PlatformType")?.unwrap_or_default() == 0;
-        for (name, value) in self.overlays(random_id, gamertag, platform_default) {
+        for (name, value) in self
+            .device_overlays()
+            .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
+        {
             claims.insert(name, value)?;
         }
         Ok(())
     }
 
-    /// The sole device/derived identity overlay definition for both real claim representations.
+    /// Retains this exact profile's derivation without borrowing it across credential acquisition.
+    pub(super) fn relay_identity(&self, random_id: i64) -> uuid::Uuid {
+        self_signed_id(random_id, &self.id)
+    }
+
+    /// Applies canonical identity only after the consuming metadata success boundary.
+    pub(super) fn apply_relay_identity(
+        claims: &mut RawClientData,
+        name: &str,
+        id: uuid::Uuid,
+    ) -> io::Result<()> {
+        for (name, value) in identity_overlays(name, id) {
+            claims.insert(name, value)?;
+        }
+        Ok(())
+    }
+
+    /// The desktop composes the same device and derived identity groups in its original order.
     fn overlays(
         &self,
         random_id: i64,
         gamertag: &str,
         platform_default: bool,
     ) -> impl Iterator<Item = (&'static str, Value)> {
+        self.device_overlays()
+            .chain(identity_overlays(gamertag, self.relay_identity(random_id)))
+            .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
+    }
+
+    /// The sole definition of claimed device fields for canonical and raw representations.
+    fn device_overlays(&self) -> impl Iterator<Item = (&'static str, Value)> {
         [
             ("DeviceOS", json!(self.os)),
             ("DeviceModel", json!(self.model)),
             ("DeviceId", json!(self.id)),
             ("DefaultInputMode", json!(TOUCH_INPUT_MODE)),
-            (DISPLAY_NAME, json!(gamertag)),
-            ("SelfSignedId", json!(self_signed_id(random_id, &self.id))),
         ]
         .into_iter()
-        .chain(platform_default.then(|| ("PlatformType", json!(MOBILE_PLATFORM))))
     }
 }
 
@@ -125,6 +157,11 @@ impl NativeDeviceProfile {
             .map_err(|_| io::Error::other("invalid service device namespace"))?;
         Ok(uuid::Uuid::new_v5(&namespace, xuid.as_bytes()))
     }
+}
+
+/// The one derived identity field group shared by canonical desktop and validated relay claims.
+fn identity_overlays(name: &str, id: uuid::Uuid) -> impl Iterator<Item = (&'static str, Value)> {
+    [(DISPLAY_NAME, json!(name)), ("SelfSignedId", json!(id))].into_iter()
 }
 
 /// Preserves the signed login-ID bit pattern and per-word UUID byte order.

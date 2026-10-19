@@ -10,7 +10,8 @@ use bridge::{FrameQueue, FrameRead, contract::*};
 use bytes::Bytes;
 use futures::StreamExt;
 use protocol::{
-    NativeRelayConnecting, NativeRelayConnection, NativeRelayRetired, RawClientData,
+    ClientDataRefusal, NativeRelayConnecting, NativeRelayConnection, NativeRelayRetired,
+    RawClientData,
     session_wire::{self, CoreMessage},
 };
 use std::{collections::VecDeque, io, sync::Arc, time::Instant};
@@ -105,25 +106,30 @@ impl Playing {
             .ok_or_else(closed)?
             .map_err(invalid)?;
         upstream::current(&self.lease, deadline)?;
-        let request = session_wire::decode_native_connect(&frame).map_err(invalid)?;
-        if request.protocol != protocol::PROTOCOL_VERSION
-            || request.client_data.game_version()?.as_deref() != Some(protocol::GAME_VERSION)
-        {
-            return Err(invalid(()));
-        }
-        let random = request
-            .client_data
-            .random_id()?
-            .ok_or_else(|| invalid(()))?;
-        let mut claims = request.client_data;
-        let name = claims
-            .display_name()?
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| invalid(()))?;
+        let request = match session_wire::decode_native_connect(&frame) {
+            Ok(request) => request,
+            Err(_) => {
+                return self
+                    .refuse(&frames, ClientDataRefusal::Generic, deadline)
+                    .await;
+            }
+        };
+        let checked = if let Some(account) = &self.lease.account {
+            account.validate(request.client_data, request.protocol)
+        } else {
+            self.lease
+                .session
+                .validate_guest(request.client_data, request.protocol)
+        };
+        upstream::current(&self.lease, deadline)?;
+        let claims = match checked {
+            Ok(claims) => claims,
+            Err(refusal) => return self.refuse(&frames, refusal, deadline).await,
+        };
         self.lease
             .progress(progress(bridge::ConnectStage::Connecting))?;
         let (claims, authentication) = if let Some(account) = &mut self.lease.account {
-            let preparing = account.prepare(claims, random, deadline);
+            let preparing = account.prepare(claims, deadline);
             tokio::pin!(preparing);
             let authentication = tokio::select! { biased;
                 () = self.lease.cancel.cancelled() => return Err(closed()),
@@ -131,10 +137,7 @@ impl Playing {
             };
             (RawClientData::default(), Some(authentication))
         } else {
-            self.lease
-                .session
-                .guest_claims(&mut claims, random, &name)?;
-            (claims, None)
+            (self.lease.session.guest_claims(claims)?, None)
         };
         upstream::current(&self.lease, deadline)?;
         #[cfg(test)]
@@ -154,6 +157,31 @@ impl Playing {
             deadline,
         )
         .await
+    }
+
+    /// Publishes the generated refusal before cleanup, under the original caller's bounded write.
+    async fn refuse(
+        &self,
+        frames: &FrameQueue,
+        refusal: ClientDataRefusal,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        upstream::current(&self.lease, deadline)?;
+        let terminal = CoreMessage::Disconnect(session_wire::SessionDisconnect {
+            reason: 0,
+            message: refusal.disconnect_key().into(),
+            filtered_message: String::new(),
+            hide_screen: false,
+        });
+        let frame = session_wire::encode_core_message(&terminal).map_err(invalid)?;
+        tokio::select! { biased;
+            () = self.lease.cancel.cancelled() => return Err(closed()),
+            result = tokio::time::timeout_at(deadline.into(), frames.send(frame)) => {
+                result.map_err(|_| elapsed())?.map_err(invalid)?;
+            }
+        }
+        upstream::current(&self.lease, deadline)?;
+        Err(io::Error::new(io::ErrorKind::InvalidInput, refusal))
     }
 
     /// Negotiates the actual retained preconnected owner; it performs no replacement dial or admission.

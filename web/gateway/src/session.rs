@@ -2,7 +2,7 @@
 
 use super::{account::Account, bearer::Bearer};
 use bridge::{Account as Observation, AuthState, contract::*, relay_control::Capability};
-use protocol::{NativeDeviceProfile, RawClientData};
+use protocol::{ClientDataRefusal, NativeDeviceProfile, RawClientData, ValidatedClientData};
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -204,14 +204,19 @@ impl Session {
         }
     }
 
-    /// Applies the same in-memory device profile to a signed-out gateway request.
-    pub(super) fn guest_claims(
+    /// Validates against the same memory-only guest profile before any transport is authorized.
+    pub(super) fn validate_guest(
         &self,
-        claims: &mut RawClientData,
-        random_id: i64,
-        name: &str,
-    ) -> io::Result<()> {
-        self.guest.apply_relay(claims, random_id, name)
+        claims: RawClientData,
+        protocol: i32,
+    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+        self.guest.validate_relay(claims, protocol)
+    }
+
+    /// Publishes only the already validated guest presentation through the shared identity overlay.
+    pub(super) fn guest_claims(&self, claims: ValidatedClientData) -> io::Result<RawClientData> {
+        let name = claims.requested_name().to_owned();
+        claims.into_relay_claims(&name)
     }
 }
 
