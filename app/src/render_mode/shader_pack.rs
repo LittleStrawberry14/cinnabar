@@ -11,6 +11,9 @@ use ui::RenderMode;
 
 use super::{MenuRuntime, RenderModeConfig, RuntimeSettings, compiled_render_mode};
 
+#[cfg(feature = "shaderpacks")]
+pub(super) mod import;
+pub(super) mod reload;
 #[cfg(test)]
 mod tests;
 
@@ -112,6 +115,7 @@ fn desired_request(config: &RenderModeConfig, video: &ui::VideoSettings) -> Shad
     ShaderPackRequest {
         pack,
         cache_dir: config.shader_packs.as_ref().map(|dirs| dirs.cache.clone()),
+        revision: config.shader_pack_revision,
     }
 }
 

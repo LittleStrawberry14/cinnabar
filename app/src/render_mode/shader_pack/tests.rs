@@ -20,6 +20,7 @@ fn config(launch: Option<PathBuf>) -> RenderModeConfig {
             cache: cache(),
             discovered: vec![("Nested".to_owned(), packs().join("Nested").join("Inner"))],
         }),
+        shader_pack_revision: 0,
     }
 }
 

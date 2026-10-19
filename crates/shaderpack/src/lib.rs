@@ -33,6 +33,7 @@ mod discover;
 mod environment;
 mod expr;
 mod ids;
+mod install;
 mod java_sky;
 mod options;
 mod pack;
@@ -55,6 +56,7 @@ pub use discover::{DiscoveredPack, discover_packs};
 pub use environment::{Environment, GpuVendor, HostOs};
 pub use expr::{BinaryOp, Expr, ExprError, UnaryOp};
 pub use ids::{BlockIdMap, IdMaps, NamedIdMap, RenderLayer, UNMAPPED_BLOCK_ID};
+pub use install::{DropOutcome, add_dropped_packs};
 pub use java_sky::{
     BiomeColors, FogMedium, SkyDimension, SkyFogColors, SkyFogInputs, sky_fog, sunrise_color,
 };
