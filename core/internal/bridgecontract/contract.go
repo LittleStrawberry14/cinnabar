@@ -237,6 +237,8 @@ const (
 	CinnabarAPIBaseURL = "https://cinnabar-api.cinnabar-api.workers.dev"
 	// CinnabarAPIMaxLookupXUIDs: Most XUIDs in one Cinnabar player lookup.
 	CinnabarAPIMaxLookupXUIDs = 128
+	// CinnabarAPIMaxFrameBytes: Largest product API WebSocket message in bytes.
+	CinnabarAPIMaxFrameBytes = 65536
 	// CinnabarAPICacheTTLMS: Fallback lifetime of a Cinnabar lookup answer.
 	CinnabarAPICacheTTLMS = 120000
 	// CinnabarAPILookupBucketCapacity: Fallback lookup budget in XUIDs.

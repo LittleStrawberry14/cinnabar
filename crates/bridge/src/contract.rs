@@ -353,8 +353,23 @@ pub const CINNABAR_API_BASE_URL: &str = "https://cinnabar-api.cinnabar-api.worke
 /// Most XUIDs in one Cinnabar player lookup.
 pub const CINNABAR_API_MAX_LOOKUP_XUIDS: usize = 128;
 
+/// Largest product API WebSocket message in bytes.
+pub const CINNABAR_API_MAX_FRAME_BYTES: usize = 65536;
+
 /// Fallback lifetime of a Cinnabar lookup answer.
 pub const CINNABAR_API_CACHE_TTL_MS: u32 = 120000;
+
+/// Fallback lookup budget in XUIDs.
+pub const CINNABAR_API_LOOKUP_BUCKET_CAPACITY: u32 = 1024;
+
+/// Fallback lookup refill in XUIDs per minute.
+pub const CINNABAR_API_LOOKUP_REFILL_PER_MIN: u32 = 512;
+
+/// Fallback keepalive interval.
+pub const CINNABAR_API_PING_INTERVAL_MS: u32 = 30000;
+
+/// Fallback reconnect backoff cap.
+pub const CINNABAR_API_RECONNECT_MAX_MS: u32 = 300000;
 
 /// Android authentication title used to derive the title presence service configuration.
 pub const PRESENCE_TITLE_ID: u32 = 1739947436;
