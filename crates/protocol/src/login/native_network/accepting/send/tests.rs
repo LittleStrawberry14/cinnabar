@@ -262,17 +262,17 @@ async fn failed_original_receipt_is_cached_without_repolling_its_completed_futur
     .expect("finite actual failed receipt fixture stalled");
 }
 
-struct Pair {
-    wire: NativeAcceptingIo,
-    sender: SessionSender,
-    client: NetherClient,
-    listener: NetherServer,
-    signaling: Arc<HttpSignalingServer>,
+pub(in crate::login::native_network) struct Pair {
+    pub(in crate::login::native_network) wire: NativeAcceptingIo,
+    pub(in crate::login::native_network) sender: SessionSender,
+    pub(in crate::login::native_network) client: NetherClient,
+    pub(in crate::login::native_network) listener: NetherServer,
+    pub(in crate::login::native_network) signaling: Arc<HttpSignalingServer>,
 }
 
 impl Pair {
     /// Retires and drains actual owners, then joins listener/HTTP tasks; no close token is used as join.
-    async fn finish(self) -> bool {
+    pub(in crate::login::native_network) async fn finish(self) -> bool {
         let Self {
             wire,
             sender,
@@ -308,9 +308,17 @@ impl Pair {
 
 /// Establishes the real signed association before tests retain any application queue capacity.
 async fn signed_pair() -> Pair {
+    signed_pair_with_key(Arc::new(SigningKey::generate()))
+        .await
+        .0
+}
+
+/// Retains the original handshake for real provider Login/startup controls on this association.
+pub(in crate::login::native_network) async fn signed_pair_with_key(
+    client_key: Arc<SigningKey>,
+) -> (Pair, bedrock_client::server::ServerHandshake) {
     let now = SystemTime::now();
     let key = Arc::new(SigningKey::generate());
-    let client_key = Arc::new(SigningKey::generate());
     let signaling = Arc::new(
         HttpSignalingServer::bind(
             (Ipv4Addr::LOCALHOST, 0).into(),
@@ -366,7 +374,7 @@ async fn signed_pair() -> Pair {
     .unwrap();
     let accepted = listener.accept().await.unwrap();
     let sender = accepted.session.sender();
-    let (wire, _handshake) = NativeAcceptingIo::from_nether(
+    let (wire, handshake) = NativeAcceptingIo::from_nether(
         accepted,
         key,
         ServerHandshakeOptions::default(),
@@ -374,13 +382,16 @@ async fn signed_pair() -> Pair {
     )
     .await
     .unwrap();
-    Pair {
-        wire,
-        sender,
-        client,
-        listener,
-        signaling,
-    }
+    (
+        Pair {
+            wire,
+            sender,
+            client,
+            listener,
+            signaling,
+        },
+        handshake,
+    )
 }
 
 struct ExpectedToken {

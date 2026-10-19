@@ -1,4 +1,5 @@
 use super::*;
+mod hosted_upstream;
 use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},

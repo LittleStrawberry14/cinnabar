@@ -55,24 +55,12 @@ pub(super) async fn negotiate(
             Ok((transport, address)) => (Ok(transport), address),
             Err(error) => (Err(error), target.address.clone()),
         }
-    } else if target.transport == crate::NativeTransport::LocalNetherNetLan {
-        let (address, level, budget) = target.local_lan_route().map_err(failure)?;
-        let connected =
-            transport::lan::LanTransport::connect_local(address, level, budget, deadline).await;
-        match connected {
-            Ok((transport, id)) => (
-                Ok(transport::Transport::NetherNetLan(Box::new(transport))),
-                id.to_string(),
-            ),
-            Err(error) => (Err(error), target.address.clone()),
-        }
-    } else if target.transport == crate::NativeTransport::LocalNetherNetHttp {
-        let address = target.local_http_address().map_err(failure)?;
-        let identity = credentials
-            .http_identity()
-            .map_err(ProtocolError::Authentication)?;
-        let transport = transport::http::connect(address, identity, deadline).await;
-        (transport, format!("http://{address}:{}", address.port()))
+    } else if matches!(
+        target.transport,
+        crate::NativeTransport::LocalNetherNetLan | crate::NativeTransport::LocalNetherNetHttp
+    ) {
+        let (transport, address) = connect_local(target, &credentials, deadline).await?;
+        (Ok(transport), address)
     } else {
         (
             transport::Transport::connect(target, credentials.messaging.take(), deadline).await,
@@ -101,7 +89,10 @@ pub(super) async fn negotiate(
         },
     )
     .await?;
-    Ok(NegotiatedConnection { connection, packs })
+    Ok(NegotiatedConnection {
+        connection,
+        packs: packs.handoff,
+    })
 }
 
 /// Retains one original proof, credential deadline and provider-authenticated player projection.
@@ -114,6 +105,29 @@ pub(super) struct Credentials {
 }
 
 impl Credentials {
+    /// Uses only the verified guest's presentation/UUID for the original offline local backend.
+    /// The host account and guest online XUID/PlayFab credentials never become BDS credentials.
+    pub(super) fn local_guest(
+        login: &bedrock_net::login::AuthenticatedLogin,
+    ) -> Result<Self, ProtocolError> {
+        let player = login
+            .player_identity()
+            .filter(|_| !login.xuid().is_empty())
+            .ok_or_else(|| {
+                failure(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "local hosted upstream requires a verified player",
+                ))
+            })?;
+        let mut credentials = Self::new(None)?;
+        credentials.identity = Some(SessionIdentity {
+            display_name: player.display_name().into(),
+            xuid: String::new(),
+            uuid: player.uuid().to_string(),
+        });
+        Ok(credentials)
+    }
+
     /// Qualifies the original handoff before any connection is admitted or protocol output sent.
     pub(super) fn new(authentication: Option<NativeAuthentication>) -> Result<Self, ProtocolError> {
         let (key, authentication, messaging, identity, sdp) = match authentication {
@@ -153,6 +167,51 @@ impl Credentials {
     }
 }
 
+/// Selects only the exact existing local transport and its original Login wire label.
+pub(super) async fn connect_local(
+    target: &NativeConnectionTarget,
+    credentials: &Credentials,
+    deadline: tokio::time::Instant,
+) -> Result<(transport::Transport, String), ProtocolError> {
+    target.validate().map_err(failure)?;
+    let (transport, label) = match target.transport {
+        crate::NativeTransport::LocalNetherNetLan => {
+            let (address, level, budget) = target.local_lan_route().map_err(failure)?;
+            let (transport, id) =
+                transport::lan::LanTransport::connect_local(address, level, budget, deadline)
+                    .await
+                    .map_err(failure)?;
+            (
+                transport::Transport::NetherNetLan(Box::new(transport)),
+                id.to_string(),
+            )
+        }
+        crate::NativeTransport::LocalNetherNetHttp => {
+            let address = target.local_http_address().map_err(failure)?;
+            let identity = credentials
+                .http_identity()
+                .map_err(ProtocolError::Authentication)?;
+            let connected = transport::http::connect(address, identity, deadline)
+                .await
+                .map_err(|error| {
+                    if authentication::is_expired(&error) {
+                        ProtocolError::Authentication(error)
+                    } else {
+                        failure(error)
+                    }
+                })?;
+            (connected, format!("http://{address}:{}", address.port()))
+        }
+        _ => {
+            return Err(failure(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "hosted upstream requires its original local HTTP or LAN route",
+            )));
+        }
+    };
+    Ok((transport, label))
+}
+
 /// Keeps desktop metadata construction in its original phase while accepting the gateway's owned claims.
 pub(super) enum LoginData<'a> {
     Desktop(&'a SessionLogin<'a>),
@@ -179,7 +238,7 @@ pub(super) async fn negotiate_connected(
     input: LoginData<'_>,
     credentials: Credentials,
     acquisition: packs::Acquisition<'_>,
-) -> Result<(ResourcePackHandoff, SessionIdentity), ProtocolError> {
+) -> Result<(packs::Acquired, SessionIdentity), ProtocolError> {
     let Credentials {
         key,
         authentication,
@@ -203,6 +262,11 @@ pub(super) async fn negotiate_connected(
         },
     )
     .map_err(handshake_failure)?;
+    let configured = if matches!(acquisition, packs::Acquisition::Hosted) {
+        configured.retain_pack_metadata()
+    } else {
+        configured
+    };
     let (mut settings, request) = configured.start().map_err(handshake_failure)?;
     connection.send(request).await?;
     let login_ready = loop {

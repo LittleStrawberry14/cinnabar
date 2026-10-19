@@ -44,7 +44,10 @@ pub async fn hosted_client<P: Send + 'static>(
     )
     .await?;
     spawn::continue_join(
-        negotiated::NegotiatedConnection { connection, packs },
+        negotiated::NegotiatedConnection {
+            connection,
+            packs: packs.handoff,
+        },
         login,
         prepare,
     )

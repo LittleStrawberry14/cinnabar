@@ -11,6 +11,11 @@ pub use authentication::{
     NativeServiceClock, NativeTokenVerifier,
 };
 mod connection;
+mod hosted;
+pub use hosted::{
+    NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress, NativeHostedUpstream,
+    NativeHostedUpstreamClosing,
+};
 #[cfg(feature = "test-support")]
 pub(crate) mod fixtures;
 mod negotiated;
