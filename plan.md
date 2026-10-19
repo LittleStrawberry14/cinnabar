@@ -6,7 +6,10 @@ validate credentials through the native Microsoft/Xbox and Minecraft services,
 retaining the original connection key through token mint, Login and key exchange.
 The working Go backend remains the default. Renderer-free Linux joins over both
 transports have loaded an original resource pack, reached spawn, received terrain
-and closed. Live-account, device and wider server acceptance remain incomplete.
+and closed. Direct DNS alternatives share the original join cutoff; LAN skips
+unsupported IPv6 endpoints, and addressed transfers keep native I/O with RakNet.
+These selection corrections await owning regression execution. Vanilla source
+parity, live-account, device and wider server acceptance remain incomplete.
 
 The external bedrock-client crate owns generated-packet Login, resource-pack and
 spawn negotiation. Bedrock-packs owns shared JSONC parsing, archive handoffs and

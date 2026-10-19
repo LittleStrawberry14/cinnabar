@@ -133,7 +133,13 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
                 address: address.to_string(),
                 transport: NativeTransport::NetherNetLan,
             };
-            let connected = transport::Transport::connect(&target, None).await.unwrap();
+            let connected = transport::Transport::connect(
+                &target,
+                None,
+                tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
+            )
+            .await
+            .unwrap();
             let mut joining =
                 NativeRelayConnecting::from_connection(Connection::new(connected), target.address);
             let random = crate::ClientRandomId::new(1).unwrap();

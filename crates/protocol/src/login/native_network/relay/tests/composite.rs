@@ -113,7 +113,13 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
                 address: address.to_string(),
                 transport: NativeTransport::NetherNetLan,
             };
-            let transport = transport::Transport::connect(&target, None).await.unwrap();
+            let transport = transport::Transport::connect(
+                &target,
+                None,
+                tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
+            )
+            .await
+            .unwrap();
             let connection = Connection::new(transport);
             let mut joining = NativeRelayConnecting::from_connection(connection, target.address);
             let claims = crate::login_client_data(

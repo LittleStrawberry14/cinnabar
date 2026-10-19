@@ -30,6 +30,7 @@ pub(super) async fn negotiate(
     target: &NativeConnectionTarget,
     login: &SessionLogin<'_>,
     authentication: Option<NativeAuthentication>,
+    deadline: tokio::time::Instant,
 ) -> Result<NegotiatedConnection, ProtocolError> {
     if login.target.is_some() {
         return Err(failure(io::Error::new(
@@ -38,7 +39,7 @@ pub(super) async fn negotiate(
         )));
     }
     let credentials = Credentials::new(authentication)?;
-    let transport = transport::Transport::connect(target, credentials.messaging)
+    let transport = transport::Transport::connect(target, credentials.messaging, deadline)
         .await
         .map_err(|error| {
             if authentication::is_expired(&error) {
