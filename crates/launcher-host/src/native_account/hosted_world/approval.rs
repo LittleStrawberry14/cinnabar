@@ -21,6 +21,7 @@ struct MemberIdentity {
 
 struct Nonce {
     member: MemberIdentity,
+    epoch: u64,
     value: Zeroizing<String>,
 }
 
@@ -152,6 +153,7 @@ impl Approvals {
             owner.to_owned(),
             Nonce {
                 member,
+                epoch: self.revision,
                 value: Zeroizing::new(URL_SAFE_NO_PAD.encode(entropy)),
             },
         );
@@ -206,20 +208,32 @@ impl Approvals {
             })
     }
 
-    /// Rechecks the original captured member revision and nonce after current service authority.
-    pub(super) fn rechecks(
-        &self,
-        owner: &str,
-        revision: u64,
-        digest: &[u8; 32],
-    ) -> io::Result<bool> {
-        let document = self.document()?;
-        let nonce = document.get(owner).and_then(Value::as_str).ok_or_else(|| {
+    /// Captures only this member's acknowledged original nonce epoch.
+    pub(super) fn member_epoch(&self, owner: &str) -> Option<u64> {
+        self.desired.get(owner).and_then(|entry| {
+            (self.acknowledged() && self.members.get(owner) == Some(&entry.member))
+                .then_some(entry.epoch)
+        })
+    }
+
+    /// Retains a staying member's epoch while requiring acknowledgment of the current whole document.
+    pub(super) fn rechecks(&self, owner: &str, epoch: u64, digest: &[u8; 32]) -> io::Result<bool> {
+        let entry = self.desired.get(owner).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "host approval member departed")
         })?;
-        Ok(self.revision() == revision
-            && self.accepts(owner, nonce)
-            && <[u8; 32]>::from(Sha256::digest(nonce.as_bytes())) == *digest)
+        if entry.epoch != epoch
+            || self.members.get(owner) != Some(&entry.member)
+            || <[u8; 32]>::from(Sha256::digest(entry.value.as_bytes())) != *digest
+        {
+            return Ok(false);
+        }
+        if !self.acknowledged() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "host approval document awaits acknowledgment",
+            ));
+        }
+        Ok(true)
     }
 }
 

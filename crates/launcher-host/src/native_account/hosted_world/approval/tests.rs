@@ -218,3 +218,25 @@ fn captured_member_approval_survives_other_members_only_after_exact_document_ack
         "another departed member revoked the unchanged member's original approval"
     );
 }
+
+#[test]
+fn repeated_entropy_cannot_reapprove_an_old_member_epoch() {
+    let mut approvals = Approvals::new("123".into(), 3).unwrap();
+    approvals.observe(&snapshot(&[("456", 2, true)])).unwrap();
+    approvals.issue("456", &[1; NONCE_BYTES]).unwrap();
+    let original = acknowledge(&mut approvals);
+    let epoch = approvals.member_epoch("456").unwrap();
+    let digest: [u8; 32] = Sha256::digest(original["456"].as_str().unwrap().as_bytes()).into();
+    approvals.observe(&snapshot(&[])).unwrap();
+    acknowledge(&mut approvals);
+    approvals.observe(&snapshot(&[("456", 2, true)])).unwrap();
+    approvals.issue("456", &[1; NONCE_BYTES]).unwrap();
+    let current = acknowledge(&mut approvals);
+    assert_eq!(current, original);
+    assert!(!approvals.rechecks("456", epoch, &digest).unwrap());
+    assert!(
+        approvals
+            .rechecks("456", approvals.member_epoch("456").unwrap(), &digest)
+            .unwrap()
+    );
+}
