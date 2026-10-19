@@ -69,6 +69,11 @@ controller generation, native play pump and original archives on a dedicated uni
 The coherent HTTP/3 header/capsule dependency and paired transport/BDS owning controls
 still require qualification. Latest-draft browser, deployment and live-account acceptance
 remain incomplete; WebSocket fallback does not close those gates.
+Gateway and hosted pack acquisition have a guarded public HTTP/HTTPS source candidate.
+Hosted preloads retain absent upstream DataInfo and derive downstream hash/type from the
+same verified original archive, with the selected delivery policy's false premium default.
+Original in-band metadata is preserved. CDN-only acquisition, downstream delivery and
+retirement controls still require execution; behavior/skin-only archive support remains open.
 
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.

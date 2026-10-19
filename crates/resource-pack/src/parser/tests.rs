@@ -55,8 +55,41 @@ fn deflated_zip_file(path: &str, bytes: &[u8]) -> Vec<u8> {
 }
 
 fn validate_fixture(bytes: Vec<u8>, selected: &str) -> Result<ValidatedPack, AdmissionError> {
-    validate_archive_parts(PACK_ID, "1.2.3", selected, bytes, None, None).map(|(pack, _)| pack)
+    validate_archive_parts(PACK_ID, "1.2.3", selected, bytes, None, None).map(|(pack, _, _)| pack)
 }
+
+#[test]
+fn archive_delivery_kind_uses_the_same_admitted_manifest_and_member_priority() {
+    for (module, member, expected) in [
+        (None, None, ArchiveKind::Resources),
+        (Some("data"), None, ArchiveKind::Addon),
+        (Some("client_data"), None, ArchiveKind::Addon),
+        (Some("script"), None, ArchiveKind::Resources),
+        (
+            Some("data"),
+            Some("world/level.dat"),
+            ArchiveKind::WorldTemplate,
+        ),
+        (Some("data"), Some("../level.dat"), ArchiveKind::Addon),
+    ] {
+        let mut manifest = manifest("");
+        if let Some(module) = module {
+            manifest = manifest.replace(
+                r#""type": "resources","#,
+                &format!(r#""type": "resources"}}, {{"type": "{module}","#),
+            );
+        }
+        let mut files = vec![("manifest.json", manifest.as_bytes())];
+        if let Some(path) = member {
+            files.push((path, b"original world metadata"));
+        }
+        assert_eq!(
+            verify_archive_identity(&zip_files(&files), PACK_ID, "1.2.3"),
+            Ok(expected)
+        );
+    }
+}
+
 #[test]
 fn admits_jsonc_manifest_and_exposes_only_selected_logical_namespace() {
     let manifest = manifest(
@@ -252,7 +285,7 @@ fn plaintext_archives_with_advertised_keys_keep_root_and_wrapped_resources() {
                 (&asset_path, b"fixture.name=Plain resource"),
                 ("../outside.txt", b"outside"),
             ]);
-            let (pack, _) = validate_archive_parts(
+            let (pack, _, _) = validate_archive_parts(
                 PACK_ID,
                 "1.2.3",
                 "",
@@ -292,7 +325,7 @@ fn encrypted_pack_decrypts_listed_files_and_keeps_plaintext_despite_key() {
         ("plain.json", b"{\"a\": 1}"),
     ]);
     let key = ContentKey::new(PACK_KEY);
-    let (pack, _) =
+    let (pack, _, _) =
         validate_archive_parts(PACK_ID, "1.2.3", "", archive.clone(), key, None).unwrap();
     assert_eq!(
         pack.read_file("texts/en_US.lang")
@@ -356,7 +389,7 @@ fn local_plaintext_archive_with_advertised_key_reads_stored_resources() {
         .0
         .map(|part| part.to_string())
         .join(".");
-    let (pack, _) = validate_archive_parts(
+    let (pack, _, _) = validate_archive_parts(
         id,
         &version,
         "",

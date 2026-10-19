@@ -48,6 +48,7 @@ pub(super) async fn open_cache(root: Option<&Path>) -> Option<Arc<ArchiveCache>>
 pub(super) struct Preload {
     pub(super) archive: Option<Vec<u8>>,
     pub(super) cache_hit: bool,
+    pub(super) facts: Option<super::verified::ArchiveFacts>,
 }
 
 /// Tries an exact verified cache hit, then CDN; failure retains in-band fallback.
@@ -77,6 +78,7 @@ pub(super) async fn preload(
                 return Preload {
                     archive: Some(bytes),
                     cache_hit: true,
+                    facts: None,
                 };
             }
             Ok(Ok(None)) => {}
@@ -125,14 +127,15 @@ pub(super) async fn preload(
                     .map_err(|_| invalid("pack CDN allocation failed"))?;
                 bytes.extend_from_slice(&chunk);
             }
-            verify(bytes, id, version).await
+            verify(bytes, offer.clone()).await
         }
         .await;
         match result {
-            Ok(bytes) => {
+            Ok((bytes, facts)) => {
                 return Preload {
                     archive: Some(bytes),
                     cache_hit: false,
+                    facts: Some(facts),
                 };
             }
             Err(_) => {
@@ -143,15 +146,18 @@ pub(super) async fn preload(
     Preload {
         archive: None,
         cache_hit: false,
+        facts: None,
     }
 }
 
 /// Moves original bytes through off-thread ZIP/manifest identity validation without copying.
-async fn verify(bytes: Vec<u8>, id: uuid::Uuid, version: String) -> io::Result<Vec<u8>> {
+async fn verify(
+    bytes: Vec<u8>,
+    offer: PackInfoData,
+) -> io::Result<(Vec<u8>, super::verified::ArchiveFacts)> {
     tokio::task::spawn_blocking(move || {
-        resource_pack::verify_archive_identity(&bytes, id, &version)
-            .map_err(|_| invalid("pack archive or manifest identity is invalid"))?;
-        Ok(bytes)
+        let facts = super::verified::describe(&bytes, &offer)?;
+        Ok((bytes, facts))
     })
     .await
     .map_err(|_| invalid("pack validation worker failed"))?

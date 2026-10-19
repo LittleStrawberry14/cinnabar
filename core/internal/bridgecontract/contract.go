@@ -35,6 +35,12 @@ const (
 	MaxPackArchiveBytes = 67108864
 	// MaxSelectedPackBytes: Largest total selected server pack archives in bytes.
 	MaxSelectedPackBytes = 134217728
+	// ResourcePackTypeAddon: Resource-pack wire type for an admitted addon archive.
+	ResourcePackTypeAddon = 1
+	// ResourcePackTypeResources: Resource-pack wire type for an admitted resource archive.
+	ResourcePackTypeResources = 6
+	// ResourcePackTypeWorldTemplate: Resource-pack wire type for an admitted world-template archive.
+	ResourcePackTypeWorldTemplate = 8
 	// SessionPackChunkBytes: Archive bytes in one resource-pack data frame.
 	SessionPackChunkBytes = 4194304
 	// LatencyTraceEnv: Names the directory both processes write packet latency traces to; unset disables tracing.
