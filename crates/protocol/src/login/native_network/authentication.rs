@@ -214,17 +214,17 @@ impl NativeAuthentication {
         Ok(self)
     }
 
-    /// Attaches the caller-authorized, nonce-free Realm route to this account's protected socket.
+    /// Attaches the caller-authorized, nonce-free service route to this account's protected socket.
     ///
     /// The caller must have obtained this exact recipient from a successful authenticated
-    /// Realm join on the same acquired account. This method checks transport consistency,
-    /// not Realm membership. Realms do not supply a joined-friend admission nonce.
+    /// Realm or Gathering join on the same acquired account. This method checks transport
+    /// consistency, not membership. These services do not supply a joined-friend admission nonce.
     /// Provider-only answer verification and the originally minted key are retained.
-    pub fn with_realm_messaging(
+    pub fn with_service_messaging(
         self,
         prepared: bedrock_net::messaging::PreparedMessaging,
     ) -> io::Result<Self> {
-        let target = crate::NativeMessagingTarget::realm(prepared.peer())?;
+        let target = crate::NativeMessagingTarget::service(prepared.peer())?;
         self.with_messaging(prepared, target)
     }
 

@@ -31,6 +31,8 @@ mod launcher_core;
 mod minecraft_import;
 #[cfg(feature = "native-networking")]
 mod native_catalog;
+#[cfg(feature = "native-networking")]
+mod native_gatherings;
 mod navigation;
 mod presence_targets;
 mod reconnect;
@@ -141,6 +143,9 @@ pub struct MenuRuntime {
     /// The session controller's last published state.
     session: SessionStatus,
     featured: MenuList<MenuServerCard>,
+    #[cfg(feature = "native-networking")]
+    native_gatherings:
+        std::collections::HashMap<String, launcher_host::native_account::NativeGatheringSelection>,
     realms: MenuList<MenuRealmCard>,
     friends: MenuList<MenuFriendCard>,
     catalog_message: Option<String>,
@@ -229,6 +234,8 @@ pub struct MenuRuntime {
 #[derive(Debug, Default)]
 struct SessionIntents {
     join: Option<JoinIntent>,
+    #[cfg(feature = "native-networking")]
+    gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
     /// The queued join waits for the saved account's check until this passes.
     join_sign_in_deadline: Option<std::time::Instant>,
     /// The background sign-in check serves a join: it may finish, but never prompts.
@@ -377,6 +384,10 @@ impl MenuRuntime {
     /// A cancelled join drops any queued join and returns to the play screen.
     pub fn cancel_join(&mut self) {
         self.intents.join = None;
+        #[cfg(feature = "native-networking")]
+        {
+            self.intents.gathering = None;
+        }
         self.intents.join_sign_in_deadline = None;
         self.intents.join_sign_in_check = false;
         self.intents.native_auth_required = false;
@@ -632,7 +643,12 @@ impl MenuRuntime {
             }
             MenuAction::PlayFeatured(index) => {
                 if let Some(server) = self.featured.get(index) {
-                    self.request_featured_connect(server.address.clone());
+                    let address = server.address.clone();
+                    #[cfg(feature = "native-networking")]
+                    if self.native_sign_in && self.request_native_gathering(&address) {
+                        return;
+                    }
+                    self.request_featured_connect(address);
                 }
             }
             MenuAction::RealmMembership(action) => self.activate_realm_membership(action),
@@ -915,7 +931,10 @@ impl MenuRuntime {
     /// Queues a join to `address` for the session controller.
     pub fn request_connect(&mut self, address: String) {
         #[cfg(feature = "native-networking")]
-        self.native_catalog.cancel_join();
+        {
+            self.native_catalog.cancel_join();
+            self.intents.gathering = None;
+        }
         if self.external.is_some() {
             self.request_external_connect(address);
             return;

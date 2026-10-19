@@ -1,7 +1,8 @@
 //! Account-borrowed Realms calls and the application's existing menu projection.
 
+use super::service_route::ResolvedServiceRoute;
 use super::*;
-use bedrock_services::realms::{Join, NetworkProtocol, Realm, RealmAddress};
+use bedrock_services::realms::{Join, Realm, RealmAddress};
 use launcher::menu::view::MenuRealmCard;
 use prepare::check_preparation_deadline;
 use std::num::NonZeroU64;
@@ -27,6 +28,19 @@ impl NativeAccount {
                 io::ErrorKind::Unsupported,
                 "authenticated native preparation requires RakNet",
             ));
+        }
+        if let bridge::ConnectTarget::Gathering(id) =
+            crate::launcher_core::target_for(&target.address)
+        {
+            let experience = uuid::Uuid::parse_str(&id)
+                .ok()
+                .filter(|id| !id.is_nil())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid Gathering identifier")
+                })?;
+            return self
+                .prepare_gathering(None, experience, claims, random_id)
+                .await;
         }
         let Some(selection) = realm_target(&target.address)? else {
             let authentication = self.prepare(claims, random_id).await?;
@@ -77,23 +91,12 @@ impl NativeAccount {
             check_preparation_deadline(resolution_deadline)?;
             operation.persist()?;
             check_preparation_deadline(deadline)?;
-            let authentication = if let Some(peer) = route.messaging_peer {
-                let (prepared, authentication) = self
-                    .prepare_messaging_socket_borrowed(
-                        &mut operation,
-                        peer,
-                        claims,
-                        random_id,
-                        deadline,
-                    )
-                    .await?;
-                authentication.with_realm_messaging(prepared)?
-            } else {
-                self.prepare_borrowed(&mut operation, claims, random_id)
-                    .await?
-            };
-            check_preparation_deadline(deadline)?;
-            Ok((route.into_target(), authentication))
+            let result = route
+                .route
+                .prepare(&self, &mut operation, claims, random_id, deadline)
+                .await;
+            drop(route.response);
+            result
         })
         .await
         .map_err(|_| {
@@ -147,68 +150,25 @@ fn realm_target(target: &str) -> io::Result<Option<RealmTarget<'_>>> {
     Ok(None)
 }
 
-/// Retains the actual join response until the same account finishes credential preparation.
-/// This private transport projection is not a membership proof or a reusable authorization token.
+/// Projects an actual authenticated service response without consulting a catalog card.
+fn resolved_route(response: RealmAddress) -> io::Result<ResolvedRealmRoute> {
+    let route =
+        ResolvedServiceRoute::new(response.network_protocol.clone(), response.address.clone())?;
+    Ok(ResolvedRealmRoute { response, route })
+}
+
+/// Keeps the actual Realm metadata until its same-account credential/socket handoff completes.
 struct ResolvedRealmRoute {
     response: RealmAddress,
-    messaging_peer: Option<uuid::Uuid>,
+    route: ResolvedServiceRoute,
 }
 
+#[cfg(test)]
 impl ResolvedRealmRoute {
-    /// Consumes service metadata only after the account-bound handoff has finished.
+    /// Consumes the actual validated route in the existing transport projection controls.
     fn into_target(self) -> protocol::NativeConnectionTarget {
-        match self.messaging_peer {
-            Some(peer) => protocol::NativeConnectionTarget {
-                address: peer.to_string(),
-                transport: protocol::NativeTransport::NetherNetMessaging,
-            },
-            None => protocol::NativeConnectionTarget {
-                address: self.response.address,
-                transport: protocol::NativeTransport::RakNet,
-            },
-        }
+        self.route.into_target()
     }
-}
-
-/// Validates explicit service transport data; only authenticated join orchestration uses it for admission.
-fn resolved_route(response: RealmAddress) -> io::Result<ResolvedRealmRoute> {
-    let messaging_peer = match &response.network_protocol {
-        NetworkProtocol::Default if !response.address.trim().is_empty() => None,
-        NetworkProtocol::NetherNetJsonRpc => {
-            let peer = uuid::Uuid::parse_str(&response.address)
-                .ok()
-                .filter(|peer| !peer.is_nil())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid Realm messaging recipient",
-                    )
-                })?;
-            Some(peer)
-        }
-        NetworkProtocol::NetherNet => {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "native Realm WebSocket signaling is not supported",
-            ));
-        }
-        NetworkProtocol::Default => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Realm returned no address",
-            ));
-        }
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Realm advertised an unsupported transport",
-            ));
-        }
-    };
-    Ok(ResolvedRealmRoute {
-        response,
-        messaging_peer,
-    })
 }
 
 /// Projects the pinned Go catalog's fields without resolving addresses or accepting membership.

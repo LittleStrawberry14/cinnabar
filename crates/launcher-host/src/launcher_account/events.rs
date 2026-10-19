@@ -167,6 +167,16 @@ async fn control(
         if !targets.is_empty() && Instant::now() >= ping_due {
             ping_due = Instant::now() + PING_INTERVAL;
             pinged = targets.clone();
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            let pongs = if !core_presence {
+                tokio::select! { biased;
+                    _ = lifetime.retiring() => return,
+                    pongs = server_ping::round(&targets) => Ok(pongs),
+                }
+            } else {
+                bridge::ping_servers(socket_dir, &targets).await
+            };
+            #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
             let pongs = bridge::ping_servers(socket_dir, &targets).await;
             let pings = round_results(
                 &targets,

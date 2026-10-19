@@ -9,6 +9,10 @@ const (
 	MaxControlFrameLen = 65536
 	// MaxPingTargets: Most server addresses admitted in one ping request.
 	MaxPingTargets = 64
+	// PingWorkers: Maximum concurrent server-row ping attempts.
+	PingWorkers = 8
+	// PingTimeoutMillis: Original whole-attempt server-row ping deadline.
+	PingTimeoutMillis = 2000
 	// SessionKindConnect: Client session setup carrying JSON login data.
 	SessionKindConnect = 1
 	// SessionKindBatch: A batch of length-prefixed packets in either direction.
@@ -275,6 +279,8 @@ const (
 	MessageEventReadAll = "ReadAll"
 	// MessageEventDelete: Messaging event for delete.
 	MessageEventDelete = "Delete"
+	// FeaturedFeedCacheSeconds: Existing successful featured layout refresh interval.
+	FeaturedFeedCacheSeconds = 300
 	// HomeFeedCacheSeconds: Existing successful Home service refresh interval.
 	HomeFeedCacheSeconds = 900
 	// HomeFeedRefreshSeconds: Original complete Home/featured service refresh budget.

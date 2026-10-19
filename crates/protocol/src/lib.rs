@@ -19,7 +19,9 @@ mod inventory;
 mod item;
 mod item_capacity;
 mod login;
+mod server_status;
 mod session_endpoint;
+pub use server_status::ServerListStatus;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use session_endpoint::{
     MAX_NATIVE_JOIN_NONCE_BYTES, NATIVE_JOIN_TIMEOUT, NativeMessagingTarget,

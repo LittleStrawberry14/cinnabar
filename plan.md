@@ -132,6 +132,24 @@ The default picker and outgoing invitations keep the Go host owner. Shared displ
 bounds, Go/Rust projection controls, native/default cancellation regressions and
 strict host Clippy pass. Uncommon Unicode-version ordering and live picker
 acceptance remain open.
+
+Native featured catalog/counts and explicit Gathering allocation now have a source
+candidate on the existing account/feed/session owners. Cards retain the selected
+account and experience without authorizing a connection; one explicit authenticated
+join supplies the actual route before mint/socket preparation. The original layout
+cache policy and Go projection fixture are shared. This candidate remains incomplete
+until the common SDK API, owning compilation, cancellation/route controls and live
+acceptance are qualified. Legacy service WebSocket signaling and native server-row
+pings remain separate open implementation gates; Go remains the default.
+
+Native server-row pings now also have an unqualified source candidate using the
+canonical RakNet configured endpoint and existing shared worker. Original target,
+concurrency and timeout policy are generated once for Go/Rust. Each target owns
+at most two family sockets and one pending datagram per socket under its original
+whole-attempt deadline; cancellation drops actual owned work. Pure Bedrock pong
+projection is protocol-owned. Loopback, IPv6, cancellation, timeout and native/
+default compilation controls still require coordinator execution; live acceptance
+and uncommon malformed-text/count representation differences remain unqualified.
 Native invitation sending still needs its active host consumer; a people row does
 not provide membership or invitation authority. Native marketing Home/inbox reads
 and reports now have a selected-account consumer on the existing shared workers.

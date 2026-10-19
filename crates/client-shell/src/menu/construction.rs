@@ -140,6 +140,8 @@ impl MenuRuntime {
             intents: SessionIntents::default(),
             session: SessionStatus::default(),
             featured: initial.featured,
+            #[cfg(feature = "native-networking")]
+            native_gatherings: Default::default(),
             realms: initial.realms,
             friends: initial.friends,
             catalog_message: initial.catalog_message,

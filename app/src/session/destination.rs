@@ -21,8 +21,10 @@ pub(crate) fn native_target(
         bridge::ConnectTarget::RakNet(address) => {
             Some(NativeConnectionTarget { address, transport })
         }
-        bridge::ConnectTarget::Realm(_)
-        | bridge::ConnectTarget::Friend(_)
-        | bridge::ConnectTarget::Gathering(_) => None,
+        bridge::ConnectTarget::Gathering(_) => Some(NativeConnectionTarget {
+            address: address.trim().to_owned(),
+            transport: NativeTransport::RakNet,
+        }),
+        bridge::ConnectTarget::Realm(_) | bridge::ConnectTarget::Friend(_) => None,
     }
 }

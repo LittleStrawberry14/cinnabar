@@ -1293,6 +1293,7 @@ name = "launcher-host"
 path = "crates/launcher-host"
 # Optional account services acquire protected messaging upgrades on this runtime/storage edge.
 # The external networking adapter owns socket/signaling composition; protocol owns native admission.
+# Native row pings drive canonical RakNet's configured sans-I/O endpoint on this existing edge.
 allowed_dependencies = ["cosmetics", "bridge", "crash-report", "launcher", "protocol", "resource-pack", "server-experience", "test-time", "update-manifest", "update-installer"]
 forbidden_transitive_dependencies = ["app", "cinnabar", "client-ui", "render", "bevy", "bevy_*", "wgpu*"]
 test_support_features = ["test-support"]

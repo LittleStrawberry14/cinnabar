@@ -20,7 +20,7 @@ import (
 const (
 	cacheVersion       = 2
 	legacyCacheVersion = 1
-	listTTL            = 5 * time.Minute
+	listTTL            = time.Duration(bridgecontract.FeaturedFeedCacheSeconds) * time.Second
 	homeTTL            = time.Duration(bridgecontract.HomeFeedCacheSeconds) * time.Second
 	refreshTimeout     = time.Duration(bridgecontract.HomeFeedRefreshSeconds) * time.Second
 )

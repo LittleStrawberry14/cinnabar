@@ -73,7 +73,7 @@ fn realm_jsonrpc_retains_the_service_route_and_rejects_ambiguous_recipients() {
     }))
     .unwrap();
     let route = resolved_route(address).unwrap();
-    assert_eq!(route.messaging_peer, Some(peer));
+    assert_eq!(route.route.messaging_peer, Some(peer));
     assert!(route.response.pending_update);
     let region = route.response.session_region.as_ref().unwrap();
     assert_eq!(region.region_name, "synthetic-region");

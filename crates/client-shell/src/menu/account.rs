@@ -71,7 +71,7 @@ impl MenuRuntime {
     }
 
     fn start_catalog(&mut self) {
-        if self.catalog_started || !self.visible || self.is_connecting() {
+        if self.native_sign_in || self.catalog_started || !self.visible || self.is_connecting() {
             return;
         }
         if self.auth_attempted && self.auth_process.is_none() {
@@ -114,7 +114,7 @@ impl MenuRuntime {
         }
         self.update_sign_in_browser(false);
         self.poll_catalog_art();
-        if core_feeds {
+        if core_feeds || self.native_sign_in {
             self.stop_catalog();
             return;
         }

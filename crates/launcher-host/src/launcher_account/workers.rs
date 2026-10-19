@@ -15,12 +15,15 @@ impl LauncherAccount {
         let (feed_wake, feed_changes) = bounded(1);
         let (home_wake, home_changes) = bounded(1);
         let (home_cancel, home_changed) = tokio::sync::watch::channel(home_feed::Wake::Account);
+        let (featured_cancel, featured_changed) =
+            tokio::sync::watch::channel(featured_feed::Wake::Account);
         let (profile_refresh, profile_requests) = profile_worker::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             catalog_wake: Some(catalog_wake),
             feed_wake: Some(feed_wake.clone()),
             home_wake: Some(home_wake.clone()),
             home_cancel: Some(home_cancel),
+            featured_cancel: Some(featured_cancel),
             profile_wake: Some(profile_refresh.clone()),
             ..initial
         }));
@@ -87,7 +90,15 @@ impl LauncherAccount {
                     executor.clone(),
                     descendants,
                 );
-                feeds::poll_featured(&dir, &art, &shared, &until, &feed_changes, &executor)
+                feeds::poll_featured(
+                    &dir,
+                    &art,
+                    &shared,
+                    &until,
+                    &feed_changes,
+                    featured_changed,
+                    &executor,
+                )
             },
             &tasks,
         ));
