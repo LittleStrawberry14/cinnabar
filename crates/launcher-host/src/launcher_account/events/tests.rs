@@ -18,31 +18,42 @@ async fn native_signout_retires_the_original_worker_without_a_core_signout_reque
     tokio::time::timeout(Duration::from_secs(5), async {
         let directory = tempfile::tempdir().unwrap();
         let listener = UnixListener::bind(bridge::control_endpoint_path(directory.path())).unwrap();
-        let shared = Mutex::new(Snapshot {
-            title_presence_owner: TitlePresenceOwner::Native,
-            ..Default::default()
-        });
+        let shared = Mutex::new(Snapshot::native(
+            None,
+            bridge::contract::DEFAULT_SERVICE_LANGUAGE,
+        ));
         let lifetime = TitlePresenceLifetime::new();
         let (requests, receive) = bounded(1);
         requests.send(()).unwrap();
-        let owner = async {
-            tokio::join!(
-                control(directory.path(), &shared, &receive, &lifetime),
-                native_presence::run(&shared, &lifetime),
+        let mut owner = Box::pin(async {
+            let guard = lifetime.worker_guard();
+            run(directory.path(), &shared, &receive, &lifetime).await;
+            drop(guard);
+        });
+        let foreign_request = async {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut framed = tokio_util::codec::Framed::new(
+                stream,
+                bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN),
+            );
+            let request = framed.next().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
+            panic!(
+                "native signout dispatched a foreign Core mutation: {}",
+                request["method"]
             );
         };
         tokio::select! { biased;
-            request = listener.accept() => {
-                let (stream, _) = request.unwrap();
-                let mut framed = tokio_util::codec::Framed::new(stream, bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN));
-                let request = framed.next().await.unwrap().unwrap();
-                let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
-                panic!("native signout dispatched a foreign Core mutation: {}", request["method"]);
-            }
-            _ = owner => {}
+            _ = foreign_request => {},
+            _ = owner.as_mut() => {},
         }
-        assert_eq!(lifetime.retirement(), Some(TitlePresenceRetirement::Complete));
-    }).await.expect("native signout owner did not retire");
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Complete)
+        );
+    })
+    .await
+    .expect("native signout owner did not retire");
 }
 
 /// One finite real control peer; cancellation keeps its original task abortable.

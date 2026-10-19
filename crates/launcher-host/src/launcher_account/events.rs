@@ -10,42 +10,50 @@ pub(super) fn poll(
     runtime: &Handle,
 ) {
     let guard = lifetime.worker_guard();
-    runtime.block_on(async {
-        let control = async {
-            control(socket_dir, shared, requests, lifetime).await;
-            lifetime.retire();
-        };
-        let publisher = async {
-            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            native_presence::run(shared, lifetime).await;
-            #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
-            {
-                lifetime.retiring().await;
-                lifetime.complete(true);
-            }
-        };
-        let product = async {
-            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-            {
-                let (api, account) = {
-                    let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
-                    (
-                        snapshot.native_product_api.clone(),
-                        snapshot.native_presence_account.clone(),
-                    )
-                };
-                if let Some(api) = api {
-                    tokio::select! { biased;
-                        _=lifetime.retiring()=>{},
-                        _=api.run(account)=>{},
-                    }
-                    api.finish();
-                }
-            }
-        };
-        tokio::join!(control, publisher, product);
-    });
+    runtime.block_on(run(socket_dir, shared, requests, lifetime));
     drop(guard);
+}
+
+/// Drives the original three retained futures; the existing poll caller owns their worker guard.
+async fn run(
+    socket_dir: &std::path::Path,
+    shared: &Mutex<Snapshot>,
+    requests: &Receiver<()>,
+    lifetime: &TitlePresenceLifetime,
+) {
+    let control = async {
+        control(socket_dir, shared, requests, lifetime).await;
+        lifetime.retire();
+    };
+    let publisher = async {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        native_presence::run(shared, lifetime).await;
+        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
+        {
+            lifetime.retiring().await;
+            lifetime.complete(true);
+        }
+    };
+    let product = async {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        {
+            let (api, account) = {
+                let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+                (
+                    snapshot.native_product_api.clone(),
+                    snapshot.native_presence_account.clone(),
+                )
+            };
+            if let Some(api) = api {
+                tokio::select! { biased;
+                    _=lifetime.retiring()=>{},
+                    _=api.run(account)=>{},
+                }
+                api.finish();
+            }
+        }
+    };
+    tokio::join!(control, publisher, product);
 }
 
 /// Retains each control round while the publisher makes independent progress on the same executor.
