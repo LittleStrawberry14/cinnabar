@@ -251,6 +251,9 @@ $null = Assert-TestProtocolDependencyProvenance -Root $fixtureRoot
 $manifestPath = Join-Path $fixtureRoot 'crates\protocol\Cargo.toml'
 $canonicalManifest = Get-Content -Raw -LiteralPath $manifestPath
 $canonicalCodec = 'bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "' + $expectedProtocolgenRevision + '" }'
+$canonicalManifest = $canonicalManifest.Replace('bedrock-protocol-1-26-51.workspace = true', $canonicalCodec)
+Assert-True ($canonicalManifest.Contains($canonicalCodec)) `
+    'protocol fixture did not find the inherited or explicit canonical codec'
 Set-Content -LiteralPath $manifestPath -NoNewline -Value `
     $canonicalManifest.Replace($expectedProtocolgenRevision, ('0' * 40))
 Assert-ThrowsLike {
