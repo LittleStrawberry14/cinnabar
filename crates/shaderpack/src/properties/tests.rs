@@ -269,6 +269,77 @@ fn custom_images_relative_absolute_and_malformed() {
 }
 
 #[test]
+fn custom_uniforms_and_variables_keep_file_order() {
+    let properties = parse(
+        "variable.float.half = frameTime * 0.5\nuniform.vec2.pair = vec2(0.0, 1.0)\n\
+         uniform.float.broken = 1 +\nuniform.float = 1\nuniform.vec2.pair = vec2(half, 1.0)\n",
+    );
+    let summary: Vec<_> = properties
+        .custom_uniforms
+        .iter()
+        .map(|uniform| {
+            (
+                uniform.kind,
+                uniform.ty.as_str(),
+                uniform.name.as_str(),
+                uniform.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (CustomUniformKind::Variable, "float", "half", 1),
+            (CustomUniformKind::Uniform, "vec2", "pair", 5),
+        ]
+    );
+    assert_eq!(properties.custom_uniforms[1].expr.identifiers(), ["half"]);
+    assert_eq!(diagnostic_lines(&properties), [3, 4]);
+}
+
+#[test]
+fn custom_uniform_expressions_see_macros_expanded_like_iris() {
+    let properties = parse_with(
+        "#define LOCAL_SCALE 2.0\n\
+         uniform.float.swampy = if(biome_category == CAT_SWAMP, 1.0, 0.0)\n\
+         variable.float.scaled = LOCAL_SCALE * frameTime\n",
+        &[("CAT_SWAMP", "14")],
+    );
+    assert_eq!(
+        properties.get("uniform.float.swampy"),
+        Some("if(biome_category == 14, 1.0, 0.0)")
+    );
+    assert_eq!(
+        properties.get("variable.float.scaled"),
+        Some("2.0 * frameTime")
+    );
+    assert_eq!(
+        properties.custom_uniforms[0].expr.identifiers(),
+        ["biome_category"]
+    );
+    assert_eq!(
+        properties.custom_uniforms[1].expr.identifiers(),
+        ["frameTime"]
+    );
+    assert!(properties.diagnostics.is_empty());
+}
+
+#[test]
+fn a_directive_ends_a_continued_uniform_definition_as_in_iris() {
+    let text = "#ifdef BRIGHT\nuniform.float.b = if( \\\n  x > 0, 1.0, \\\n  0.5) \\\n\
+                #else\nuniform.float.b = 0.25\n#endif\nafter=1\n";
+    let off = parse(text);
+    assert_eq!(off.get("uniform.float.b"), Some("0.25"));
+    assert_eq!(off.custom_uniforms.len(), 1);
+    assert!(off.diagnostics.is_empty(), "{:?}", off.diagnostics);
+    let on = parse_with(text, &[("BRIGHT", "")]);
+    assert_eq!(on.get("uniform.float.b"), Some("if( x > 0, 1.0, 0.5)"));
+    assert_eq!(on.custom_uniforms[0].expr.identifiers(), ["x"]);
+    assert_eq!(on.get("after"), Some("1"));
+    assert!(on.diagnostics.is_empty(), "{:?}", on.diagnostics);
+}
+
+#[test]
 fn unknown_keys_stay_only_in_entries() {
     let properties = parse("sun=true\nshadow.culling=reversed\nscreen=[MAIN] SPEED\n");
     assert_eq!(keys(&properties), ["sun", "shadow.culling", "screen"]);

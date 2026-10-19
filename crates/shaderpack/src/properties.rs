@@ -24,6 +24,8 @@ pub struct ShaderProperties {
     pub program_rules: Vec<ProgramRule>,
     /// `image.<name>` declarations, one per key.
     pub images: Vec<CustomImage>,
+    /// `uniform.<type>.<name>` and `variable.<type>.<name>` definitions, one per key.
+    pub custom_uniforms: Vec<CustomUniform>,
     /// Malformed lines and expressions (never fatal), with 1-based line numbers.
     pub diagnostics: Vec<PropertiesDiagnostic>,
 }
@@ -162,4 +164,28 @@ pub enum ImageSize {
         height: Option<u32>,
         depth: Option<u32>,
     },
+}
+
+/// A `uniform.<type>.<name>=<expr>` or `variable.<type>.<name>=<expr>` definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomUniform {
+    /// Whether the value is exposed to shaders or only usable by later expressions.
+    pub kind: CustomUniformKind,
+    /// GLSL type token, e.g. "float" or "vec3".
+    pub ty: String,
+    /// Uniform or variable name.
+    pub name: String,
+    /// Expression computing the value each frame.
+    pub expr: Expr,
+    /// 1-based line of the definition.
+    pub line: u32,
+}
+
+/// Kind of a [`CustomUniform`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustomUniformKind {
+    /// `uniform.*`: uploaded to shaders.
+    Uniform,
+    /// `variable.*`: an intermediate value visible only to custom uniform expressions.
+    Variable,
 }

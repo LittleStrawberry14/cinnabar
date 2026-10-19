@@ -1,6 +1,9 @@
 //! Typed parsing of the recognised `shaders.properties` keys.
 
-use super::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+use super::{
+    CustomImage, CustomUniform, CustomUniformKind, ImageSize, ProgramRule, PropertiesDiagnostic,
+    ShaderProperties,
+};
 use crate::expr::Expr;
 
 /// Records the typed rule for a recognised `key`; a malformed value adds a diagnostic
@@ -30,6 +33,12 @@ fn apply_rule(
             .push(program_rule(target, value, line)?);
     } else if let Some(image) = key.strip_prefix("image.") {
         properties.images.push(custom_image(image, value)?);
+    } else if let Some(target) = key.strip_prefix("uniform.") {
+        let uniform = custom_uniform(CustomUniformKind::Uniform, target, value, line)?;
+        properties.custom_uniforms.push(uniform);
+    } else if let Some(target) = key.strip_prefix("variable.") {
+        let variable = custom_uniform(CustomUniformKind::Variable, target, value, line)?;
+        properties.custom_uniforms.push(variable);
     }
     Ok(())
 }
@@ -40,6 +49,14 @@ fn name(segment: &str, what: &str) -> Result<String, String> {
         return Err(format!("missing {what} name"));
     }
     Ok(segment.to_owned())
+}
+
+/// Splits `<first>.<rest>` at the first `.`; both parts must be non-empty.
+fn split_target(target: &str, first: &str, rest: &str) -> Result<(String, String), String> {
+    let Some((head, tail)) = target.split_once('.') else {
+        return Err(format!("expected `<{first}>.<{rest}>`"));
+    };
+    Ok((name(head, first)?, name(tail, rest)?))
 }
 
 /// Parses true or false without regard to case, rejecting other values.
@@ -149,4 +166,22 @@ fn image_usage(value: &str) -> String {
         "expected `<sampler> <format> <internalFormat> <pixelType> <clear> <relative> \
          <width> [<height> [<depth>]]`, found `{value}`"
     )
+}
+
+/// Parses a `<type>.<name>` custom uniform or variable target and its expression.
+fn custom_uniform(
+    kind: CustomUniformKind,
+    target: &str,
+    value: &str,
+    line: u32,
+) -> Result<CustomUniform, String> {
+    let (ty, name) = split_target(target, "type", "name")?;
+    let expr = Expr::parse(value).map_err(|err| format!("invalid expression: {err}"))?;
+    Ok(CustomUniform {
+        kind,
+        ty,
+        name,
+        expr,
+        line,
+    })
 }

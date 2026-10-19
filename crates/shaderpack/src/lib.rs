@@ -7,6 +7,7 @@
 //! binary asset reads from folders, ZIP archives or memory.
 //!
 //! Shader translation, render-host integration and in-game acceptance remain incomplete.
+//! Parsing custom uniform expressions does not execute or render them.
 mod dimensions;
 mod environment;
 mod expr;
@@ -24,5 +25,8 @@ pub use programs::{
     GEOMETRY_FALLBACKS, ProgramGroup, ProgramKind, ProgramSource, StageKind, geometry_fallback,
     program_group,
 };
-pub use properties::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+pub use properties::{
+    CustomImage, CustomUniform, CustomUniformKind, ImageSize, ProgramRule, PropertiesDiagnostic,
+    ShaderProperties,
+};
 pub use source::{PackError, PackOrigin, PackSource};
