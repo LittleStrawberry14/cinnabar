@@ -38,8 +38,10 @@ fn core_peer(listener: UnixListener, shared: Arc<Mutex<Snapshot>>, at_reply: AtR
         let mut methods = Vec::new();
         loop {
             let (stream, _) = listener.accept().await.unwrap();
-            let mut framed =
-                bridge::FramedStream::with_max(stream, bridge::contract::CONTROL_MAX_FRAME_LEN);
+            let mut framed = tokio_util::codec::Framed::new(
+                stream,
+                bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN),
+            );
             let request = framed.next().await.unwrap().unwrap();
             let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
             let method = request["method"].as_str().unwrap();
