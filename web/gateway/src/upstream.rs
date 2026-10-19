@@ -2,12 +2,11 @@
 
 use super::session::PlayLease;
 use bedrock_net::raknet::{RakNetConnection, RakNetOptions};
-use bridge::{ConnectTarget, gateway_egress::public_gateway_upstream};
+use bridge::{
+    ConnectTarget, contract::GATEWAY_EGRESS_CANDIDATES, gateway_egress::public_gateway_upstream,
+};
 use protocol::NativeRelayConnecting;
 use std::{io, net::SocketAddr, time::Instant};
-
-// Only this bounded prefix of one completed resolution is retained for sequential attempts.
-const MAX_CANDIDATES: usize = 16;
 
 #[cfg(test)]
 tokio::task_local! {
@@ -62,7 +61,7 @@ pub(super) async fn connect(
     .await
     .map_err(|_| elapsed())??;
     current(lease, deadline)?;
-    let candidates = resolved.take(MAX_CANDIDATES).collect::<Vec<_>>();
+    let candidates = resolved.take(GATEWAY_EGRESS_CANDIDATES).collect::<Vec<_>>();
     let mut failure = refused();
     for candidate in candidates {
         current(lease, deadline)?;

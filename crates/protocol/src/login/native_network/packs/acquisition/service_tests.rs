@@ -11,6 +11,7 @@ use bedrock_client::packs::{PackEvent, PackOffer, PackTransferLimits};
 use bedrock_protocol_1_26_51::{packets, types::PackInstanceId, wire};
 use futures::{StreamExt, stream};
 use resource_pack::test_support::archive_bytes;
+use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::oneshot,
@@ -27,18 +28,26 @@ fn offer(id: uuid::Uuid, size: usize) -> PackInfoData {
 
 #[tokio::test]
 async fn pack_cdn_wait_keeps_service_live_and_retains_accepted_packet_prefix() {
-    tokio::time::timeout(Duration::from_secs(10), cdn_wait())
+    tokio::time::timeout(Duration::from_secs(10), cdn_wait(false))
         .await
         .expect("finite CDN/service fixture stalled");
 }
 
+#[tokio::test]
+async fn public_pack_cdn_wait_keeps_service_live_and_retains_accepted_packet_prefix() {
+    tokio::time::timeout(Duration::from_secs(10), cdn_wait(true))
+        .await
+        .expect("finite public CDN/service fixture stalled");
+}
+
 /// Holds a real HTTP body while the existing service boundary must complete its finite leases.
-async fn cdn_wait() {
+async fn cdn_wait(public: bool) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let id = uuid::Uuid::from_u128(4);
     let bytes = archive_bytes(id, &[]);
     let mut offered = offer(id, bytes.len());
     offered.cdn_url = format!("http://{}/held-body", listener.local_addr().unwrap()).into();
+    let endpoint = listener.local_addr().unwrap();
     let (started, ready) = oneshot::channel();
     let (release, released) = oneshot::channel();
     let peer = async {
@@ -79,10 +88,17 @@ async fn cdn_wait() {
                 .unwrap();
         }
         let cancelled = Cancellation::new();
+        let client = if public {
+            super::super::PUBLIC_CDN_ENDPOINT
+                .scope(endpoint, async { public_http_client().unwrap() })
+                .await
+        } else {
+            http_client().unwrap()
+        };
         let preloads = stream::iter([preload(
             &offered,
             None,
-            Some(http_client().unwrap()),
+            Some(client),
             Arc::clone(&cancelled.0),
         )])
         .buffer_unordered(MAX_CDN_DOWNLOADS)

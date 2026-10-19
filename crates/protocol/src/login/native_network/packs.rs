@@ -20,16 +20,20 @@ pub(super) const MAX_CDN_DOWNLOADS: usize = 4;
 tokio::task_local! {
     /// Reports real HTTP attempts only within one fixture-owned native join future.
     pub(super) static HTTP_ATTEMPTS: tokio::sync::mpsc::Sender<uuid::Uuid>;
+    /// Captures one owning fixture join's original numeric HTTP endpoint into its client only.
+    pub(super) static PUBLIC_CDN_ENDPOINT: std::net::SocketAddr;
 }
 
-/// The desktop's guarded local cache/CDN edge, or gateway transfer on the existing game socket only.
+/// Fixed runtime acquisition policy around the same verified protocol archive owner.
 #[derive(Clone, Copy)]
 pub(super) enum Acquisition<'a> {
     Desktop {
         cache_root: Option<&'a Path>,
         parallel_urls: bool,
     },
+    #[cfg(feature = "test-support")]
     InBand,
+    Public,
     Hosted,
 }
 
@@ -56,10 +60,14 @@ pub(super) async fn acquire(
         };
         wait_io(connection, acquisition::open_cache(cache_root)).await
     };
-    let client = if matches!(policy, Acquisition::Desktop { .. })
-        && offers.iter().any(|offer| !offer.cdn_url.is_empty())
-    {
-        acquisition::http_client().ok()
+    let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
+        match policy {
+            Acquisition::Desktop { .. } => acquisition::http_client().ok(),
+            Acquisition::Public => acquisition::public_http_client().ok(),
+            Acquisition::Hosted => None,
+            #[cfg(feature = "test-support")]
+            Acquisition::InBand => None,
+        }
     } else {
         None
     };

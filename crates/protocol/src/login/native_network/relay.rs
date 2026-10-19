@@ -88,7 +88,7 @@ impl NativeRelayConnecting {
         }
     }
 
-    /// Runs the sole native typed handshake and in-band pack transfer once, then captures raw startup.
+    /// Runs the sole typed handshake and guarded URL/chunk pack transfer, then captures raw startup.
     /// Dropping this borrowed future seals the attempt but retains the socket for explicit retirement.
     /// The caller must validate downstream client metadata before passing it here; authenticated
     /// identity comes only from the qualified credential's original provider projection.
@@ -130,7 +130,7 @@ impl NativeRelayConnecting {
                 client_cache,
             },
             credentials,
-            packs::Acquisition::InBand,
+            packs::Acquisition::Public,
         )
         .await?;
         let packs = packs.handoff;

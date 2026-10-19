@@ -223,3 +223,5 @@ fn decode(raw: Bytes) -> crate::Packet {
 mod consumed;
 
 mod composite;
+
+mod cdn;
