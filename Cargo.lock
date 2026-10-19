@@ -5856,6 +5856,7 @@ dependencies = [
  "libc",
  "memmap2",
  "minidumper",
+ "nethernet",
  "nethernet-tokio",
  "p384",
  "protocol",
