@@ -165,7 +165,7 @@ async fn event(client: &mut Client) -> Event {
 async fn accepted_tls_control_preserves_resume_and_eof_ownership() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut fixture = Fixture::new().await;
-        let (mut first, original) = fixture.control(String::new()).await;
+        let (first, original) = fixture.control(String::new()).await;
         let original_play = fixture
             .registry
             .open_play(&original.resume, original.generation, Instant::now())
@@ -177,7 +177,6 @@ async fn accepted_tls_control_preserves_resume_and_eof_ownership() {
             .registry
             .open_play(&current.resume, current.generation, Instant::now())
             .unwrap();
-        first.close().await.unwrap();
         drop(first);
         drop(original_play);
         assert!(!current_play.cancel.is_cancelled());
