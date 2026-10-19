@@ -165,6 +165,10 @@ const (
 	MethodFriendsList = "friends_list.v1"
 	// MethodFriendsPeople: Control method for friends people.
 	MethodFriendsPeople = "friends_people.v1"
+	// InviteMaxPeople: Most friends shown by the invite picker, with online friends retained first.
+	InviteMaxPeople = 100
+	// InviteGamerpicSide: Requested square gamerpic size for an invite picker row.
+	InviteGamerpicSide = 128
 	// MethodConnect: Control method for connect.
 	MethodConnect = "connect.v1"
 	// MethodAccountStatus: Control method for account status.

@@ -245,6 +245,12 @@ pub const METHOD_FRIENDS_LIST: &str = "friends_list.v1";
 /// Control method for friends people.
 pub const METHOD_FRIENDS_PEOPLE: &str = "friends_people.v1";
 
+/// Most friends shown by the invite picker, with online friends retained first.
+pub const INVITE_MAX_PEOPLE: usize = 100;
+
+/// Requested square gamerpic size for an invite picker row.
+pub const INVITE_GAMERPIC_SIDE: usize = 128;
+
 /// Control method for connect.
 pub const METHOD_CONNECT: &str = "connect.v1";
 

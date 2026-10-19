@@ -10,6 +10,7 @@ mod hosted_world;
 mod messaging;
 mod metadata;
 mod operation;
+mod people;
 mod prepare;
 pub(crate) mod presence;
 mod profile;
@@ -27,6 +28,7 @@ pub use hosted_world::{
     ClosingHostedPeer, HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy,
     NativeHostedPeer, NativeHostedProcess, NativeHostedWorld,
 };
+pub(crate) use people::NativePeople;
 pub(crate) use profile::NativeProfile;
 pub use realms::is_realm_target;
 
