@@ -85,14 +85,18 @@ impl Prepared {
     /// Invokes only the selected existing service method; neither outcome starts a game connection.
     pub(super) async fn run(
         self,
-        socket_dir: &std::path::Path,
+        socket_dir: Option<&std::path::Path>,
         accept: bool,
     ) -> Result<Loaded, ()> {
         match self {
-            Self::Core(code) => bridge::realm_membership(socket_dir, &code, accept)
-                .await
-                .map(Loaded::Core)
-                .map_err(|_| ()),
+            Self::Core(code) => bridge::realm_membership(
+                super::super::workers::require_core_directory(socket_dir).map_err(|_| ())?,
+                &code,
+                accept,
+            )
+            .await
+            .map(Loaded::Core)
+            .map_err(|_| ()),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             Self::Native(prepared) => (*prepared)
                 .run(accept)

@@ -277,7 +277,7 @@ fn account_signout_waits_for_the_original_fallback_session_child_to_exit() {
         menu.activate(MenuAction::SignOut);
     }
     app.insert_resource(SessionController::new(guard))
-        .init_resource::<client_shell::menu::LauncherCoreSlot>()
+        .init_resource::<client_shell::menu::LauncherServices>()
         .add_systems(
             Update,
             crate::shell_adapters::menu_services().before(drive_session),

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use client_runtime::{blob_cache::ClientBlobCacheOwner, network::NetworkHandle};
 use client_shell::ui_resources::UiRuntimeResource;
 use client_shell::{
-    menu::{LauncherCoreSlot, MenuRuntime, launcher_account},
+    menu::{LauncherServices, MenuRuntime, launcher_account},
     player_skin::LocalPlayerSkin,
 };
 
@@ -27,7 +27,7 @@ pub(crate) fn drive_menu_services(
     player_runtime: Res<client_state::PlayerRuntime>,
     mut client_world: ResMut<ClientWorld>,
     mut runtime: ResMut<UiRuntimeResource>,
-    launcher: Option<ResMut<LauncherCoreSlot>>,
+    launcher: Option<ResMut<LauncherServices>>,
     launcher_account: Option<ResMut<launcher_account::LauncherAccount>>,
     mut local_worlds: Option<ResMut<client_shell::local_worlds::LocalWorlds>>,
     audio_settings: Option<ResMut<client_audio::audio::AudioSettings>>,

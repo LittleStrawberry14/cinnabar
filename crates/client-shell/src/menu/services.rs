@@ -10,7 +10,7 @@ impl MenuRuntime {
         client_cache_enabled: bool,
         player_runtime: &client_state::PlayerRuntime,
         in_session: bool,
-        launcher: Option<ResMut<LauncherCoreSlot>>,
+        launcher: Option<ResMut<LauncherServices>>,
         launcher_account: Option<ResMut<launcher_account::LauncherAccount>>,
         mut local_worlds: Option<&mut crate::local_worlds::LocalWorlds>,
     ) {
@@ -23,7 +23,7 @@ impl MenuRuntime {
             });
             // Remote direct sessions have a separate game core. Local worlds use the
             // account core, so sign-in must not restart it during local play.
-            let idle = launcher_core::account_core_idle(
+            let idle = launcher_services::account_core_idle(
                 self.is_launcher(),
                 self.joining_past_sign_in(),
                 in_session,
@@ -38,7 +38,8 @@ impl MenuRuntime {
                 std::time::Instant::now(),
             );
             // A held join waits for this core only while it may still start for that join.
-            self.account_core = (idle && self.is_launcher()).then(|| slot.account_core());
+            self.account_core =
+                (idle && self.is_launcher() && !self.native_sign_in).then(|| slot.account_core());
         } else {
             self.account_core = None;
         }

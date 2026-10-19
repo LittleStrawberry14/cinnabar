@@ -1,4 +1,4 @@
-//! Bevy attachment and menu policy for the launcher account core.
+//! One selected launcher service lifetime and its optional legacy Core process.
 
 use super::{MenuRuntime, account, launcher_account::LauncherAccount};
 use crate::local_worlds::LocalWorlds;
@@ -43,10 +43,10 @@ impl AccountCore {
     }
 }
 
-/// Holds the account core in every startup mode, including direct connections.
+/// Owns one selected account-service lifetime, with a real child only for the legacy backend.
 #[derive(Default, Resource)]
-pub struct LauncherCoreSlot {
-    core: Option<LauncherCore>,
+pub struct LauncherServices {
+    running: Option<Running>,
     /// Sign-in mode whose spawn failed, or whose core kept exiting; retried only once the mode
     /// changes or a profile refresh asks for it.
     failed: Option<bool>,
@@ -63,7 +63,43 @@ pub struct LauncherCoreSlot {
     restart_at: Option<Instant>,
 }
 
-impl LauncherCoreSlot {
+enum Running {
+    Core(LauncherCore),
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    Native {
+        cache: Option<PathBuf>,
+        identity: Option<String>,
+        account: Option<std::sync::Arc<launcher_host::native_account::NativeAccount>>,
+    },
+}
+
+impl LauncherServices {
+    /// Borrows only a real legacy child; native attachment has no process readiness.
+    fn core(&self) -> Option<&LauncherCore> {
+        match self.running.as_ref()? {
+            Running::Core(core) => Some(core),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            Running::Native { .. } => None,
+        }
+    }
+
+    /// Mutable access remains exclusive to the original legacy child owner.
+    fn core_mut(&mut self) -> Option<&mut LauncherCore> {
+        match self.running.as_mut()? {
+            Running::Core(core) => Some(core),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            Running::Native { .. } => None,
+        }
+    }
+
+    /// Takes a known real Core owner before starting its original retirement.
+    fn take_core(&mut self) -> LauncherCore {
+        let Some(Running::Core(core)) = self.running.take() else {
+            unreachable!("the selected legacy Core exists");
+        };
+        core
+    }
+
     /// Keep the core matching the validated sign-in while idle, and attach the
     /// account and local-world clients once it is serving. A core that exited is restarted
     /// after its [`RestartBackoff`] delay, measured from `now`, and not again once the backoff
@@ -81,8 +117,7 @@ impl LauncherCoreSlot {
             return;
         }
         if let Some((status, authenticated)) = self
-            .core
-            .as_mut()
+            .core_mut()
             .and_then(|core| Some((core._guard.exit_status()?, core.authenticated)))
         {
             let ran_for = self.started.map_or(Duration::ZERO, |started| {
@@ -107,7 +142,7 @@ impl LauncherCoreSlot {
             self.retire(commands, menu, worlds.as_deref_mut());
             return;
         }
-        if self.core.is_none() && std::mem::take(&mut menu.feeds.profile_refresh_requested) {
+        if self.running.is_none() && std::mem::take(&mut menu.feeds.profile_refresh_requested) {
             self.failed = None;
             self.restart_at = None;
         }
@@ -126,7 +161,7 @@ impl LauncherCoreSlot {
                 return;
             }
             let job = menu.account_operation_job();
-            if let Some(old) = self.core.take() {
+            if let Some(old) = self.running.take() {
                 commands.remove_resource::<LauncherAccount>();
                 menu.close_realm_membership();
                 if let Some(worlds) = worlds.as_deref_mut() {
@@ -134,7 +169,15 @@ impl LauncherCoreSlot {
                 }
                 menu.control_auth = None;
                 menu.accounts.skip_control = true;
-                self.begin_retirement(old, job);
+                match old {
+                    Running::Core(old) => self.begin_retirement(old, job),
+                    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                    Running::Native { .. } => {
+                        let _ = std::thread::Builder::new()
+                            .name("account-switch".into())
+                            .spawn(job);
+                    }
+                }
             } else {
                 let _ = std::thread::Builder::new()
                     .name("account-switch".into())
@@ -146,19 +189,35 @@ impl LauncherCoreSlot {
         if menu.accounts.work.is_some() {
             return;
         }
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if idle && !menu.sign_in_in_flight() {
-            let auth_cache = menu.launcher_auth_cache();
-            let wanted = auth_cache.is_some();
-            let current = self.core.as_ref().map(|core| core.authenticated);
-            let path_changed = self
-                .core
-                .as_ref()
-                .is_some_and(|core| core.auth_cache != auth_cache);
-            if path_changed && self.core.is_some() && menu.accounts.pending_ready {
+            if menu.native_sign_in {
+                self.drive_native(commands, menu, worlds.as_deref_mut());
+                return;
+            }
+            if matches!(self.running, Some(Running::Native { .. })) {
                 if !self.retire_presence() {
                     return;
                 }
-                let old = self.core.take().expect("account core");
+                self.detach_clients(commands, menu, worlds.as_deref_mut());
+                self.running = None;
+                self.failed = None;
+                self.restart_at = None;
+                return;
+            }
+        }
+        if idle && !menu.sign_in_in_flight() {
+            let auth_cache = menu.launcher_auth_cache();
+            let wanted = auth_cache.is_some();
+            let current = self.core().map(|core| core.authenticated);
+            let path_changed = self
+                .core()
+                .is_some_and(|core| core.auth_cache != auth_cache);
+            if path_changed && self.core().is_some() && menu.accounts.pending_ready {
+                if !self.retire_presence() {
+                    return;
+                }
+                let old = self.take_core();
                 commands.remove_resource::<LauncherAccount>();
                 menu.close_realm_membership();
                 if let Some(worlds) = worlds.as_deref_mut() {
@@ -172,18 +231,17 @@ impl LauncherCoreSlot {
             }
             let restart_due = self.restart_at.is_none_or(|at| now >= at);
             let presence_changed = self
-                .core
-                .as_ref()
+                .core()
                 .is_some_and(|core| core.title_presence_owner != self.title_presence_owner);
             if (current != Some(wanted) || path_changed || presence_changed)
                 && self.failed != Some(wanted)
                 && restart_due
             {
-                if self.core.is_some() {
+                if self.core().is_some() {
                     if !self.retire_presence() {
                         return;
                     }
-                    let old = self.core.take().expect("account core");
+                    let old = self.take_core();
                     self.detach_clients(commands, menu, worlds.as_deref_mut());
                     self.begin_retirement(old, || {});
                     return;
@@ -199,7 +257,7 @@ impl LauncherCoreSlot {
                     },
                 ) {
                     Ok(core) => {
-                        self.core = Some(core);
+                        self.running = Some(Running::Core(core));
                         self.started = Some(now);
                         self.restart_at = None;
                         self.failed = None;
@@ -211,10 +269,11 @@ impl LauncherCoreSlot {
                 }
             }
         }
-        if let Some(core) = self.core.as_mut()
-            && !core.attached
-            && bridge_endpoint_exists(&core.socket_dir)
-        {
+        let directory = self
+            .core()
+            .filter(|core| !core.attached && bridge_endpoint_exists(&core.socket_dir))
+            .map(|core| core.socket_dir.clone());
+        if let Some(directory) = directory {
             let (runtime, tasks) = match menu.io_execution() {
                 Ok(execution) => execution,
                 Err(error) => {
@@ -222,50 +281,19 @@ impl LauncherCoreSlot {
                     return;
                 }
             };
-            core.attached = true;
-            #[cfg(feature = "native-networking")]
-            let account = if core.title_presence_owner == TitlePresenceOwner::Native {
-                let native = core
-                    .auth_cache
-                    .clone()
-                    .map(|path| menu.native_account_for(path));
-                launcher_host::launcher_account::LauncherAccount::with_native_presence(
-                    core.socket_dir.clone(),
-                    menu.layout.launcher_artwork_dir(),
-                    native,
-                    &pack_runtime::pack_language::active_language_code(),
-                    runtime,
-                    tasks,
-                )
-            } else {
-                launcher_host::launcher_account::LauncherAccount::new(
-                    core.socket_dir.clone(),
-                    menu.layout.launcher_artwork_dir(),
-                    runtime,
-                    tasks,
-                )
-            };
-            #[cfg(not(feature = "native-networking"))]
+            self.core_mut().expect("original Core attachment").attached = true;
             let account = launcher_host::launcher_account::LauncherAccount::new(
-                core.socket_dir.clone(),
+                directory.clone(),
                 menu.layout.launcher_artwork_dir(),
                 runtime,
                 tasks,
             );
             self.presence_lifetime = Some(account.title_presence_lifetime());
             commands.insert_resource(LauncherAccount(account));
-            if let Some(worlds) = worlds {
-                #[cfg(feature = "native-networking")]
-                let result = if menu.native_sign_in {
-                    worlds.attach_native(&menu.layout)
-                } else {
-                    worlds.attach(core.socket_dir.clone(), &menu.layout)
-                };
-                #[cfg(not(feature = "native-networking"))]
-                let result = worlds.attach(core.socket_dir.clone(), &menu.layout);
-                if let Err(error) = result {
-                    bevy::log::warn!("local worlds unavailable: {error}");
-                }
+            if let Some(worlds) = worlds
+                && let Err(error) = worlds.attach(directory, &menu.layout)
+            {
+                bevy::log::warn!("local worlds unavailable: {error}");
             }
         }
     }
@@ -279,7 +307,8 @@ impl LauncherCoreSlot {
         if let Some(lifetime) = &self.presence_lifetime {
             lifetime.retire();
         }
-        if let Some(old) = self.core.take() {
+        if let Some(old) = self.running.take() {
+            debug_assert!(matches!(old, Running::Core(_)));
             drop(old);
             self.last_retirement = Some(CoreStopOutcome::ExitedAfterGracefulClose);
             self.detach_clients(commands, menu, worlds);
@@ -290,8 +319,7 @@ impl LauncherCoreSlot {
     pub(super) fn account_core(&self) -> AccountCore {
         AccountCore {
             serving: self
-                .core
-                .as_ref()
+                .core()
                 .filter(|core| core.attached)
                 .map(|core| core.authenticated),
             failed: self.failed,
@@ -311,7 +339,7 @@ impl LauncherCoreSlot {
         if !launcher_mode && !local_world {
             return None;
         }
-        let core = self.core.as_ref()?;
+        let core = self.core()?;
         if !local_world && core.authenticated != authenticated {
             return None;
         }
@@ -319,6 +347,8 @@ impl LauncherCoreSlot {
     }
 }
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod native;
 mod presence;
 
 impl MenuRuntime {
@@ -364,8 +394,8 @@ mod tests {
         let directory = SessionDirectoryGuard::bind(socket_dir.clone()).unwrap();
         // Readiness only: no game connection or server process is needed to select the route.
         std::fs::write(bridge::session_endpoint_path(&socket_dir), []).unwrap();
-        let slot = LauncherCoreSlot {
-            core: Some(LauncherCore {
+        let slot = LauncherServices {
+            running: Some(Running::Core(LauncherCore {
                 _guard: CoreProcessGuard::default(),
                 _directory: directory,
                 socket_dir: socket_dir.clone(),
@@ -373,7 +403,7 @@ mod tests {
                 auth_cache: None,
                 title_presence_owner: TitlePresenceOwner::Core,
                 attached: true,
-            }),
+            })),
             failed: None,
             ..Default::default()
         };

@@ -106,7 +106,7 @@ async fn artwork_case(action: Action) -> (Outcome, PathBuf) {
     });
     let selection = Selection::capture(&shared);
     let mut profile = Box::pin(run(
-        directory.path(),
+        Some(directory.path()),
         &images,
         &shared,
         &selection,

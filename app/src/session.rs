@@ -24,7 +24,7 @@ use {
         shutdown::record_fatal_error,
         world::TransferNotice,
     },
-    client_shell::menu::{LauncherCoreSlot, MenuRuntime},
+    client_shell::menu::{LauncherServices, MenuRuntime},
 };
 
 use std::time::Instant;
@@ -390,7 +390,7 @@ pub(crate) struct SessionResources<'w> {
     state: crate::game_session::SessionWorld<'w>,
     network: ResMut<'w, NetworkHandle<PackApplication>>,
     collisions: Res<'w, client_interaction::movement::PhysicsCollisionRegistries>,
-    launcher: Option<Res<'w, LauncherCoreSlot>>,
+    launcher: Option<Res<'w, LauncherServices>>,
     actor_artwork: Option<Res<'w, render_scene::ActorArtworkResource>>,
     ui_catalog: Option<Res<'w, crate::runtime::network::PackUiCatalog>>,
     input: Option<Res<'w, client_state::SemanticInputSnapshot>>,

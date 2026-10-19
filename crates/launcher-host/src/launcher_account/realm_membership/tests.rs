@@ -47,7 +47,7 @@ fn accepted_membership_survives_the_account_catalog_snapshot() {
     let runtime = worker_runtime();
     let tasks = TaskTracker::new();
     let requests = start(
-        dir.clone(),
+        Some(dir.clone()),
         Arc::clone(&shared),
         runtime.handle().clone(),
         tasks.clone(),
@@ -118,7 +118,7 @@ async fn realm_membership_queue_keeps_the_requesting_account_generation() {
     shared.lock().unwrap().retire_account_data();
     drop(sender);
     worker::run(
-        directory.path().to_owned(),
+        Some(directory.path().to_owned()),
         Arc::clone(&shared),
         receiver,
         changed,

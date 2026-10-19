@@ -5,7 +5,7 @@ use super::*;
 impl LauncherAccount {
     /// Starts the existing feed workers and one event/runtime owner.
     pub(super) fn start(
-        socket_dir: PathBuf,
+        socket_dir: Option<PathBuf>,
         artwork: PathBuf,
         initial: Snapshot,
         runtime: Handle,
@@ -69,13 +69,13 @@ impl LauncherAccount {
         let lifetime = presence_lifetime.clone();
         let executor = runtime.clone();
         thread::spawn(crate::worker::tracked(
-            move || events::poll(&dir, &shared, &requests, &lifetime, &executor),
+            move || events::poll(dir.as_deref(), &shared, &requests, &lifetime, &executor),
             &tasks,
         ));
         let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
         let executor = runtime.clone();
         thread::spawn(crate::worker::tracked(
-            move || poll_catalog(&dir, &shared, &until, &catalog_changes, &executor),
+            move || poll_catalog(dir.as_deref(), &shared, &until, &catalog_changes, &executor),
             &tasks,
         ));
         let (shared, dir, until) = (Arc::clone(&snapshot), socket_dir.clone(), stop.clone());
@@ -91,7 +91,7 @@ impl LauncherAccount {
                     descendants,
                 );
                 feeds::poll_featured(
-                    &dir,
+                    dir.as_deref(),
                     &art,
                     &shared,
                     &until,
@@ -115,7 +115,7 @@ impl LauncherAccount {
                     descendants,
                 );
                 feeds::poll_home(
-                    &dir,
+                    dir.as_deref(),
                     &art,
                     &shared,
                     &until,
@@ -135,7 +135,15 @@ impl LauncherAccount {
         );
         let (shared, dir) = (Arc::clone(&snapshot), socket_dir.clone());
         thread::spawn(crate::worker::tracked(
-            move || profile_worker::poll(&dir, &artwork, &shared, profile_requests, &runtime),
+            move || {
+                profile_worker::poll(
+                    dir.as_deref(),
+                    &artwork,
+                    &shared,
+                    profile_requests,
+                    &runtime,
+                )
+            },
             &tasks,
         ));
         Self {
@@ -151,4 +159,17 @@ impl LauncherAccount {
             presence_lifetime,
         }
     }
+}
+
+/// Rejects an unavailable legacy transport before constructing an RPC; no dummy path is used.
+pub(super) fn require_core_directory(
+    directory: Option<&std::path::Path>,
+) -> Result<&std::path::Path, bridge::BridgeError> {
+    directory.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            "Core control transport is unavailable",
+        )
+        .into()
+    })
 }

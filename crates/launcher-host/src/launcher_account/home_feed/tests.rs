@@ -15,7 +15,7 @@ async fn default_home_consumer_keeps_the_original_core_rpc() {
     let (_wake, mut changed) = watch::channel(Wake::Account);
     let mut feed = Feed::default();
     let source = CoreFeeds {
-        socket_dir: directory.path(),
+        socket_dir: Some(directory.path()),
         art: None,
     };
     let read = feed.round(&source, &shared, &mut changed);
@@ -62,13 +62,18 @@ async fn missing_native_home_owner_never_reads_or_reports_through_core() {
     });
     let (_wake, mut changed) = watch::channel(Wake::Account);
     let source = CoreFeeds {
-        socket_dir: directory.path(),
+        socket_dir: Some(directory.path()),
         art: None,
     };
     let (home, failed) = Feed::default().round(&source, &shared, &mut changed).await;
     assert!(home.is_none() && failed);
     let report = Report::capture(&shared.lock().unwrap(), MessageEvent::default());
-    assert!(report.send(directory.path(), &shared, &mut changed).await == ReportOutcome::Retired);
+    assert!(
+        report
+            .send(Some(directory.path()), &shared, &mut changed)
+            .await
+            == ReportOutcome::Retired
+    );
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock

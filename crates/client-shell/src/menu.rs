@@ -27,7 +27,7 @@ mod join_requests;
 mod realm_membership;
 pub use join_requests::open_join_requests_from_key;
 pub mod launcher_account;
-mod launcher_core;
+mod launcher_services;
 mod minecraft_import;
 #[cfg(feature = "native-networking")]
 mod native_catalog;
@@ -74,7 +74,7 @@ use launcher::menu::view::{
 };
 
 pub use account::SignInStatus;
-pub use launcher_core::LauncherCoreSlot;
+pub use launcher_services::LauncherServices;
 use servers::{ServerWriter, load_servers};
 pub use video_settings::persist_video_settings;
 
@@ -163,7 +163,7 @@ pub struct MenuRuntime {
     auth_attempted: bool,
     auth_restart_requested: bool,
     /// The account core a held join may still use; `None` when it cannot start for the join.
-    account_core: Option<launcher_core::AccountCore>,
+    account_core: Option<launcher_services::AccountCore>,
     layout: InstallLayout,
     /// The client's own skin, cloned into every reconnection's `NetworkConfig`.
     player_skin: crate::player_skin::LocalPlayerSkin,

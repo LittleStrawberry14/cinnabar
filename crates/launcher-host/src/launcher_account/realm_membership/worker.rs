@@ -5,7 +5,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Keeps preparation cancelable and a possible native write owned until its original cutoff.
 pub(super) async fn run(
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     mut requests: UnboundedReceiver<Request>,
     mut changed: watch::Receiver<Wake>,
@@ -49,7 +49,8 @@ pub(super) async fn run(
                     continue;
                 }
                 let observes = prepared.observes_acceptance(accept);
-                let phase = tokio::time::timeout_at(deadline, prepared.run(&socket_dir, accept));
+                let phase =
+                    tokio::time::timeout_at(deadline, prepared.run(socket_dir.as_deref(), accept));
                 let result = if observes {
                     observe(phase, &mut requests, &mut pending, &mut changed).await
                 } else {

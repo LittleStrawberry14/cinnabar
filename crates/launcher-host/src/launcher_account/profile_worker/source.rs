@@ -20,7 +20,7 @@ pub(super) enum Loaded {
 
 impl Source {
     /// Fetches only the selected source; a missing native account never queries another Go account.
-    pub(super) async fn fetch(&self, socket_dir: &std::path::Path) -> Result<Loaded, ()> {
+    pub(super) async fn fetch(&self, socket_dir: Option<&std::path::Path>) -> Result<Loaded, ()> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
         if let Self::Native(account) = self {
             return match account {
@@ -32,7 +32,7 @@ impl Source {
                 None => Err(()),
             };
         }
-        bridge::profile(socket_dir)
+        bridge::profile(super::super::workers::require_core_directory(socket_dir).map_err(|_| ())?)
             .await
             .map(Loaded::Core)
             .map_err(|_| ())
@@ -133,7 +133,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let listener = UnixListener::bind(directory.path().join("control.sock")).unwrap();
         listener.set_nonblocking(true).unwrap();
-        assert!(Source::Native(None).fetch(directory.path()).await.is_err());
+        assert!(
+            Source::Native(None)
+                .fetch(Some(directory.path()))
+                .await
+                .is_err()
+        );
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock

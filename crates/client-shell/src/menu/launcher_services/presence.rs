@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl LauncherCoreSlot {
+impl LauncherServices {
     /// Requests the sole publisher policy for the next account-core incarnation.
     /// Changing policy retires the old core while idle, before any replacement starts.
     /// Native publication still requires its own account-generation and cleanup owner.
@@ -17,7 +17,11 @@ impl LauncherCoreSlot {
     /// Observes the actual spawned policy; a request alone does not change the current core.
     /// This does not grant authority to publish for an account or skip native cleanup.
     pub fn title_presence_owner(&self) -> Option<TitlePresenceOwner> {
-        self.core.as_ref().map(|core| core.title_presence_owner)
+        match self.running.as_ref()? {
+            Running::Core(core) => Some(core.title_presence_owner),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            Running::Native { .. } => Some(TitlePresenceOwner::Native),
+        }
     }
 
     /// Reports the last observed stop outcome, including an unreaped child that blocks replacement.

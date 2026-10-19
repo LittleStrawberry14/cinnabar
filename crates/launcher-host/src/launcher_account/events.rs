@@ -3,7 +3,7 @@ use super::*;
 
 /// Drives retained control, presence and product futures on the existing event executor.
 pub(super) fn poll(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     shared: &Mutex<Snapshot>,
     requests: &Receiver<()>,
     lifetime: &TitlePresenceLifetime,
@@ -16,7 +16,7 @@ pub(super) fn poll(
 
 /// Drives the original three retained futures; the existing poll caller owns their worker guard.
 async fn run(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     shared: &Mutex<Snapshot>,
     requests: &Receiver<()>,
     lifetime: &TitlePresenceLifetime,
@@ -58,7 +58,7 @@ async fn run(
 
 /// Retains each control round while the publisher makes independent progress on the same executor.
 async fn control(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     shared: &Mutex<Snapshot>,
     requests: &Receiver<()>,
     lifetime: &TitlePresenceLifetime,
@@ -115,7 +115,9 @@ async fn control(
                 if native {
                     return;
                 }
-                let _ = bridge::sign_out(socket_dir).await;
+                if let Some(socket_dir) = socket_dir {
+                    let _ = bridge::sign_out(socket_dir).await;
+                }
             }
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
                 lifetime.retire();
@@ -136,7 +138,10 @@ async fn control(
             .unwrap_or_else(|p| p.into_inner())
             .title_presence_owner
             == crate::launcher_core::TitlePresenceOwner::Core;
-        if core_presence && sent_presence.as_ref() != Some(&presence) {
+        if core_presence
+            && sent_presence.as_ref() != Some(&presence)
+            && let Some(socket_dir) = socket_dir
+        {
             let sent = tokio::time::timeout(
                 Duration::from_secs(2),
                 bridge::report_xbox_presence(socket_dir, &presence),
@@ -194,6 +199,7 @@ async fn control(
         if let Some(config) = &cinnabar
             && core_api
             && sent_cinnabar.as_ref() != Some(config)
+            && let Some(socket_dir) = socket_dir
         {
             let sent = tokio::time::timeout(
                 Duration::from_secs(2),
@@ -209,7 +215,9 @@ async fn control(
                 sent_cinnabar = Some(config.clone());
             }
         }
-        poll_core_events(socket_dir, shared, core_api, &mut seen_release).await;
+        if let Some(socket_dir) = socket_dir {
+            poll_core_events(socket_dir, shared, core_api, &mut seen_release).await;
+        }
         let targets = shared
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -230,10 +238,16 @@ async fn control(
                     pongs = server_ping::round(&targets) => Ok(pongs),
                 }
             } else {
-                bridge::ping_servers(socket_dir, &targets).await
+                match super::workers::require_core_directory(socket_dir) {
+                    Ok(directory) => bridge::ping_servers(directory, &targets).await,
+                    Err(error) => Err(error),
+                }
             };
             #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
-            let pongs = bridge::ping_servers(socket_dir, &targets).await;
+            let pongs = match super::workers::require_core_directory(socket_dir) {
+                Ok(directory) => bridge::ping_servers(directory, &targets).await,
+                Err(error) => Err(error),
+            };
             let pings = round_results(
                 &targets,
                 settle("ping", pongs, &mut false).unwrap_or_default(),

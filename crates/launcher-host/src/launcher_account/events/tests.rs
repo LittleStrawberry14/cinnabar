@@ -27,7 +27,7 @@ async fn native_signout_retires_the_original_worker_without_a_core_signout_reque
         requests.send(()).unwrap();
         let mut owner = Box::pin(async {
             let guard = lifetime.worker_guard();
-            run(directory.path(), &shared, &receive, &lifetime).await;
+            run(Some(directory.path()), &shared, &receive, &lifetime).await;
             drop(guard);
         });
         let foreign_request = async {
@@ -94,7 +94,7 @@ async fn legacy_signout_preserves_core_auth_independently_of_presence_policy() {
         };
         tokio::join!(
             server,
-            control(directory.path(), &shared, &receive, &lifetime),
+            control(Some(directory.path()), &shared, &receive, &lifetime),
             native_presence::run(&shared, &lifetime),
         );
         assert_eq!(
@@ -233,7 +233,7 @@ async fn native_account_auth_and_product_do_not_fall_back_to_core() {
         );
         let (_requests, receive) = bounded(1);
         tokio::join!(
-            control(directory.path(), &shared, &receive, &lifetime),
+            control(Some(directory.path()), &shared, &receive, &lifetime),
             native_presence::run(&shared, &lifetime),
         );
         let methods = peer.finish().await;

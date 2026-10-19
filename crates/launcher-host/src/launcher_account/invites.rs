@@ -48,11 +48,14 @@ impl Destination {
     }
 
     /// Uses only the host selected when queued; an unavailable native incarnation never falls back.
-    async fn send(&self, socket_dir: &std::path::Path, xuid: &str) -> Result<(), ()> {
+    async fn send(&self, socket_dir: Option<&std::path::Path>, xuid: &str) -> Result<(), ()> {
         match self {
-            Self::Core => bridge::invite_to_world(socket_dir, xuid)
-                .await
-                .map_err(|_| ()),
+            Self::Core => bridge::invite_to_world(
+                super::workers::require_core_directory(socket_dir).map_err(|_| ())?,
+                xuid,
+            )
+            .await
+            .map_err(|_| ()),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             Self::Native(host) => host
                 .as_ref()
@@ -123,7 +126,7 @@ enum Request {
 
 /// Starts the worker; dropping the account link stops it and drops what is still queued.
 pub(super) fn start(
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     artwork_dir: PathBuf,
     shared: Arc<Mutex<Snapshot>>,
     stop: Receiver<()>,
@@ -147,7 +150,7 @@ pub(super) fn start(
                 match request {
                     Request::People(selected) => {
                         let people = runtime.block_on(people(
-                            &socket_dir,
+                            socket_dir.as_deref(),
                             &images,
                             &shared,
                             &selected,
@@ -159,7 +162,7 @@ pub(super) fn start(
                         }
                     }
                     Request::Send(selected, xuids) => runtime.block_on(send(
-                        &socket_dir,
+                        socket_dir.as_deref(),
                         &xuids,
                         &shared,
                         &selected,
@@ -181,7 +184,7 @@ pub(super) fn start(
 
 /// Keeps one actual fetch and one actual artwork future through unrelated wakeups.
 async fn people(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     images: &crate::remote_images::ImageDirectory,
     shared: &Mutex<Snapshot>,
     selected: &Selection,
@@ -237,7 +240,7 @@ async fn wait<T>(
 
 /// Invites through the captured selected owner; native commands never resolve a replacement Go host.
 async fn send(
-    socket_dir: &std::path::Path,
+    socket_dir: Option<&std::path::Path>,
     xuids: &[String],
     shared: &Mutex<Snapshot>,
     selected: &Selection,

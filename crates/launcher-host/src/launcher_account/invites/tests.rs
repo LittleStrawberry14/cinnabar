@@ -128,7 +128,12 @@ async fn missing_native_people_owner_never_falls_back_to_core() {
     let listener =
         std::os::unix::net::UnixListener::bind(directory.path().join("control.sock")).unwrap();
     listener.set_nonblocking(true).unwrap();
-    assert!(Source::Native(None).fetch(directory.path()).await.is_err());
+    assert!(
+        Source::Native(None)
+            .fetch(Some(directory.path()))
+            .await
+            .is_err()
+    );
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
@@ -145,7 +150,7 @@ async fn unavailable_native_invitation_never_dispatches_core_rpc() {
     listener.set_nonblocking(true).unwrap();
     assert!(
         Destination::Native(None)
-            .send(directory.path(), "456")
+            .send(Some(directory.path()), "456")
             .await
             .is_err()
     );

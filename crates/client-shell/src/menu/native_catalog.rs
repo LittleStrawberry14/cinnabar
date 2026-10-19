@@ -91,6 +91,18 @@ impl Controller {
         self.join = None;
     }
 
+    /// Borrows only the original selected owner, without canceling or restarting its catalog read.
+    pub(super) fn selected_account(
+        &self,
+        path: &std::path::Path,
+        identity: Option<&str>,
+    ) -> Option<&Arc<NativeAccount>> {
+        self.selected
+            .as_ref()
+            .filter(|selected| selected.path == path && selected.identity.as_deref() == identity)
+            .map(|selected| &selected.account)
+    }
+
     /// Reuses one account across listing, Realm resolution and final key mint without filesystem access.
     fn account(
         &mut self,

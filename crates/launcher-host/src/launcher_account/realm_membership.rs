@@ -103,7 +103,7 @@ pub(super) fn retire(sender: &watch::Sender<Wake>) {
 
 /// Starts exactly the original tracked membership worker on the shared application reactor.
 pub(super) fn start(
-    socket_dir: PathBuf,
+    socket_dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
     runtime: Handle,
     tasks: TaskTracker,
