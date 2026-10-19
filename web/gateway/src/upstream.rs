@@ -9,6 +9,11 @@ use std::{io, net::SocketAddr, time::Instant};
 // Only this bounded prefix of one completed resolution is retained for sequential attempts.
 const MAX_CANDIDATES: usize = 16;
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static FIXTURE_UPSTREAM: SocketAddr;
+}
+
 /// Selects only the explicit direct host:nonzero-port grammar of the existing Go gateway.
 pub(super) fn select(target: Option<ConnectTarget>) -> io::Result<(String, String, u16)> {
     let Some(ConnectTarget::RakNet(address)) = target else {
@@ -65,7 +70,7 @@ pub(super) async fn connect(
             continue;
         }
         let candidate = SocketAddr::new(candidate.ip().to_canonical(), candidate.port());
-        if !public_gateway_upstream(candidate.ip()) {
+        if !admitted(candidate) {
             continue;
         }
         let connecting = RakNetConnection::connect(candidate, RakNetOptions::default());
@@ -87,6 +92,22 @@ pub(super) async fn connect(
         return Ok(connection);
     }
     Err(failure)
+}
+
+/// Checks the final numeric peer; test serving futures may admit their one exact fixture socket.
+fn admitted(peer: SocketAddr) -> bool {
+    let public = public_gateway_upstream(peer.ip());
+    #[cfg(test)]
+    {
+        public
+            || FIXTURE_UPSTREAM
+                .try_with(|expected| *expected == peer)
+                .unwrap_or(false)
+    }
+    #[cfg(not(test))]
+    {
+        public
+    }
 }
 
 /// Rechecks the same join/account/controller and original deadline after every caller wait.
