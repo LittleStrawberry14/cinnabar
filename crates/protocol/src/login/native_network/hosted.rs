@@ -122,7 +122,7 @@ impl NativeHostedUpstream {
                     .checked_add(raw.len())
                     .filter(|bytes| *bytes <= super::super::startup::MAX_DEFERRED_PACKET_BYTES)
                     .ok_or_else(|| failure(invalid()))?;
-                startup.push(raw);
+                startup.push(Bytes::copy_from_slice(&raw));
                 if id == packets::StartGame::ID {
                     break;
                 }
