@@ -50,6 +50,15 @@ pub const MAX_PACK_ARCHIVE_BYTES: usize = 67108864;
 /// Largest total selected server pack archives in bytes.
 pub const MAX_SELECTED_PACK_BYTES: usize = 134217728;
 
+/// Resource-pack wire type for an admitted addon archive.
+pub const RESOURCE_PACK_TYPE_ADDON: u8 = 1;
+
+/// Resource-pack wire type for an admitted resource archive.
+pub const RESOURCE_PACK_TYPE_RESOURCES: u8 = 6;
+
+/// Resource-pack wire type for an admitted world-template archive.
+pub const RESOURCE_PACK_TYPE_WORLD_TEMPLATE: u8 = 8;
+
 /// Archive bytes in one resource-pack data frame.
 pub const PACK_CHUNK_BYTES: usize = 4194304;
 
