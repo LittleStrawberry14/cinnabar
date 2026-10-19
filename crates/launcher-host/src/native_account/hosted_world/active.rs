@@ -154,11 +154,7 @@ impl ActiveHostedWorld {
                         self.world.directory_mut()?.visitor(occupied, deadline),
                     )
                     .await?;
-                    driving(
-                        &mut self.server,
-                        self.world.publish_approvals(operation_deadline()),
-                    )
-                    .await?;
+                    driving(&mut self.server, self.world.publish_approvals(deadline)).await?;
                 }
                 Event::Invite(Some(invite)) => {
                     if invite.result.is_closed() {
