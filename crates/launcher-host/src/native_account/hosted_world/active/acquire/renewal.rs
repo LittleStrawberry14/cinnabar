@@ -43,14 +43,21 @@ pub(in crate::native_account::hosted_world::active) async fn renew(
     let receipt = server
         .begin_turn_refresh(deadline)
         .map_err(|_| unavailable())?;
-    let credentials = world
+    let credentials = match world
         .peer_io(Some(deadline), async {
             server
                 .finish_turn_refresh(&receipt)
                 .await
                 .map_err(|_| unavailable())
         })
-        .await?;
+        .await
+    {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            let _ = server.cancel_turn_refresh(&receipt);
+            return Err(error);
+        }
+    };
     let credential_expiry = credentials.expires_at();
     let expires = identity.expires_at().min(credential_expiry);
     let servers = service_ice_servers(&credentials);
