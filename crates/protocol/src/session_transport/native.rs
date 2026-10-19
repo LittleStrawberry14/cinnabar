@@ -16,6 +16,7 @@ use crate::login::native_network::{Connection, PacketConnection};
 
 mod budget;
 pub(crate) mod delay;
+mod position;
 use budget::ByteBudget;
 pub(crate) use budget::ByteCredit;
 use delay::{Deadline, NativePacketDelay};
@@ -285,6 +286,8 @@ pub(crate) fn prepare_with_byte_budget(
     let driver = Box::pin(async move {
         let mut pending: PendingInput = None;
         let mut reservation: Option<budget::Reservation> = None;
+        let mut front: Option<SendBatch> = None;
+        let delay = writes.delay.clone();
         loop {
             let allows_read =
                 pending.is_none() && budget.as_ref().is_none_or(ByteBudget::allows_read);
@@ -313,33 +316,44 @@ pub(crate) fn prepare_with_byte_budget(
                     }
                 } => {
                     if let Some(result) = result {
-                        if result.is_err() { writes.fail(); }
+                        if result.is_err() {
+                            writes.fail();
+                            front = None;
+                        }
                         reservation = result.as_ref().ok().and_then(|body| {
                             budget.as_ref().map(|budget| budget.reserve(body.len()))
                         });
                         pending = Some(IncomingBody { body: result, permit: None });
                     }
                 }
-                batch = writes.receive.recv(), if writes.is_active() => {
+                batch = writes.receive.recv(), if front.is_none() && writes.is_active() => {
                     let Some(batch) = batch else { break };
-                    let result = connection.send_body(batch.body).await;
-                    if result.is_err() { writes.fail(); }
-                    let _ = batch.written.send(result);
+                    if batch.delay.is_some_and(|deadline| delay.remaining(deadline, delay::now()).is_some()) {
+                        front = Some(batch);
+                    } else {
+                        write_batch(&mut connection, &mut writes, batch).await;
+                    }
+                }
+                _ = delay.wait(front.as_ref().and_then(|batch| batch.delay)), if front.is_some() && writes.is_active() => {
+                    let batch = front.take().expect("retained original outgoing batch");
+                    write_batch(&mut connection, &mut writes, batch).await;
                 }
             }
         }
         let drain = !writes.failed;
         writes.close_admission();
         if drain {
-            while let Some(batch) = writes.receive.recv().await {
-                let result = connection.send_body(batch.body).await;
-                let failed = result.is_err();
-                let _ = batch.written.send(result);
-                if failed {
+            if let Some(batch) = front.take() {
+                write_batch(&mut connection, &mut writes, batch).await;
+            }
+            while !writes.failed {
+                let Some(batch) = writes.receive.recv().await else {
                     break;
-                }
+                };
+                write_batch(&mut connection, &mut writes, batch).await;
             }
         }
+        drop(front);
         // Move the same pending input through task completion so close never
         // waits for capacity held by its own caller's receive borrow.
         let close = connection.close().await;
@@ -351,6 +365,24 @@ pub(crate) fn prepare_with_byte_budget(
         stop,
         driver,
     }
+}
+
+/// Completes one original accepted write without letting a policy wake cancel cipher progress.
+async fn write_batch(
+    connection: &mut impl PacketConnection,
+    writes: &mut Writes,
+    batch: SendBatch,
+) {
+    let tracking = writes.delay.tracking(delay::now());
+    let position =
+        tracking.and_then(|tracking| position::own_position(&batch.body, tracking.actor));
+    let result = connection.send_body(batch.body).await;
+    if result.is_err() {
+        writes.fail();
+    } else if let (Some(tracking), Some(position)) = (tracking, position) {
+        writes.delay.forwarded(tracking, position, delay::now());
+    }
+    let _ = batch.written.send(result);
 }
 
 impl SessionTransport {

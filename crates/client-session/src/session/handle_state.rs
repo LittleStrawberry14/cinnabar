@@ -30,6 +30,8 @@ impl<P> NetworkHandle<P> {
                 readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
                 experience_gate: Arc::default(),
                 unflushed: Default::default(),
+                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                packet_delay: Default::default(),
             },
             control_event_tx,
         )

@@ -274,3 +274,40 @@ impl NativePacketDelay {
 pub(crate) fn now() -> Instant {
     tokio::time::Instant::now().into_std()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Expiry before a same-value heartbeat releases old backlog and invalidates its write token.
+    #[test]
+    fn expiry_cannot_be_erased_by_immediate_reconfiguration() {
+        let delay = NativePacketDelay::new();
+        delay.bind(42);
+        let start = Instant::now();
+        let max_ms = bridge::contract::MAX_PACKET_DELAY_MS;
+        let maximum = Duration::from_millis(u64::from(max_ms));
+        let lease = Duration::from_millis(u64::from(bridge::contract::PACKET_DELAY_LEASE_MILLIS));
+        delay.configure_at(max_ms, true, start).unwrap();
+        let admitted = start + lease.saturating_sub(maximum / 2);
+        let deadline = delay.capture(admitted).unwrap();
+        let tracking = delay.tracking(admitted).unwrap();
+        let expired = start + lease;
+        delay.configure_at(max_ms, true, expired).unwrap();
+        assert!(
+            delay.remaining(deadline, expired).is_none(),
+            "a heartbeat erased the original expiry release"
+        );
+        delay.forwarded(tracking, [1.0, 2.0, 3.0], expired);
+        assert_eq!(
+            delay.state().position,
+            None,
+            "expired opt-in published a later physical write"
+        );
+        let fresh = delay.capture(expired).unwrap();
+        assert_eq!(delay.remaining(fresh, expired), Some(maximum));
+        delay.retire();
+        assert!(delay.remaining(fresh, expired).is_none());
+        assert!(delay.configure_at(max_ms, true, expired).is_err());
+    }
+}

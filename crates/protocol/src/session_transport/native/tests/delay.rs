@@ -131,3 +131,162 @@ async fn native_delay_preserves_original_bidirectional_batch_pipeline() {
     .await
     .expect("original delayed pump failed to finish under its finite fixture budget");
 }
+
+/// Retained admissions keep their first deadline through borrowed cancellation and new policy.
+#[tokio::test(start_paused = true)]
+async fn native_delay_keeps_original_deadlines_and_releases_old_backlog() {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let (mut transport, incoming, mut outgoing) = pair();
+        let delay = transport.packet_delay().unwrap();
+        delay.bind(42);
+        delay.configure(200, false).unwrap();
+        let sender = transport.sender();
+        let start = tokio::time::Instant::now();
+        incoming.send(body(0)).await.unwrap();
+        let first = sender.accept(body(0)).await.unwrap();
+        std::future::poll_fn(|cx| transport.poll_read_ahead_one(MAX_READ_AHEAD_BYTES, cx)).await;
+        let first_pending = {
+            let mut receive = std::pin::pin!(transport.recv());
+            std::future::poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        };
+        tokio::time::advance(Duration::from_millis(100)).await;
+        delay.configure(400, false).unwrap();
+        incoming.send(body(1)).await.unwrap();
+        let second = sender.accept(body(1)).await.unwrap();
+        std::future::poll_fn(|cx| transport.poll_read_ahead_one(MAX_READ_AHEAD_BYTES, cx)).await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let received_first = time(transport.recv().await.unwrap());
+        let written_first = outgoing.recv().await.unwrap();
+        first.await.unwrap();
+        let second_pending = {
+            let mut receive = std::pin::pin!(transport.recv());
+            std::future::poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        };
+        let second_not_written = outgoing.try_recv().is_err();
+        delay.configure(0, false).unwrap();
+        delay.configure(400, false).unwrap();
+        let received_second = time(transport.recv().await.unwrap());
+        let written_second = outgoing.recv().await.unwrap();
+        second.await.unwrap();
+        let elapsed = start.elapsed();
+        transport.close().await.unwrap();
+        assert!(
+            first_pending && second_pending,
+            "canceled receive escaped its original due time"
+        );
+        assert!(
+            second_not_written,
+            "new nonzero delay failed to apply to its own admission"
+        );
+        assert_eq!((received_first, received_second), (0, 1));
+        assert_eq!((written_first, written_second), (body(0), body(1)));
+        assert_eq!(
+            elapsed,
+            Duration::from_millis(200),
+            "changed policy retimed an original admission or re-delayed released backlog"
+        );
+    })
+    .await
+    .expect("retained delay admission failed its finite fixture budget");
+}
+
+/// Builds a mixed original body; only the last finite own movement may advance its witness.
+fn movement_body() -> Bytes {
+    use bedrock_protocol_1_26_51::{
+        enums::PlayerPositionModeComponentPositionMode, types::ActorRuntimeID,
+    };
+    crate::session_transport::batch_body(&[
+        crate::Packet::new(packets::MovePlayer {
+            player_runtime_id: ActorRuntimeID(42),
+            position: [1.0, 2.0, 3.0].into(),
+            ..Default::default()
+        }),
+        crate::Packet::new(packets::MovePlayer {
+            player_runtime_id: ActorRuntimeID(99),
+            position: [90.0; 3].into(),
+            ..Default::default()
+        }),
+        crate::Packet::new(packets::MovePlayer {
+            player_runtime_id: ActorRuntimeID(42),
+            position: [80.0; 3].into(),
+            position_mode: PlayerPositionModeComponentPositionMode::Onlyheadrot,
+            ..Default::default()
+        }),
+        crate::Packet::new(packets::PlayerAuthInput {
+            position: [4.0, 5.0, 6.0].into(),
+            ..Default::default()
+        }),
+        crate::Packet::new(packets::MovePlayer {
+            player_runtime_id: ActorRuntimeID(42),
+            position: [f32::NAN, 0.0, 0.0].into(),
+            ..Default::default()
+        }),
+    ])
+    .unwrap()
+}
+
+/// A canceled receipt borrow leaves the original write and opt-in witness owned by the same pump.
+#[tokio::test(start_paused = true)]
+async fn native_delay_position_requires_the_original_completed_write() {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let (mut transport, _incoming, mut outgoing) = pair();
+        let delay = transport.packet_delay().unwrap();
+        delay.bind(42);
+        delay.configure(200, true).unwrap();
+        let expected = movement_body();
+        let sender = transport.sender();
+        let mut written = sender.accept(expected.clone()).await.unwrap();
+        let receipt_pending = {
+            let mut borrow = std::pin::pin!(&mut written);
+            std::future::poll_fn(|cx| Poll::Ready(borrow.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        };
+        let before = delay.position();
+        let early = outgoing.try_recv().ok();
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let actual = outgoing.recv().await.unwrap();
+        written.await.unwrap();
+        let completed = delay.position();
+        delay.configure(0, false).unwrap();
+        delay.configure(200, true).unwrap();
+        let reset = delay.position();
+        let abandoned = sender.accept(expected.clone()).await.unwrap();
+        drop(abandoned);
+        let marker = sender.accept(body(9)).await.unwrap();
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let repeated = outgoing.recv().await.unwrap();
+        let last = outgoing.recv().await.unwrap();
+        marker.await.unwrap();
+        let after_abandoned = delay.position();
+        transport.close().await.unwrap();
+        let retired = delay.position();
+        assert!(
+            receipt_pending && early.is_none(),
+            "the original write bypassed its due time"
+        );
+        assert_eq!(
+            before, None,
+            "queued movement was reported as physically written"
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(completed, Some([4.0, 5.0, 6.0]));
+        assert_eq!(
+            reset, None,
+            "disable and reenable retained the old opt-in witness"
+        );
+        assert_eq!(
+            repeated, expected,
+            "abandoning the receipt lost or duplicated the actual write"
+        );
+        assert_eq!(last, body(9));
+        assert_eq!(after_abandoned, Some([4.0, 5.0, 6.0]));
+        assert_eq!(retired, None);
+    })
+    .await
+    .expect("physical write observation failed its finite fixture budget");
+}
