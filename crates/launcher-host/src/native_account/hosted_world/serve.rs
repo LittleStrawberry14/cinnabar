@@ -5,18 +5,34 @@ pub use play::{ClosingHostedPeer, NativeHostedPeer};
 mod process;
 pub use process::NativeHostedProcess;
 
-use super::{HostedLoginApproval, NativeHostedLoginPolicy, NativeHostedWorld};
+use super::{HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy, NativeHostedWorld};
 use bedrock_client::server::{
     ServerAcknowledgmentEvent, ServerApprovalEvent, ServerHandshake, ServerHandshakeOptions,
     ServerLoginEvent, ServerPacksReady, ServerSettingsEvent,
     session::{ServerPackDelivery, ServerPackEvent, ServerSpawnEvent},
 };
-use bridge::host_world::{HostProcess, PendingBackendPeer, contract::Identity};
+use bridge::host_world::{BackendWorldReady, HostProcess, PendingBackendPeer, contract::Identity};
 use p384::ecdsa::SigningKey;
 use protocol::{NativeAcceptingIo, NativeHostWorld, native_host_packs};
 use std::{io, sync::Arc, time::Instant};
 
 impl NativeHostedWorld {
+    /// Retains original membership checks around the real backend Attach operation.
+    /// Cryptographic Login and typed ServerWorldReady remain with the calling pack owner.
+    pub(super) async fn attach_backend(
+        &mut self,
+        approval: &HostedApproval,
+        backend: PendingBackendPeer,
+        deadline: Instant,
+    ) -> io::Result<BackendWorldReady> {
+        self.recheck_approval(approval)?;
+        let backend = self
+            .peer_io(Some(deadline), backend.attach(deadline))
+            .await?;
+        self.recheck_approval(approval)?;
+        Ok(backend)
+    }
+
     /// Pairs one actual established transport with this original acknowledged hosted opening.
     ///
     /// The caller owns the server's authenticated signaling/SDP policy and passes that exact
@@ -287,7 +303,7 @@ impl NativeHostedWorld {
         };
         self.recheck_login(ready.login(), &policy, ready.grant())?;
         let backend = self
-            .peer_io(Some(deadline), backend.attach(deadline))
+            .attach_backend(&ready.grant().approval, backend, deadline)
             .await?;
         self.recheck_login(ready.login(), &policy, ready.grant())?;
         let (mut packets, world) = NativeHostWorld::parse(backend.world())?.into_parts();
