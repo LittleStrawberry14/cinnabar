@@ -35,7 +35,7 @@ impl NativeHostedWorld {
         Ok(backend)
     }
 
-    /// Checks original membership around the existing backend reservation operation.
+    /// Drains prior control, then applies current service authority before synchronous Open admission.
     /// Verified Login metadata and the selected process owner remain with the caller.
     pub(super) async fn open_backend(
         &mut self,
@@ -46,12 +46,18 @@ impl NativeHostedWorld {
         deadline: Instant,
     ) -> io::Result<PendingBackendPeer> {
         self.recheck_approval(approval)?;
-        let backend = self
+        let prepared = self
             .peer_io(
                 Some(deadline),
-                process.open_peer(identity, client_data, deadline),
+                process.prepare_open(identity, client_data, deadline),
             )
             .await?;
+        self.directory_mut()?
+            .service_barrier(Some(deadline))
+            .await?;
+        self.recheck_approval(approval)?;
+        let opening = prepared.begin_open()?;
+        let backend = self.peer_io(Some(deadline), opening.finish()).await?;
         self.recheck_approval(approval)?;
         Ok(backend)
     }

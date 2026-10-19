@@ -140,7 +140,7 @@ async fn revoked_original_member_is_denied_before_backend_attach_dispatch() {
         let application = async {
             let mut process = pending.establish(deadline).await.unwrap();
             let backend = process
-                .open_peer(
+                .prepare_open(
                     Identity {
                         xuid: approval.xuid.clone(),
                         uuid: Uuid::from_u128(1).to_string(),
@@ -151,6 +151,11 @@ async fn revoked_original_member_is_denied_before_backend_attach_dispatch() {
                     serde_json::value::RawValue::from_string("{}".into()).unwrap(),
                     deadline,
                 )
+                .await
+                .unwrap()
+                .begin_open()
+                .unwrap()
+                .finish()
                 .await
                 .unwrap();
             let result = host.attach_backend(&approval, backend, deadline).await;
