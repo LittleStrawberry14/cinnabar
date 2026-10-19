@@ -63,7 +63,7 @@ func nativeClientDataLocale(t *testing.T, client nativeSchemaSource, locale *nat
 		if !ok || number.Kind != token.INT {
 			t.Fatal("unexpected variant ordinal")
 		}
-		id, err := strconv.ParseUint(number.Value, 10, 8)
+		id, err := strconv.ParseUint(number.Value, 0, 8)
 		if err != nil || rows[key] != 0 || ids[id] || key == "" {
 			t.Fatal("unexpected variant key or ordinal")
 		}
