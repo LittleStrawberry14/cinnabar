@@ -26,7 +26,7 @@ pub struct HostedApproval {
     scope: Scope,
     reference: mpsd::Reference,
     xuid: String,
-    revision: u64,
+    member_epoch: u64,
     nonce: [u8; 32],
 }
 
