@@ -25,6 +25,8 @@ pub(crate) use manager::HostOpening;
 pub use manager::Manager;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use manager::NativeHostIntent;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use manager::NativeLocalWorldSelection;
 pub use world::WorldError;
 
 use std::{

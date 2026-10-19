@@ -136,6 +136,7 @@ impl MenuRuntime {
         self.remember_session_origin();
         self.stop_catalog();
         self.intents.join = None;
+        self.intents.native_world = None;
         self.native_catalog.join = Some(selection);
         self.show_connecting();
     }

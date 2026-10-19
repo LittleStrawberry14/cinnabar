@@ -33,6 +33,8 @@ mod minecraft_import;
 mod native_catalog;
 #[cfg(feature = "native-networking")]
 mod native_gatherings;
+#[cfg(feature = "native-networking")]
+pub mod native_local_world;
 mod navigation;
 mod presence_targets;
 mod reconnect;
@@ -40,7 +42,9 @@ pub mod screen_focus;
 #[cfg(test)]
 mod server_input_tests;
 mod services;
+mod session_intents;
 pub use services::sync_cinnabar_players;
+use session_intents::SessionIntents;
 pub mod settings_options;
 mod settings_paths;
 pub mod settings_storage;
@@ -230,23 +234,6 @@ pub struct MenuRuntime {
     join_requests: join_requests::JoinRequestUi,
 }
 
-/// Session requests raised by menu actions, for the session controller to take.
-#[derive(Debug, Default)]
-struct SessionIntents {
-    join: Option<JoinIntent>,
-    #[cfg(feature = "native-networking")]
-    gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
-    /// The queued join waits for the saved account's check until this passes.
-    join_sign_in_deadline: Option<std::time::Instant>,
-    /// The background sign-in check serves a join: it may finish, but never prompts.
-    join_sign_in_check: bool,
-    /// A selected native account may not silently become a signed-out join.
-    native_auth_required: bool,
-    disconnect: bool,
-    respawn: bool,
-    exit: bool,
-}
-
 impl MenuRuntime {
     /// Mirrors the applied mode; a pending menu toggle wins until taken.
     pub fn sync_render_mode(&mut self, applied: RenderMode) {
@@ -387,6 +374,7 @@ impl MenuRuntime {
         #[cfg(feature = "native-networking")]
         {
             self.intents.gathering = None;
+            self.intents.native_world = None;
         }
         self.intents.join_sign_in_deadline = None;
         self.intents.join_sign_in_check = false;
@@ -934,6 +922,7 @@ impl MenuRuntime {
         {
             self.native_catalog.cancel_join();
             self.intents.gathering = None;
+            self.intents.native_world = None;
         }
         if self.external.is_some() {
             self.request_external_connect(address);

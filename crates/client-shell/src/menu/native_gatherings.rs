@@ -31,6 +31,7 @@ impl MenuRuntime {
         self.stop_catalog();
         self.remember_retry_target(address, Some(&path), false);
         self.intents.join = None;
+        self.intents.native_world = None;
         self.intents.gathering = Some(selection);
         self.show_connecting();
         true

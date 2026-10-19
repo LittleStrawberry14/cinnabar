@@ -18,6 +18,10 @@ mod opening;
 pub(crate) use opening::HostOpening;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub use opening::NativeHostIntent;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod local_connection;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use local_connection::NativeLocalWorldSelection;
 
 use super::{
     Cancel, CancelHandle, cancel_pair, lock,
@@ -103,6 +107,8 @@ struct Inner {
     runtime_wait: Duration,
     life: Mutex<Life>,
     subscribers: Mutex<Vec<Sender<()>>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_changed: tokio::sync::watch::Sender<()>,
     /// Background starts, stops and exit watches still running.
     background: Mutex<usize>,
     background_done: Condvar,
@@ -186,6 +192,8 @@ impl Manager {
                 runtime_wait: parts.runtime_wait,
                 life: Mutex::default(),
                 subscribers: Mutex::default(),
+                #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+                native_changed: tokio::sync::watch::channel(()).0,
                 background: Mutex::new(0),
                 background_done: Condvar::new(),
                 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -507,7 +515,11 @@ impl Manager {
     /// Stops the open world (saving it) or clears a failure, normally without waiting.
     /// If a stop worker cannot start, completes cleanup inline before releasing its barrier.
     pub fn close(&self) {
-        let mut life = lock(&self.inner.life);
+        self.close_locked(lock(&self.inner.life));
+    }
+
+    /// Runs the original process/save retirement while the actual lifecycle remains protected.
+    fn close_locked(&self, mut life: std::sync::MutexGuard<'_, Life>) {
         let state = life.state;
         match state {
             WorldState::Failed => self.idle(&mut life),
@@ -652,6 +664,8 @@ impl Manager {
 
     fn set_state(&self, life: &mut Life, state: WorldState) {
         life.state = state;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        self.inner.native_changed.send_replace(());
         lock(&self.inner.subscribers).retain(|subscriber| {
             !matches!(subscriber.try_send(()), Err(TrySendError::Disconnected(())))
         });

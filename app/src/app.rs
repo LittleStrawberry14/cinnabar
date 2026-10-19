@@ -567,6 +567,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
                 native_friend: None,
                 #[cfg(feature = "native-networking")]
                 native_gathering: None,
+                #[cfg(feature = "native-networking")]
+                native_local_world: None,
                 display_name: args.display_name.clone(),
                 client_random_id: client_random_id.expect("connection requested"),
                 client_blob_cache: client_blob_cache.cache(),
