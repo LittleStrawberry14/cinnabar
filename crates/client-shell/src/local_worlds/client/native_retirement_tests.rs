@@ -34,7 +34,8 @@ fn native_world_worker_retains_original_request_receiver_after_ui_reply_closes()
     worker.unwrap().join().unwrap();
     drop((_core, revoked));
     let observed = manager.thumbnail(&world.id).unwrap();
-    manager.shutdown();
+    manager.close();
+    drop(manager);
     assert_eq!(
         observed, b"retired view",
         "lost UI reply retired the original cleanup request receiver"
