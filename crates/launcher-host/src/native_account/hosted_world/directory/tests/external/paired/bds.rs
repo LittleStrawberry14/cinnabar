@@ -85,14 +85,24 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
             .await?;
             // This is the sole original client initialization, not a fixture-created runtime ID.
             session.finish_loading().await?;
+            let mut terrain = session.terrain_before_spawn();
+            // Startup preserves its original radius grant in the play FIFO. Consume it before
+            // issuing another request so that it cannot satisfy the live-response assertion.
+            let admitted_radius = loop {
+                match session.recv_world_event(0).await? {
+                    WorldEvent::ChunkRadiusUpdated(radius) => break radius,
+                    WorldEvent::LevelChunk(_) | WorldEvent::SubChunks(_) => terrain = true,
+                    _ => {}
+                }
+            };
+            assert!(admitted_radius > 0, "actual startup radius was not admitted");
             session
                 .send(protocol::request_chunk_radius_packet(3, 3))
                 .await?;
-            let mut terrain = session.terrain_before_spawn();
             let mut response = false;
             while !(terrain && response) {
                 match session.recv_world_event(0).await? {
-                    WorldEvent::ChunkRadiusUpdated(3) => response = true,
+                    WorldEvent::ChunkRadiusUpdated(radius) if radius == admitted_radius => response = true,
                     WorldEvent::LevelChunk(_) | WorldEvent::SubChunks(_) => terrain = true,
                     _ => {}
                 }
