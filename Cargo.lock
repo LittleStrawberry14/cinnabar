@@ -832,7 +832,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bedrock-client"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=5a6e2d4e0393174da115e906e0567f80029729b3#5a6e2d4e0393174da115e906e0567f80029729b3"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=513f076f66d9345fea30f690803443ffaecf3901#513f076f66d9345fea30f690803443ffaecf3901"
 dependencies = [
  "bedrock-net",
  "bedrock-packs",
@@ -850,7 +850,7 @@ dependencies = [
 [[package]]
 name = "bedrock-net"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=5a6e2d4e0393174da115e906e0567f80029729b3#5a6e2d4e0393174da115e906e0567f80029729b3"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=513f076f66d9345fea30f690803443ffaecf3901#513f076f66d9345fea30f690803443ffaecf3901"
 dependencies = [
  "aes 0.9.3",
  "base64 0.22.1",
@@ -878,7 +878,7 @@ dependencies = [
 [[package]]
 name = "bedrock-packs"
 version = "0.1.0"
-source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=5a6e2d4e0393174da115e906e0567f80029729b3#5a6e2d4e0393174da115e906e0567f80029729b3"
+source = "git+https://github.com/cinnabar-mc/bedrock-net?rev=513f076f66d9345fea30f690803443ffaecf3901#513f076f66d9345fea30f690803443ffaecf3901"
 dependencies = [
  "serde",
  "serde_json",
@@ -6725,7 +6725,7 @@ dependencies = [
 [[package]]
 name = "nethernet"
 version = "0.0.1"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=3b937a039b527fd3df3b9156b6e19cd53663d665#3b937a039b527fd3df3b9156b6e19cd53663d665"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=258a088b91e632139671d35c6bcaf463aa16df24#258a088b91e632139671d35c6bcaf463aa16df24"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -6739,6 +6739,7 @@ dependencies = [
  "rand",
  "rsa",
  "rtc",
+ "rtc-turn 0.21.1 (git+https://github.com/cinnabar-mc/rtc-turn?rev=ceef0780c54c4f5fdc08e7e343403f8026653171)",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -6749,7 +6750,7 @@ dependencies = [
 [[package]]
 name = "nethernet-tokio"
 version = "0.2.0"
-source = "git+https://github.com/cinnabar-mc/nethernet?rev=3b937a039b527fd3df3b9156b6e19cd53663d665#3b937a039b527fd3df3b9156b6e19cd53663d665"
+source = "git+https://github.com/cinnabar-mc/nethernet?rev=258a088b91e632139671d35c6bcaf463aa16df24#258a088b91e632139671d35c6bcaf463aa16df24"
 dependencies = [
  "bytes",
  "futures",
@@ -6757,6 +6758,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "nethernet",
  "p384",
  "rand",
@@ -6764,6 +6766,7 @@ dependencies = [
  "rtc",
  "rustls",
  "rustls-pemfile",
+ "rustls-platform-verifier",
  "serde",
  "socket2",
  "thiserror 2.0.18",
@@ -8884,7 +8887,7 @@ dependencies = [
  "rtc-shared",
  "rtc-srtp",
  "rtc-stun",
- "rtc-turn",
+ "rtc-turn 0.21.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustls",
  "sansio",
  "serde",
@@ -9109,6 +9112,19 @@ name = "rtc-turn"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c53078a0696df5a3a5e4947bc550c5e903b59803b252f1d39062d637ebd3d17e"
+dependencies = [
+ "bytes",
+ "log",
+ "rtc-crypto",
+ "rtc-shared",
+ "rtc-stun",
+ "sansio",
+]
+
+[[package]]
+name = "rtc-turn"
+version = "0.21.1"
+source = "git+https://github.com/cinnabar-mc/rtc-turn?rev=ceef0780c54c4f5fdc08e7e343403f8026653171#ceef0780c54c4f5fdc08e7e343403f8026653171"
 dependencies = [
  "bytes",
  "log",
@@ -11458,6 +11474,7 @@ dependencies = [
  "bedrock-services",
  "bridge",
  "bytes",
+ "clap",
  "futures",
  "hex",
  "http",
@@ -11475,6 +11492,9 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tokio-websockets",
+ "tracing",
+ "tracing-subscriber",
+ "x509-parser 0.18.1",
  "zeroize",
 ]
 
