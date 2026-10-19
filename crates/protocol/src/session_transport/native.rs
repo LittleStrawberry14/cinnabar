@@ -7,21 +7,44 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
+    time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot};
 
 use super::{PacketSender, Reader, SessionTransport};
 use crate::login::native_network::{Connection, PacketConnection};
 
 const QUEUED_BATCHES: usize = 4;
+pub(crate) const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
-type PendingInput = Option<io::Result<Bytes>>;
+type PendingInput = Option<IncomingBody>;
+
+/// The original one body, with optional credit retained until its consumer releases the cursor.
+#[derive(Debug)]
+pub(crate) struct IncomingBody {
+    pub(crate) body: io::Result<Bytes>,
+    pub(crate) permit: Option<OwnedSemaphorePermit>,
+}
+
+/// Transfers the same uncommitted incoming tail after the actual transport close attempt.
+pub(crate) struct DriverEnd {
+    pub(crate) pending: PendingInput,
+    pub(crate) close: io::Result<()>,
+}
+
+/// The original bounded channels and one caller-owned connection driver, without spawning.
+pub(crate) struct PreparedPump {
+    pub(crate) sender: NativeSender,
+    pub(crate) incoming: mpsc::Receiver<IncomingBody>,
+    pub(crate) stop: oneshot::Sender<()>,
+    pub(crate) driver: Pin<Box<dyn Future<Output = DriverEnd> + Send>>,
+}
 
 #[cfg(test)]
 pub(crate) mod tests;
 
 pub(crate) struct NativeReader {
-    incoming: mpsc::Receiver<io::Result<Bytes>>,
+    incoming: mpsc::Receiver<IncomingBody>,
     task: Option<tokio::task::JoinHandle<PendingInput>>,
     tail: PendingInput,
     failure: Option<tokio::task::JoinError>,
@@ -47,7 +70,7 @@ impl NativeReader {
             let _ = stop.send(());
         }
         let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            CLOSE_TIMEOUT,
             std::future::poll_fn(|cx| self.poll_driver(cx)),
         )
         .await;
@@ -91,7 +114,7 @@ impl NativeReader {
     pub(super) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<io::Result<Bytes>>> {
         match self.incoming.poll_recv(cx) {
             Poll::Ready(None) => {}
-            other => return other,
+            other => return other.map(|item| item.map(|item| item.body)),
         }
         match std::task::ready!(self.poll_driver(cx)) {
             Ok(Some(item)) => self.tail = Some(item),
@@ -99,7 +122,7 @@ impl NativeReader {
             Err(error) if !self.closed => self.failure = Some(error),
             Err(_) => {}
         }
-        Poll::Ready(self.tail.take())
+        Poll::Ready(self.tail.take().map(|item| item.body))
     }
 }
 
@@ -118,6 +141,7 @@ struct SendBatch {
 struct Writes {
     receive: mpsc::Receiver<SendBatch>,
     closed: Arc<Mutex<bool>>,
+    failed: bool,
 }
 
 impl Drop for Writes {
@@ -139,6 +163,7 @@ impl Writes {
 
     /// Resolves queued receipts once no producer can append a late batch.
     fn fail(&mut self) {
+        self.failed = true;
         self.close_admission();
         while self.receive.try_recv().is_ok() {}
     }
@@ -161,17 +186,39 @@ fn write_channel(capacity: usize) -> (NativeSender, Writes) {
             send,
             closed: Arc::clone(&closed),
         },
-        Writes { receive, closed },
+        Writes {
+            receive,
+            closed,
+            failed: false,
+        },
     )
 }
 
 impl NativeSender {
+    /// Revokes every sender clone without discarding accepted writes.
+    pub(crate) fn close_admission(&self) {
+        *self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+    }
+
     /// Commits one bounded batch after capacity is reserved, returning its write receipt.
-    pub(super) async fn accept(
+    pub(crate) async fn accept(
         &self,
         body: Bytes,
     ) -> io::Result<oneshot::Receiver<io::Result<()>>> {
         Connection::check_body_size(&body)?;
+        if *self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "native connection closed",
+            ));
+        }
         let permit =
             self.send.reserve().await.map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "native connection closed")
@@ -202,73 +249,99 @@ impl NativeSender {
     }
 }
 
+/// Prepares the original count-bounded desktop driver without polling or spawning it.
+pub(crate) fn prepare(connection: impl PacketConnection) -> PreparedPump {
+    prepare_with_byte_budget(connection, None)
+}
+
+/// Prepares the same incoming owner; byte credit must be attached before FIFO commitment.
+pub(crate) fn prepare_with_byte_budget(
+    mut connection: impl PacketConnection,
+    _byte_budget: Option<usize>,
+) -> PreparedPump {
+    let (sender, mut writes) = write_channel(QUEUED_BATCHES);
+    let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
+    let (stop, mut stopping) = oneshot::channel();
+    let driver = Box::pin(async move {
+        let mut pending: PendingInput = None;
+        loop {
+            tokio::select! {
+                _ = &mut stopping => break,
+                _ = incoming.closed() => break,
+                permit = incoming.reserve(), if pending.is_some() => {
+                    let Ok(permit) = permit else { break };
+                    let item = pending.take().expect("pending input");
+                    let ended = item.body.is_err();
+                    permit.send(item);
+                    if ended { break; }
+                }
+                result = async {
+                    if pending.is_none() {
+                        Some(connection.recv_body().await)
+                    } else {
+                        connection.maintain().await;
+                        None
+                    }
+                } => {
+                    if let Some(result) = result {
+                        if result.is_err() { writes.fail(); }
+                        pending = Some(IncomingBody { body: result, permit: None });
+                    }
+                }
+                batch = writes.receive.recv(), if writes.is_active() => {
+                    let Some(batch) = batch else { break };
+                    let result = connection.send_body(batch.body).await;
+                    if result.is_err() { writes.fail(); }
+                    let _ = batch.written.send(result);
+                }
+            }
+        }
+        let drain = !writes.failed;
+        writes.close_admission();
+        if drain {
+            while let Some(batch) = writes.receive.recv().await {
+                let result = connection.send_body(batch.body).await;
+                let failed = result.is_err();
+                let _ = batch.written.send(result);
+                if failed {
+                    break;
+                }
+            }
+        }
+        // Move the same pending input through task completion so close never
+        // waits for capacity held by its own caller's receive borrow.
+        let close = connection.close().await;
+        DriverEnd { pending, close }
+    });
+    PreparedPump {
+        sender,
+        incoming: receive,
+        stop,
+        driver,
+    }
+}
+
 impl SessionTransport {
     /// Moves login's connection and unread packets into the same play FIFO.
-    pub(crate) fn from_native(mut connection: impl PacketConnection) -> Self {
-        let (send, mut writes) = write_channel(QUEUED_BATCHES);
-        let (incoming, receive) = mpsc::channel(QUEUED_BATCHES);
-        let (stop, mut stopping) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            let mut pending: Option<io::Result<Bytes>> = None;
-            loop {
-                tokio::select! {
-                    _ = &mut stopping => break,
-                    _ = incoming.closed() => break,
-                    permit = incoming.reserve(), if pending.is_some() => {
-                        let Ok(permit) = permit else { break };
-                        let item = pending.take().expect("pending input");
-                        let ended = item.is_err();
-                        permit.send(item);
-                        if ended { break; }
-                    }
-                    result = async {
-                        if pending.is_none() {
-                            Some(connection.recv_body().await)
-                        } else {
-                            connection.maintain().await;
-                            None
-                        }
-                    } => {
-                        if let Some(result) = result {
-                            if result.is_err() { writes.fail(); }
-                            pending = Some(result);
-                        }
-                    }
-                    batch = writes.receive.recv(), if writes.is_active() => {
-                        let Some(batch) = batch else { break };
-                        let result = connection.send_body(batch.body).await;
-                        if result.is_err() { writes.fail(); }
-                        let _ = batch.written.send(result);
-                    }
-                }
-            }
-            let drain = writes.is_active();
-            writes.close_admission();
-            if drain {
-                while let Some(batch) = writes.receive.recv().await {
-                    let result = connection.send_body(batch.body).await;
-                    let failed = result.is_err();
-                    let _ = batch.written.send(result);
-                    if failed {
-                        break;
-                    }
-                }
-            }
-            // Move the same pending input through task completion so close never
-            // waits for capacity held by its own caller's receive borrow.
-            let _ = connection.close().await;
-            pending
-        });
+    pub(crate) fn from_native(connection: impl PacketConnection) -> Self {
+        let PreparedPump {
+            sender,
+            incoming,
+            stop,
+            driver,
+        } = prepare(connection);
+        // Desktop keeps its original close-result policy and same joined pending-input transfer.
+        let task = tokio::spawn(async move { driver.await.pending });
         Self {
             reader: Reader::Native(NativeReader {
-                incoming: receive,
+                incoming,
                 task: Some(task),
                 tail: None,
                 failure: None,
                 stop: Some(stop),
                 closed: false,
             }),
-            frames: PacketSender::Native(send),
+            frames: PacketSender::Native(sender),
             timers: bridge::tasks::Timers::tokio(),
             startup: Default::default(),
             received: Default::default(),

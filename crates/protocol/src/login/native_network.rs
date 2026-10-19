@@ -9,7 +9,9 @@ mod negotiated;
 mod packs;
 mod relay;
 pub use relay::{
-    NativeRelayConnecting, NativeRelayConnection, NativeRelayHandoff, NativeRelayRetired,
+    NativeRelayClosing, NativeRelayConnecting, NativeRelayConnection, NativeRelayDriver,
+    NativeRelayHandoff, NativeRelayInbound, NativeRelayRetired, NativeRelaySender,
+    NativeRelayWritten,
 };
 mod spawn;
 mod transport;
