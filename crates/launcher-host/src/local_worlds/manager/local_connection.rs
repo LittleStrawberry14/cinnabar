@@ -53,14 +53,16 @@ impl NativeLocalWorldSelection {
     pub fn connection_target(&self) -> io::Result<protocol::NativeConnectionTarget> {
         self.validate()?;
         let local = self.opening.target();
-        if local.transport != Transport::RakNet
-            || self.opening.world().backend != Backend::Dragonfly
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "native local BDS HTTP transport is not available yet",
-            ));
-        }
+        let transport = match (self.opening.world().backend, local.transport) {
+            (Backend::Dragonfly, Transport::RakNet) => protocol::NativeTransport::RakNet,
+            (Backend::Bds, Transport::NetherNet) => protocol::NativeTransport::LocalNetherNetHttp,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "native local BDS LAN transport is not available yet",
+                ));
+            }
+        };
         let address = local
             .address
             .parse::<SocketAddr>()
@@ -74,7 +76,7 @@ impl NativeLocalWorldSelection {
             })?;
         Ok(protocol::NativeConnectionTarget {
             address: address.to_string(),
-            transport: protocol::NativeTransport::RakNet,
+            transport,
         })
     }
 

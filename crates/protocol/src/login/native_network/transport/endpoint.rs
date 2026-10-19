@@ -52,10 +52,12 @@ async fn connect_resolved(
                         .await
                         .map(Box::new)
                         .map(Transport::NetherNetLan),
-                    NativeTransport::NetherNetMessaging => Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "messaging handoff cannot resolve direct endpoints",
-                    )),
+                    NativeTransport::NetherNetMessaging | NativeTransport::LocalNetherNetHttp => {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "messaging handoff cannot resolve direct endpoints",
+                        ))
+                    }
                 }
             });
         }

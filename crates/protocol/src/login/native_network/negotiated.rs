@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use std::time::Instant;
 use std::{io, sync::Arc, time::SystemTime};
 use zeroize::Zeroizing;
+mod local_http;
 
 /// Moves the same codec, ciphers, unread FIFO and selected archives into startup.
 pub(super) struct NegotiatedConnection {
@@ -38,20 +39,31 @@ pub(super) async fn negotiate(
             "native join does not accept a core target override",
         )));
     }
-    let credentials = Credentials::new(authentication)?;
-    let transport = transport::Transport::connect(target, credentials.messaging, deadline)
-        .await
-        .map_err(|error| {
-            if authentication::is_expired(&error) {
-                ProtocolError::Authentication(error)
-            } else {
-                failure(error)
-            }
-        })?;
+    let mut credentials = Credentials::new(authentication)?;
+    let (transport, address) = if target.transport == crate::NativeTransport::LocalNetherNetHttp {
+        let address = target.local_http_address().map_err(failure)?;
+        let identity = credentials
+            .local_http_identity()
+            .map_err(ProtocolError::Authentication)?;
+        let transport = transport::http::connect(address, identity, deadline).await;
+        (transport, format!("http://{address}:{}", address.port()))
+    } else {
+        (
+            transport::Transport::connect(target, credentials.messaging.take(), deadline).await,
+            target.address.clone(),
+        )
+    };
+    let transport = transport.map_err(|error| {
+        if authentication::is_expired(&error) {
+            ProtocolError::Authentication(error)
+        } else {
+            failure(error)
+        }
+    })?;
     let mut connection = Connection::new(transport);
     let (packs, _) = negotiate_connected(
         &mut connection,
-        &target.address,
+        &address,
         LoginData::Desktop(login),
         Credentials {
             messaging: None,
@@ -72,12 +84,13 @@ pub(super) struct Credentials {
     authentication: Option<(Zeroizing<String>, NativeClaims, Instant)>,
     pub(super) messaging: Option<authentication::MessagingAdmission>,
     identity: Option<SessionIdentity>,
+    sdp: Option<authentication::SdpPolicy>,
 }
 
 impl Credentials {
     /// Qualifies the original handoff before any connection is admitted or protocol output sent.
     pub(super) fn new(authentication: Option<NativeAuthentication>) -> Result<Self, ProtocolError> {
-        let (key, authentication, messaging, identity) = match authentication {
+        let (key, authentication, messaging, identity, sdp) = match authentication {
             Some(authentication) => {
                 authentication::ensure_current(authentication.expires, std::time::Instant::now())
                     .map_err(ProtocolError::Authentication)?;
@@ -89,6 +102,7 @@ impl Credentials {
                     Some((handoff.token, handoff.claims, handoff.expires)),
                     handoff.messaging,
                     Some(handoff.identity),
+                    Some(handoff.sdp),
                 )
             }
             None => (
@@ -100,6 +114,7 @@ impl Credentials {
                 None,
                 None,
                 None,
+                None,
             ),
         };
         Ok(Self {
@@ -107,6 +122,7 @@ impl Credentials {
             authentication,
             messaging,
             identity,
+            sdp,
         })
     }
 }
@@ -143,6 +159,7 @@ pub(super) async fn negotiate_connected(
         authentication,
         messaging,
         identity,
+        sdp: _,
     } = credentials;
     if messaging.is_some() {
         return Err(failure(io::Error::new(

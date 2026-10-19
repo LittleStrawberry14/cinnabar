@@ -103,7 +103,12 @@ The existing worlds worker retains original-opening cleanup through session Drop
 including account/worker replacement; cleanup cannot stop a newer process. The
 selected account remains optional for signed-out local play. Source controls use
 the actual process/pack/world fixture; coordinator execution is still required.
-BDS HTTP and BDS LAN local-player adapters remain incomplete and fail explicitly.
+Local BDS HTTP now uses the same HTTP/full-ICE adapter and original loopback
+family, without DNS, proxy or redirects. SDP and Login retain one original proof;
+selected account validity is unchanged and signed-out play uses self-signed SDP.
+The original ready receiver/Inbox/close owner is reused, with no second I/O loop.
+This source addition requires owning execution and actual BDS qualification. BDS
+LAN local-player support remains incomplete and fails explicitly.
 
 Title presence defaults to the Go account worker. Native sign-in selects an
 account-lifetime publisher on the existing account event runtime. It reuses the

@@ -17,6 +17,8 @@ pub enum NativeTransport {
     NetherNetLan,
     /// Protected Player Messaging with signed SDP and explicit friend or service admission.
     NetherNetMessaging,
+    /// HTTP/full-ICE signaling to an explicitly selected numeric loopback world process.
+    LocalNetherNetHttp,
 }
 
 /// An explicit Player Messaging route, distinct from a discovery listing.
@@ -118,6 +120,26 @@ pub struct NativeConnectionTarget {
     pub address: String,
     /// Transport chosen for this endpoint.
     pub transport: NativeTransport,
+}
+
+impl NativeConnectionTarget {
+    /// Checks only local HTTP endpoint syntax; callers still own process/account admission.
+    ///
+    /// # Errors
+    /// Rejects another transport, DNS/URL input, non-loopback addresses and a zero port.
+    pub fn local_http_address(&self) -> std::io::Result<std::net::SocketAddr> {
+        if self.transport == NativeTransport::LocalNetherNetHttp
+            && let Ok(address) = self.address.parse::<std::net::SocketAddr>()
+            && address.ip().is_loopback()
+            && address.port() != 0
+        {
+            return Ok(address);
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "local HTTP transport requires a numeric loopback endpoint",
+        ))
+    }
 }
 
 /// A core endpoint or a native direct connection, chosen once for the join.

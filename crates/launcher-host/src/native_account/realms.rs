@@ -23,6 +23,11 @@ impl NativeAccount {
         protocol::NativeConnectionTarget,
         protocol::NativeAuthentication,
     )> {
+        if target.transport == protocol::NativeTransport::LocalNetherNetHttp {
+            target.local_http_address()?;
+            let authentication = self.prepare(claims, random_id).await?;
+            return Ok((target, authentication));
+        }
         if target.transport != protocol::NativeTransport::RakNet {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
