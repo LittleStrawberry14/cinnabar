@@ -152,3 +152,69 @@ fn missing_host_or_ambiguous_member_bindings_cannot_supply_approval() {
     assert!(approvals.observe(&description).is_err());
     assert!(!approvals.acknowledged());
 }
+
+#[test]
+fn captured_member_approval_survives_other_members_only_after_exact_document_acknowledgment() {
+    let mut approvals = Approvals::new("123".into(), 3).unwrap();
+    approvals.observe(&snapshot(&[("456", 2, true)])).unwrap();
+    approvals.issue("456", &[1; NONCE_BYTES]).unwrap();
+    let original = acknowledge(&mut approvals);
+    let revision = approvals.revision();
+    let digest: [u8; 32] = Sha256::digest(original["456"].as_str().unwrap().as_bytes()).into();
+    assert!(approvals.rechecks("456", revision, &digest).unwrap());
+
+    approvals
+        .observe(&snapshot(&[("456", 2, true), ("789", 3, true)]))
+        .unwrap();
+    approvals.issue("789", &[2; NONCE_BYTES]).unwrap();
+    let denied_before_join_ack = !approvals
+        .rechecks("456", revision, &digest)
+        .is_ok_and(|accepted| accepted);
+    let joined = acknowledge(&mut approvals);
+    let admitted_after_join_ack = approvals.rechecks("456", revision, &digest).unwrap();
+    assert_eq!(joined["456"], original["456"]);
+
+    approvals.observe(&snapshot(&[("456", 2, true)])).unwrap();
+    let denied_before_departure_ack = !approvals
+        .rechecks("456", revision, &digest)
+        .is_ok_and(|accepted| accepted);
+    acknowledge(&mut approvals);
+    let admitted_after_departure_ack = approvals.rechecks("456", revision, &digest).unwrap();
+
+    approvals.observe(&snapshot(&[("456", 4, true)])).unwrap();
+    approvals.issue("456", &[3; NONCE_BYTES]).unwrap();
+    let replacement = acknowledge(&mut approvals);
+    let replacement_revision = approvals.revision();
+    let replacement_digest: [u8; 32] =
+        Sha256::digest(replacement["456"].as_str().unwrap().as_bytes()).into();
+    assert!(!approvals.rechecks("456", revision, &digest).unwrap());
+    assert!(
+        approvals
+            .rechecks("456", replacement_revision, &replacement_digest)
+            .unwrap()
+    );
+    approvals.observe(&snapshot(&[])).unwrap();
+    acknowledge(&mut approvals);
+    assert!(
+        approvals
+            .rechecks("456", replacement_revision, &replacement_digest)
+            .is_err()
+    );
+    approvals.observe(&snapshot(&[("456", 4, true)])).unwrap();
+    approvals.issue("456", &[4; NONCE_BYTES]).unwrap();
+    acknowledge(&mut approvals);
+    assert!(
+        !approvals
+            .rechecks("456", replacement_revision, &replacement_digest)
+            .unwrap()
+    );
+    assert!(denied_before_join_ack && denied_before_departure_ack);
+    assert!(
+        admitted_after_join_ack,
+        "another joined member revoked the unchanged member's original approval"
+    );
+    assert!(
+        admitted_after_departure_ack,
+        "another departed member revoked the unchanged member's original approval"
+    );
+}
