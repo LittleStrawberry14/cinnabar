@@ -42,6 +42,15 @@ impl Selection {
 }
 
 impl Requests {
+    /// A closed queue for account-state tests that never start the invitation worker.
+    #[cfg(test)]
+    pub(super) fn disconnected() -> Self {
+        Self {
+            requests: crossbeam_channel::unbounded().0,
+            wake: watch::channel(Wake::Stop).0,
+        }
+    }
+
     /// Queues the selected owner rather than resolving a later account at worker dispatch.
     pub(super) fn people(&self, shared: &Mutex<Snapshot>) {
         let selected = Selection::capture(&shared.lock().unwrap_or_else(|p| p.into_inner()));
