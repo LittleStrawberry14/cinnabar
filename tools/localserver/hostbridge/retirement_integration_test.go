@@ -137,6 +137,52 @@ func TestProcessClosedWaitsForPeerCancellation(t *testing.T) {
 	}
 }
 
+// TestProcessClosedAllowsAReplacementBridge preserves the new route after the original socket ends.
+func TestProcessClosedAllowsAReplacementBridge(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	l, parent, control, bootstrap := retirementBridge(t, ctx)
+	oldSocket, old := retirementPeer(t, l, parent, control, bootstrap, 1)
+	defer oldSocket.Close()
+	if err := control.write(hostcontract.KindClose, nil); err != nil {
+		t.Fatal(err)
+	}
+	kind, body, err := control.read()
+	if err != nil || kind != hostcontract.KindClosed || len(body) != 0 {
+		t.Fatal("original bridge did not complete close")
+	}
+	if err := l.Start(ctx, bootstrap); err != nil {
+		t.Fatal("completed close retained the original bridge slot")
+	}
+	replacement := fixtureAccept(t, parent, bootstrap, 0)
+	defer replacement.Close()
+	var snapshot hostcontract.Snapshot
+	fixtureReadJSON(t, replacement, hostcontract.KindSnapshot, &snapshot)
+	if _, _, err := control.read(); err == nil {
+		t.Fatal("original control socket did not end")
+	}
+	newSocket, current := retirementPeer(t, l, parent, replacement, bootstrap, 1)
+	defer newSocket.Close()
+	duplicate := l.Start(ctx, bootstrap)
+	if err := replacement.write(hostcontract.KindClose, nil); err != nil {
+		t.Fatal(err)
+	}
+	kind, body, err = replacement.read()
+	_ = old.Close()
+	_ = current.Close()
+	_ = newSocket.Close()
+	_ = oldSocket.Close()
+	_ = replacement.Close()
+	_ = control.Close()
+	_ = l.Close()
+	if snapshot.MaxPlayers != hostcontract.MAX_PLAYERS || duplicate == nil {
+		t.Fatal("original cleanup did not preserve the sole replacement bridge")
+	}
+	if err != nil || kind != hostcontract.KindClosed || len(body) != 0 {
+		t.Fatal("replacement bridge did not complete its actual close")
+	}
+}
+
 // retirementBridge captures actual Config resources without starting Dragonfly's Accept loop.
 func retirementBridge(t *testing.T, ctx context.Context) (*Listener, net.Listener, *wire, hostcontract.Bootstrap) {
 	t.Helper()
