@@ -3,6 +3,7 @@
 mod acquire;
 pub(super) mod peers;
 mod renewal;
+pub(super) mod setup;
 
 use super::{ClosingHostedPeer, NativeHostedProcess, NativeHostedWorld};
 use bedrock_net::messaging::server::{ClosingMessagingServer, MessagingServer};
@@ -268,7 +269,7 @@ async fn serve(
 ) -> io::Result<()> {
     let deadline = operation_deadline();
     driving(server, world.publish_approvals(deadline)).await?;
-    let peer = driving(
+    let peer = match driving(
         server,
         world.accept_dragonfly_peer(
             process,
@@ -278,7 +279,11 @@ async fn serve(
             deadline,
         ),
     )
-    .await?;
+    .await
+    {
+        Ok(peer) => peer,
+        Err(error) => return setup::recover(world, process, error).await,
+    };
     world.peers.admit(peer)?;
     let occupied = world.peers.occupied();
     driving(server, world.directory_mut()?.visitor(occupied, deadline)).await?;
