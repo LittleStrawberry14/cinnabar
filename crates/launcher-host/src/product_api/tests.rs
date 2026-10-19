@@ -35,6 +35,11 @@ fn operating_limits_and_validation_match_the_pinned_product_contract() {
     assert_eq!(defs["CosmeticSlots"]["maxProperties"], 16);
     assert_eq!(defs["CosmeticSlot"]["maxLength"], 48);
     assert_eq!(defs["CosmeticItemId"]["maxLength"], 128);
+    assert_eq!(welcome["owned_cosmetics"]["maxItems"], cosmetics::MAX_ITEMS);
+    assert_eq!(
+        defs["CosmeticOwnership"]["properties"]["owned_cosmetics"]["maxItems"],
+        cosmetics::MAX_ITEMS
+    );
     assert_eq!(defs["Version"]["maxLength"], 64);
     let channels = defs["Channel"]["enum"].as_array().unwrap();
     assert_eq!(channels.len(), update_manifest::channel::Channel::ALL.len());
@@ -181,7 +186,10 @@ async fn expired_io_is_not_polled_and_native_none_stays_offline() {
     api.configure(config());
     api.run(None).await;
     assert!(api.lookup(&["11".into()]).await.is_err());
-    assert!(api.sync(CinnabarPlayerState::default()).is_none());
+    assert!(matches!(
+        api.sync(CinnabarPlayerState::default()),
+        PlayerSync::Unavailable
+    ));
     assert!(api.take_release().is_none());
 }
 
@@ -193,4 +201,61 @@ fn config() -> CinnabarApiConfig {
         channel: update_manifest::channel::Channel::Beta.name().into(),
         visible: true,
     }
+}
+
+/// Local grants replace whole, with the same null/default and bounded identifier policy as the wire contract.
+#[test]
+fn ownership_snapshots_replace_and_revoke_only_welcome_bound_grants() {
+    let now = Instant::now();
+    let mut revision = 0;
+    let mut players = Players::welcomed(
+        "11".into(),
+        vec!["fixture:capes/paid".into(), "fixture:capes/paid".into()],
+    );
+    let snapshot = players.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
+    assert_eq!(snapshot.ownership_xuid, "11");
+    assert_eq!(snapshot.owned_cosmetics, ["fixture:capes/paid"]);
+    for (ids, expected) in [
+        (json!(["fixture:replacement"]), vec!["fixture:replacement"]),
+        (json!(["fixture:valid", "invalid/item"]), vec![]),
+        (json!(["fixture:again"]), vec!["fixture:again"]),
+        (Value::Null, vec![]),
+        (
+            json!(vec!["fixture:too-many"; cosmetics::MAX_ITEMS + 1]),
+            vec![],
+        ),
+        (json!([]), vec![]),
+    ] {
+        players.receive(
+            Inbound::parse(&json!({"type":"cosmetic_ownership","owned_cosmetics":ids}).to_string())
+                .unwrap(),
+            now,
+        );
+        let snapshot = players.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
+        assert_eq!(snapshot.ownership_xuid, "11");
+        assert_eq!(snapshot.owned_cosmetics, expected);
+    }
+    for message in [
+        json!({"type":"cosmetic_ownership","owned_cosmetics":["fixture:again"]}),
+        json!({"type":"cosmetic_ownership"}),
+    ] {
+        players.receive(Inbound::parse(&message.to_string()).unwrap(), now);
+    }
+    assert!(
+        players
+            .sync(CinnabarPlayerState::default(), now, 0, &mut revision)
+            .owned_cosmetics
+            .is_empty()
+    );
+    for invalid in [json!({}), json!("fixture:paid"), json!([false])] {
+        assert!(
+            Inbound::parse(
+                &json!({"type":"cosmetic_ownership","owned_cosmetics":invalid}).to_string()
+            )
+            .is_none()
+        );
+    }
+    let mut unbound = Players::welcomed("display-name".into(), vec!["fixture:paid".into()]);
+    let snapshot = unbound.sync(CinnabarPlayerState::default(), now, 0, &mut revision);
+    assert!(snapshot.ownership_xuid.is_empty() && snapshot.owned_cosmetics.is_empty());
 }

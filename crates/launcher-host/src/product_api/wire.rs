@@ -21,6 +21,7 @@ pub(super) struct Inbound {
     pub(super) build: u64,
     pub(super) published_at: String,
     pub(super) loadout_revision: u64,
+    pub(super) owned_cosmetics: Option<Vec<String>>,
     pub(super) emote_id: Option<String>,
     pub(super) elapsed_ms: u32,
     pub(super) valid_for_ms: u64,

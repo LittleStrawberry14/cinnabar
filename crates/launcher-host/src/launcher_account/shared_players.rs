@@ -72,7 +72,7 @@ impl LauncherAccount {
     }
 }
 
-/// Polls only loopback control; the core coalesces WebSocket writes and bounds received leases.
+/// Polls the selected account owner; native unavailability withdraws its last published snapshot.
 pub(super) fn start(
     dir: Option<PathBuf>,
     shared: Arc<Mutex<Snapshot>>,
@@ -89,10 +89,11 @@ pub(super) fn start(
                 ) {
                     return;
                 }
-                let (generation, session, local) = {
+                let (generation, source, session, local) = {
                     let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
                     (
                         snapshot.auth_generation,
+                        snapshot.account_source,
                         snapshot.shared_players.session,
                         snapshot.shared_players.local.clone().map(|mut local| {
                             if snapshot.shared_players.updated.is_none_or(|updated| {
@@ -110,13 +111,25 @@ pub(super) fn start(
                 let Some(local) = local else { continue };
                 let result = runtime.block_on(async {
                     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-                    if let Some(api) = shared
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .native_product_api
-                        .clone()
-                    {
-                        return Ok(Ok(api.sync(local)));
+                    if source == AccountSource::Native {
+                        let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+                        if !snapshot.same_account_source(generation, source)
+                            || snapshot.shared_players.session != session
+                        {
+                            return Ok(Ok(None));
+                        }
+                        let remote = match snapshot
+                            .native_product_api
+                            .as_ref()
+                            .map(|api| api.sync(local))
+                        {
+                            Some(crate::product_api::PlayerSync::Current(remote)) => Some(remote),
+                            Some(crate::product_api::PlayerSync::Pending) => None,
+                            Some(crate::product_api::PlayerSync::Unavailable) | None => {
+                                Some(CinnabarPlayerUpdates::default())
+                            }
+                        };
+                        return Ok(Ok(remote));
                     }
                     tokio::time::timeout(Duration::from_secs(2), async {
                         bridge::sync_cinnabar_players(
@@ -130,7 +143,7 @@ pub(super) fn start(
                 });
                 if let Ok(Ok(Some(remote))) = result {
                     publish(&shared, |snapshot| {
-                        if snapshot.auth_generation == generation
+                        if snapshot.same_account_source(generation, source)
                             && snapshot.shared_players.session == session
                         {
                             snapshot.shared_players.remote = remote;
@@ -204,5 +217,39 @@ mod tests {
         drop(alive);
         worker.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+mod native_tests {
+    use super::*;
+
+    /// An unavailable native socket withdraws grants through the original worker without a Core directory.
+    #[test]
+    fn native_shared_player_worker_withdraws_disconnected_ownership() {
+        let mut snapshot = Snapshot::native(None, "");
+        snapshot.shared_players.session = Some(1);
+        snapshot.shared_players.local = Some(CinnabarPlayerState::default());
+        snapshot.shared_players.updated = Some(Instant::now());
+        snapshot.shared_players.remote.ownership_xuid = "11".into();
+        snapshot.shared_players.remote.owned_cosmetics = vec!["fixture:paid".into()];
+        let shared = Arc::new(Mutex::new(snapshot));
+        let (alive, stop) = bounded(0);
+        let runtime = worker_runtime();
+        let worker = start(
+            None,
+            Arc::clone(&shared),
+            stop,
+            runtime.handle().clone(),
+            TaskTracker::new(),
+        );
+        test_time::eventually("native ownership withdrawal", || {
+            shared.lock().unwrap().shared_players.received.is_some()
+        });
+        drop(alive);
+        worker.join().unwrap();
+        let snapshot = shared.lock().unwrap();
+        assert!(snapshot.shared_players.remote.ownership_xuid.is_empty());
+        assert!(snapshot.shared_players.remote.owned_cosmetics.is_empty());
     }
 }

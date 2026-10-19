@@ -48,6 +48,13 @@ struct State {
     scope: Option<ApiScope>,
 }
 
+/// Separates temporary account contention from an actual socket/account withdrawal.
+pub(crate) enum PlayerSync {
+    Current(CinnabarPlayerUpdates),
+    Pending,
+    Unavailable,
+}
+
 struct Live {
     visible: bool,
     next_id: u32,
