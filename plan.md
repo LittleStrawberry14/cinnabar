@@ -73,7 +73,9 @@ Gateway and hosted pack acquisition have a guarded public HTTP/HTTPS source cand
 Hosted preloads retain absent upstream DataInfo and derive downstream hash/type from the
 same verified original archive, with the selected delivery policy's false premium default.
 Original in-band metadata is preserved. CDN-only acquisition, downstream delivery and
-retirement controls still require execution; behavior/skin-only archive support remains open.
+retirement controls still require execution. Opaque behavior/skin archive acquisition has a
+separate identity-validation path; strict rendering admission remains unchanged and their
+application remains unsupported. Their CDN-only downstream wire controls require qualification.
 
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.

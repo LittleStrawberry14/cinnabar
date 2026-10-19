@@ -18,7 +18,7 @@ use crate::{
     AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK, MAX_FILE_BYTES,
     MAX_MANIFEST_BYTES, MAX_PATH_BYTES,
     crypto::{ContentKey, contents_file_keys},
-    manifest::read_manifest,
+    manifest::{Purpose, read_manifest},
     pack::{EntryIndex, ValidatedPack, read_entry},
 };
 use crate::{
@@ -27,13 +27,17 @@ use crate::{
 
 const MAX_CONTENTS_INDEX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Archive-derived delivery kind for packs admitted by the existing resources-module policy.
+/// Archive-derived delivery kind, independent of whether the client can render the archive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArchiveKind {
     /// A resources module without the selected delivery policy's behavior module kinds.
     Resources,
     /// Resources together with a data or client_data module.
     Addon,
+    /// Data or client_data without a resources module; retained only by identity acquisition.
+    Behavior,
+    /// The selected delivery owner's fallback when no resources or behavior module is present.
+    Skins,
     /// An admitted archive member has the exact basename level.dat.
     WorldTemplate,
 }
@@ -43,12 +47,21 @@ pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge);
     }
-    validate_archive_parts(Uuid::nil(), "0.0.0", "", bytes.to_vec(), None, None).map(|_| ())
+    validate_archive_parts(
+        Uuid::nil(),
+        "0.0.0",
+        "",
+        bytes.to_vec(),
+        None,
+        None,
+        Purpose::Rendering,
+    )
+    .map(|_| ())
 }
 
-/// Checks an offered archive against its manifest without modifying the original bytes.
-/// Returns kind from that same bounded manifest/index pass; no wire DataInfo is inferred.
-/// Content keys and subpack selection remain owned by the eventual application handoff.
+/// Checks an offered archive's bounded structure and manifest identity without modifying bytes.
+/// Returns its opaque delivery kind from the same pass; this does not admit a rendering layer
+/// or infer wire DataInfo. Content keys and application remain owned by the eventual handoff.
 pub fn verify_archive_identity(
     bytes: &[u8],
     pack_id: Uuid,
@@ -57,8 +70,16 @@ pub fn verify_archive_identity(
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge);
     }
-    validate_archive_parts(pack_id, version, "", bytes.to_vec(), None, None)
-        .map(|(_, _, kind)| kind)
+    validate_archive_parts(
+        pack_id,
+        version,
+        "",
+        bytes.to_vec(),
+        None,
+        None,
+        Purpose::Identity,
+    )
+    .map(|(_, _, kind)| kind)
 }
 
 /// Admits highest-priority-first server entries, then stores layers lowest priority first.
@@ -143,6 +164,7 @@ fn admit_stack_entry<T>(
         archive.archive,
         key,
         memory,
+        Purpose::Rendering,
     )?;
     let bounds = stack_bounds(&pack, declared)?;
     seen.insert(pack.pack_id);
@@ -156,6 +178,7 @@ pub(crate) fn validate_archive_parts(
     mut archive_bytes: Vec<u8>,
     key: Option<ContentKey>,
     memory: Option<u32>,
+    purpose: Purpose,
 ) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
     if archive_bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge);
@@ -246,13 +269,17 @@ pub(crate) fn validate_archive_parts(
             other => other,
         })?
         .ok_or(AdmissionError::MissingManifest)?;
-    let manifest = read_manifest(&manifest_bytes, pack_id, version)?;
+    let manifest = read_manifest(&manifest_bytes, pack_id, version, purpose)?;
     let kind = if has_world_template {
         ArchiveKind::WorldTemplate
-    } else if manifest.has_behaviors {
+    } else if manifest.has_resources && manifest.has_behaviors {
         ArchiveKind::Addon
-    } else {
+    } else if manifest.has_behaviors {
+        ArchiveKind::Behavior
+    } else if manifest.has_resources {
         ArchiveKind::Resources
+    } else {
+        ArchiveKind::Skins
     };
     let selected = if let Some(memory) = memory {
         crate::subpacks::supported(&manifest.subpacks, sub_pack_name, memory)

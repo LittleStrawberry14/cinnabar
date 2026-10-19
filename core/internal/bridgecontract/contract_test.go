@@ -28,7 +28,9 @@ func TestSharedContractIsCurrent(t *testing.T) {
 // TestResourcePackTypesMatchProtocol rejects drift from the selected protocol dependency.
 func TestResourcePackTypesMatchProtocol(t *testing.T) {
 	if ResourcePackTypeAddon != packet.ResourcePackTypeAddon ||
+		ResourcePackTypeBehaviour != packet.ResourcePackTypeBehaviour ||
 		ResourcePackTypeResources != packet.ResourcePackTypeResources ||
+		ResourcePackTypeSkins != packet.ResourcePackTypeSkins ||
 		ResourcePackTypeWorldTemplate != packet.ResourcePackTypeWorldTemplate {
 		t.Fatal("shared archive delivery types differ from the selected protocol")
 	}

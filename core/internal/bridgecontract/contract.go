@@ -37,8 +37,12 @@ const (
 	MaxSelectedPackBytes = 134217728
 	// ResourcePackTypeAddon: Resource-pack wire type for an admitted addon archive.
 	ResourcePackTypeAddon = 1
+	// ResourcePackTypeBehaviour: Resource-pack wire type for an opaque behavior archive.
+	ResourcePackTypeBehaviour = 4
 	// ResourcePackTypeResources: Resource-pack wire type for an admitted resource archive.
 	ResourcePackTypeResources = 6
+	// ResourcePackTypeSkins: Resource-pack wire type for an opaque skin-fallback archive.
+	ResourcePackTypeSkins = 7
 	// ResourcePackTypeWorldTemplate: Resource-pack wire type for an admitted world-template archive.
 	ResourcePackTypeWorldTemplate = 8
 	// SessionPackChunkBytes: Archive bytes in one resource-pack data frame.

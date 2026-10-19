@@ -57,6 +57,8 @@ impl ArchiveFacts {
         let kind = match self.kind {
             ArchiveKind::Resources => bridge::contract::RESOURCE_PACK_TYPE_RESOURCES,
             ArchiveKind::Addon => bridge::contract::RESOURCE_PACK_TYPE_ADDON,
+            ArchiveKind::Behavior => bridge::contract::RESOURCE_PACK_TYPE_BEHAVIOR,
+            ArchiveKind::Skins => bridge::contract::RESOURCE_PACK_TYPE_SKINS,
             ArchiveKind::WorldTemplate => bridge::contract::RESOURCE_PACK_TYPE_WORLD_TEMPLATE,
         };
         // The selected Go delivery owner reoriginates these kinds and leaves Premium false.

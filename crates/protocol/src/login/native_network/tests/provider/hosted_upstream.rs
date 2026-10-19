@@ -53,6 +53,22 @@ async fn original_upstream(route: Route) {
 
 /// Keeps both original legs and startup while optionally acquiring the upstream archive by CDN.
 async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAddr>) {
+    original_upstream_with_archive(
+        route,
+        cdn,
+        archive_bytes(PACK_ID, &[]),
+        bridge::contract::RESOURCE_PACK_TYPE_RESOURCES,
+    )
+    .await;
+}
+
+/// Carries one original fixture archive through the same upstream and signed guest owners.
+async fn original_upstream_with_archive(
+    route: Route,
+    cdn: Option<std::net::SocketAddr>,
+    archive: Vec<u8>,
+    pack_type: u8,
+) {
     let FixtureRoute {
         mut listener,
         address,
@@ -61,7 +77,6 @@ async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAd
         approval,
     } = fixture_route(route).await;
     assert!(approval.is_none());
-    let archive = archive_bytes(PACK_ID, &[]);
     let mut offer = PackInfoData::default();
     offer.pack_id_version.pack_uuid = PACK_ID;
     offer.pack_id_version.pack_version.version = VERSION.into();
@@ -169,7 +184,7 @@ async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAd
                 file_size: wire::U64LE(archive.len() as u64),
                 file_hash: Bytes::copy_from_slice(&Sha256::digest(&archive)),
                 is_premium_pack: true,
-                pack_type: wire::U8(6),
+                pack_type: wire::U8(pack_type),
             };
             send(&peer, &codec, &[crate::Packet::new(data)]).await;
             let chunk = receive(&mut peer, &codec).await;
@@ -373,7 +388,7 @@ async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAd
             &codec,
             (&upstream, snapshot),
             &provider,
-            (utc, deadline, cdn.is_none()),
+            (utc, deadline, cdn.is_none(), pack_type),
         )
         .await;
         let mut relay = upstream
@@ -595,11 +610,11 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
         bedrock_client::server::session::ServerPackSnapshot,
     ),
     provider: &NativeTokenVerifier,
-    clock: (std::time::SystemTime, Instant, bool),
+    clock: (std::time::SystemTime, Instant, bool, u8),
 ) -> ServerWorldReady<u8> {
     let Pair { wire, client, .. } = pair;
     let (upstream, snapshot) = source;
-    let (utc, deadline, premium) = clock;
+    let (utc, deadline, premium, pack_type) = clock;
     let (mut server, initial) = ready
         .start_packs(
             snapshot,
@@ -667,7 +682,7 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
     } else {
         assert!(!data.is_premium_pack);
     }
-    assert_eq!(data.pack_type.0, 6);
+    assert_eq!(data.pack_type.0, pack_type);
     let expected_hash: [u8; 32] =
         Sha256::digest(upstream.read_pack(0, 0, data.file_size.0 as usize).unwrap()).into();
     assert_eq!(data.file_hash.as_ref(), expected_hash.as_slice());
