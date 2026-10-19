@@ -563,7 +563,7 @@ impl PacketConnection for Connection {
         self.send_body_until(body, None).await
     }
 
-    /// Reframes a bounded prefix while retaining every remaining packet on the same FIFO.
+    /// Reframes a bounded prefix or one larger negotiated incoming packet on the same FIFO.
     async fn recv_body(&mut self) -> io::Result<Bytes> {
         self.fill().await?;
         let mut body = Vec::new();
@@ -578,7 +578,12 @@ impl PacketConnection for Connection {
             }
             let packet = self.pending.front().expect("validated original front");
             let checkpoint = body.len();
-            let remaining = self.limits.max_decoded_bytes.saturating_sub(checkpoint);
+            let limit = if accepted == 0 && matches!(self.codec(), Codec::Negotiated(_)) {
+                self.incoming_decoded_limit
+            } else {
+                self.limits.max_decoded_bytes
+            };
+            let remaining = limit.saturating_sub(checkpoint);
             let result = wire::Writer::with_limit(&mut body, remaining).write_byte_slice(packet);
             if let Err(error) = result {
                 body.truncate(checkpoint);
@@ -589,6 +594,9 @@ impl PacketConnection for Connection {
             }
             drop(self.pending.pop_front());
             accepted += 1;
+            if body.len() > self.limits.max_decoded_bytes {
+                break;
+            }
         }
         Ok(Bytes::from(body))
     }
