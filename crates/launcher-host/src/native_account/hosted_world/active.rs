@@ -269,18 +269,19 @@ async fn serve(
 ) -> io::Result<()> {
     let deadline = operation_deadline();
     driving(server, world.publish_approvals(deadline)).await?;
-    let peer = match driving(
-        server,
-        world.accept_dragonfly_peer(
-            process,
-            accepted,
-            identity.signing_key(),
-            Default::default(),
-            deadline,
-        ),
-    )
-    .await
-    {
+    let peer = driving(server, async {
+        Ok(world
+            .accept_dragonfly_peer(
+                process,
+                accepted,
+                identity.signing_key(),
+                Default::default(),
+                deadline,
+            )
+            .await)
+    })
+    .await?;
+    let peer = match peer {
         Ok(peer) => peer,
         Err(error) => return setup::recover(world, process, error).await,
     };
