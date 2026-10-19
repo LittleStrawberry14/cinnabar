@@ -8,6 +8,8 @@ pub mod capture;
 mod component;
 mod core;
 mod limits;
+pub(crate) mod native_capabilities;
+pub mod native_menu;
 mod wasi;
 
 pub use adapt::packet_mod_component;
@@ -52,7 +54,14 @@ trait Guest: Send {
     ) -> Result<Result<Option<Vec<u8>>, String>>;
     fn tick(&mut self) -> Result<Result<Outbound, String>>;
     fn stop(&mut self) -> Result<()>;
-
+    /// Whether startup negotiated the optional focused menu capability.
+    fn has_native_menu(&self) -> bool {
+        false
+    }
+    /// Exchanges bounded retained menu state through the session's serial worker.
+    fn menu(&mut self, _json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        Ok(Ok(None))
+    }
     /// The largest linear memory the guest has requested.
     fn peak_memory(&self) -> usize;
 }
@@ -122,6 +131,7 @@ impl CompiledPacketMod {
         Ok(PacketMod {
             guest,
             status: Status::Active,
+            menu_input_extensions: mod_api::native_menu::InputExtensions::default(),
             call_deadline: PACKET_MOD_CALL_DEADLINE,
             _ticker: Arc::clone(&self.ticker),
         })
@@ -139,6 +149,7 @@ enum Status {
 pub struct PacketMod {
     guest: Box<dyn Guest>,
     status: Status,
+    menu_input_extensions: mod_api::native_menu::InputExtensions,
     call_deadline: Duration,
     _ticker: Arc<execution::EpochTicker>,
 }

@@ -28,6 +28,8 @@ impl UiPresentationRuntime {
         hud: Option<Arc<RuntimeHudCatalog>>,
         icons: Option<Arc<RuntimeIconCatalog>>,
     ) -> Result<Self, UiPresentationError> {
+        let font =
+            mod_ui::fonts::install(font).map_err(|_| UiPresentationError::InvalidFontTexture)?;
         let (textures, solid_texture_page, hud_textures, icon_refs) =
             match (hud.as_deref(), icons.as_deref()) {
                 (Some(hud), None) => {

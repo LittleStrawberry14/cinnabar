@@ -10,12 +10,16 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
     },
     thread,
     time::Duration,
 };
+
+mod native_menu;
+pub use native_menu::MenuOutput;
+use native_menu::{MenuLink, NativeMenu};
 
 /// How long a starting session waits for the selected packet mod to finish compiling before
 /// it continues without it.
@@ -38,6 +42,8 @@ pub struct PacketModLoader {
 struct Inner {
     state: Mutex<LoaderState>,
     ready: Condvar,
+    native_menu: Mutex<std::sync::Weak<MenuLink>>,
+    next_native_menu: AtomicU64,
 }
 
 #[derive(Default)]
@@ -99,11 +105,14 @@ impl PacketModLoader {
     pub fn session_relay(&self) -> Option<Arc<dyn PacketRelay>> {
         let state = self.state();
         state.selection.as_ref()?;
-        Some(Arc::new(PacketModRelay::spawn(
-            self.clone(),
-            state.generation,
-            Arc::clone(&state.authority),
-        )))
+        let relay =
+            PacketModRelay::spawn(self.clone(), state.generation, Arc::clone(&state.authority));
+        *self
+            .inner
+            .native_menu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(&relay.native_menu);
+        Some(Arc::new(relay))
     }
 
     /// Publishes an already compiled source snapshot; no file is reopened on the frame thread.
@@ -150,6 +159,27 @@ impl PacketModLoader {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// Exchanges focused menu input without waiting for packet-mod code on the frame thread.
+    pub fn native_menu(&self, input: mod_api::native_menu::Input) -> Option<Arc<MenuOutput>> {
+        self.inner
+            .native_menu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .upgrade()?
+            .exchange(input)
+    }
+
+    /// Each capable live relay has a distinct identity even before its UI session publishes.
+    pub fn native_menu_identity(&self) -> Option<u64> {
+        let link = self
+            .inner
+            .native_menu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .upgrade()?;
+        link.available().then_some(link.identity)
+    }
 }
 
 /// One call the session makes, answered by the packet mod's thread.
@@ -170,25 +200,37 @@ enum Request {
         reply: SyncSender<RelayOutput>,
     },
     Stop,
+    NativeMenu,
 }
 
 /// A session's relay. The instance lives on its own thread, so WASI never runs on the session's
 /// async runtime and every call is serialized; a failed instance passes everything through.
 struct PacketModRelay {
     requests: Sender<Request>,
+    native_menu: Arc<MenuLink>,
 }
 
 impl PacketModRelay {
     /// Starts the instance thread; it instantiates the packet mod when the session starts.
     fn spawn(loader: PacketModLoader, generation: u64, authority: Arc<AtomicBool>) -> Self {
         let (requests, receive) = mpsc::channel();
+        let menu = Arc::new(NativeMenu::new(Arc::clone(&authority)));
+        let identity = loader
+            .inner
+            .next_native_menu
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let native_menu = Arc::new(MenuLink::new(requests.clone(), Arc::clone(&menu), identity));
         if let Err(error) = thread::Builder::new()
             .name("packet-mod".into())
-            .spawn(move || serve(&loader, receive, generation, &authority))
+            .spawn(move || serve(&loader, receive, generation, &authority, &menu))
         {
             tracing::warn!(%error, "packet mod thread unavailable; packets pass through");
         }
-        Self { requests }
+        Self {
+            requests,
+            native_menu,
+        }
     }
 
     /// Sends one request and waits for its answer; a stopped thread answers with `fallback`.
@@ -255,6 +297,7 @@ impl PacketRelay for PacketModRelay {
     }
 
     fn stop(&self) {
+        self.native_menu.deactivate();
         let _ = self.requests.send(Request::Stop);
     }
 }
@@ -265,12 +308,15 @@ fn serve(
     requests: Receiver<Request>,
     generation: u64,
     authority: &AtomicBool,
+    menu: &NativeMenu,
 ) {
     let mut instance: Option<PacketMod> = None;
+    let mut menu_output = None;
     for request in requests {
         if !authority.load(Ordering::Acquire)
             && let Some(mut old) = instance.take()
         {
+            menu.deactivate();
             old.stop();
         }
         match request {
@@ -289,6 +335,7 @@ fn serve(
                         .start(&identity, &client_data, &startup)
                         .unwrap_or_default()
                 });
+                menu.activate(instance.as_ref().is_some_and(PacketMod::has_native_menu));
                 let packs = packs
                     .into_iter()
                     .filter(|_| authority.load(Ordering::Acquire))
@@ -314,6 +361,12 @@ fn serve(
                     .ok()
                     .flatten()
                 });
+                if instance
+                    .as_ref()
+                    .is_some_and(|instance| !instance.is_active())
+                {
+                    menu.deactivate();
+                }
                 let _ = reply.send(replaced.filter(|_| authority.load(Ordering::Acquire)));
             }
             Request::Tick { reply } => {
@@ -324,6 +377,12 @@ fn serve(
                         to_client: outbound.to_client,
                         to_server: outbound.to_server,
                     });
+                if instance
+                    .as_ref()
+                    .is_some_and(|instance| !instance.is_active())
+                {
+                    menu.deactivate();
+                }
                 let _ = reply.send(if authority.load(Ordering::Acquire) {
                     output
                 } else {
@@ -331,8 +390,37 @@ fn serve(
                 });
             }
             Request::Stop => break,
+            Request::NativeMenu => {
+                for input in menu.take_inputs() {
+                    if !menu.available() {
+                        break;
+                    }
+                    let Some(instance) = instance.as_mut() else {
+                        break;
+                    };
+
+                    let output = match instance.menu(&input.input) {
+                        Ok(Some(output)) => match native_menu::prepare(output, &mut menu_output) {
+                            Ok(output) => Some(output),
+                            Err(error) => {
+                                tracing::warn!(%error, "packet menu rejected");
+                                menu.deactivate();
+                                menu_output = None;
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
+                    if instance.is_active() {
+                        menu.complete(&input, output);
+                    } else {
+                        menu.deactivate();
+                    }
+                }
+            }
         }
     }
+    menu.deactivate();
     if let Some(instance) = instance.as_mut() {
         instance.stop();
     }

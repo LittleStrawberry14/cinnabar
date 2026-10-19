@@ -796,3 +796,93 @@ fn route_changes_end_an_exit_and_binding_updates_continue_it() {
     assert!(!ui.mod_panel_painting());
     assert!(!ui.mod_panel_motion_active());
 }
+
+/// Host-authored fallback controls retain only their admitted schema between packet updates.
+#[test]
+fn packet_prepared_fallback_accepts_values_and_rejects_new_controls() {
+    let initial = panel();
+    let prepared = prepared::PreparedPanelUi::prepare(Arc::new(ui::mod_panel::PanelBundle {
+        panel: initial.clone(),
+        surfaces: Default::default(),
+        control_schemas: Default::default(),
+    }))
+    .unwrap();
+    let owner = prepared::PanelUiOwner::PacketSession(1);
+    let mut ui = ModUi::default();
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &initial)
+        .unwrap();
+    let mut changed = initial.clone();
+    if let Control::Toggle { value, .. } = &mut changed.controls[0] {
+        *value = !*value;
+    }
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &changed)
+        .unwrap();
+    changed.controls.push(Control::Button {
+        id: "new".into(),
+        label: "New".into(),
+    });
+    assert!(
+        ui.set_prepared_mod_panel(owner, prepared, &changed)
+            .is_err()
+    );
+    assert_eq!(
+        ui.mod_panel.as_ref().unwrap().panel.controls.len(),
+        initial.controls.len()
+    );
+}
+
+/// Packet updates retain live values but cannot substitute an unadmitted document or schema.
+#[test]
+fn packet_prepared_updates_accept_route_schemas_and_reject_changed_documents() {
+    let ([initial, _], _) = prepared_panels("Packet routes");
+    let mut options = initial.clone();
+    options.controls = vec![Control::Button {
+        id: "back".into(),
+        label: "Back".into(),
+    }];
+    let bundle = Arc::new(ui::mod_panel::PanelBundle {
+        panel: initial,
+        surfaces: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.surface.clone().unwrap(),
+        )]),
+        control_schemas: std::collections::BTreeMap::from([(
+            "options".into(),
+            options.controls.clone(),
+        )]),
+    });
+    let prepared = prepared::PreparedPanelUi::prepare(bundle).unwrap();
+    let owner = prepared::PanelUiOwner::PacketSession(1);
+    let mut ui = ModUi::default();
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &options)
+        .unwrap();
+    ui.set_mod_panel_open(true);
+    let mut changed = options.clone();
+    changed
+        .surface
+        .as_mut()
+        .unwrap()
+        .bindings
+        .insert("#value".into(), ui::mod_panel::SurfaceValue::Number(2.));
+    ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &changed)
+        .unwrap();
+    assert!(ui.mod_panel_open());
+    let accepted = ui.mod_panel.as_ref().unwrap().panel.clone();
+    let mut document = changed.clone();
+    document.surface.as_mut().unwrap().document = serde_json::json!({
+        "namespace":"extension", "screen":{"type":"screen","size":[80,60],"controls":[]}
+    })
+    .to_string();
+    assert!(
+        ui.set_prepared_mod_panel(owner, Arc::clone(&prepared), &document)
+            .is_err()
+    );
+    let mut schema = changed;
+    schema.controls[0] = Control::Button {
+        id: "unregistered".into(),
+        label: "Back".into(),
+    };
+    assert!(ui.set_prepared_mod_panel(owner, prepared, &schema).is_err());
+    assert!(ui.mod_panel_open());
+    assert_eq!(ui.mod_panel.as_ref().unwrap().panel, accepted);
+}

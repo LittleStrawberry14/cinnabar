@@ -25,6 +25,7 @@ pub(crate) struct PacketMods {
     environment: Option<PacketModSelection>,
     environment_selected: bool,
     retired: Vec<Arc<CompiledPacketMod>>,
+    pub(super) menu: super::packet_menu::State,
 }
 
 /// Starts compilation for an explicitly selected developer packet mod before the first join.
@@ -42,6 +43,22 @@ pub(crate) fn from_environment() -> PacketMods {
 }
 
 impl PacketMods {
+    /// Whether this packet session owns input or its closing animation.
+    pub(super) fn menu_owns_panel(&self) -> bool {
+        self.menu.owned
+    }
+    /// Shares native menu input and output with the serialized packet worker.
+    pub(super) fn native_menu(
+        &self,
+        input: mod_api::native_menu::Input,
+    ) -> Option<Arc<client_extensions::modding::packet_relay::MenuOutput>> {
+        self.loader.native_menu(input)
+    }
+    /// Menus become available only after an explicitly granted guest starts.
+    pub(super) fn native_menu_identity(&self) -> Option<u64> {
+        self.loader.native_menu_identity()
+    }
+
     /// Records a developer-selected source as the fallback when Settings selects no packet mod.
     pub(super) fn select_environment(&mut self, selection: PacketModSelection) {
         self.environment = Some(selection.clone());
