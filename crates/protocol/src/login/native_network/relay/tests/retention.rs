@@ -122,7 +122,13 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
                 address: address.to_string(),
                 transport: NativeTransport::NetherNetLan,
             };
-            let transport = transport::Transport::connect(&target, None).await.unwrap();
+            let transport = transport::Transport::connect(
+                &target,
+                None,
+                tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
+            )
+            .await
+            .unwrap();
             let observations = Arc::new(Mutex::new(Vec::new()));
             let mut connection = Connection::new(transport);
             connection.observe_batches(Arc::clone(&observations));

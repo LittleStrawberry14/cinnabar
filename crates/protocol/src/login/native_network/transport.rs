@@ -1,6 +1,7 @@
 //! Exclusive native transport ownership for one direct connection.
 
 mod accepted;
+mod endpoint;
 mod inbox;
 mod lan;
 mod messaging;
@@ -12,13 +13,15 @@ use messaging::MessagingTransport;
 use raknet::RakNetTransport;
 
 use super::{NativeConnectionTarget, NativeTransport};
-use bedrock_net::{
-    BatchHeader,
-    raknet::{RakNetConnection, RakNetOptions},
-};
+use bedrock_net::{BatchHeader, raknet::RakNetConnection};
 use bytes::Bytes;
-use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
-use std::{future::Future, io, net::SocketAddr, time::Instant};
+#[cfg(feature = "test-support")]
+use nethernet_tokio::NetherClient;
+#[cfg(test)]
+use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling};
+#[cfg(test)]
+use std::net::SocketAddr;
+use std::{future::Future, io, time::Instant};
 
 pub(super) const LAN_CONNECTION_TYPE: u8 = 4;
 
@@ -86,6 +89,7 @@ impl Transport {
     pub(super) async fn connect(
         target: &NativeConnectionTarget,
         messaging: Option<super::authentication::MessagingAdmission>,
+        deadline: tokio::time::Instant,
     ) -> io::Result<Self> {
         if target.transport == NativeTransport::NetherNetMessaging {
             return MessagingTransport::connect(target, messaging)
@@ -99,97 +103,7 @@ impl Transport {
                 "messaging handoff requires its exact target",
             ));
         }
-        let address = tokio::net::lookup_host(&target.address)
-            .await?
-            .next()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    "native endpoint did not resolve",
-                )
-            })?;
-        if address.port() == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "native endpoint port is zero",
-            ));
-        }
-        match target.transport {
-            NativeTransport::RakNet => Ok(Self::RakNet(RakNetTransport::new(
-                RakNetConnection::connect(address, RakNetOptions::default())
-                    .await
-                    .map_err(io::Error::other)?,
-            ))),
-            NativeTransport::NetherNetLan => {
-                if !address.is_ipv4() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "native NetherNet LAN requires IPv4",
-                    ));
-                }
-                let _ = rustls::crypto::ring::default_provider().install_default();
-                let route = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-                route.connect(address).await?;
-                let local = SocketAddr::new(route.local_addr()?.ip(), 0);
-                drop(route);
-                let signaling = LanSignaling::with_config(
-                    rand::random(),
-                    local,
-                    LanConfig {
-                        broadcast_address: Some(address),
-                        ..LanConfig::default()
-                    },
-                )
-                .await
-                .map_err(io::Error::other)?;
-                let mut polls = tokio::time::interval(std::time::Duration::from_millis(50));
-                let (id, data) = loop {
-                    polls.tick().await;
-                    let mut found = None;
-                    for (id, data) in signaling.discover().await {
-                        if signaling.get_address(id).await == Some(address) {
-                            found = Some((id, data));
-                            break;
-                        }
-                    }
-                    if let Some(found) = found {
-                        break found;
-                    }
-                };
-                if !data.flag_b || data.session_id.is_empty() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "LAN peer does not advertise self-signed admission with a nonce",
-                    ));
-                }
-                if data.connection_type != LAN_CONNECTION_TYPE
-                    || data.protocol_version != crate::PROTOCOL_VERSION as u32
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "LAN peer advertises an incompatible transport or protocol",
-                    ));
-                }
-                let connection = NetherClient::connect_with(
-                    signaling,
-                    id.to_string(),
-                    ConnectionConfig {
-                        allow_unsigned_answers: true,
-                        attempts: 1,
-                        ..ConnectionConfig::default()
-                    },
-                )
-                .await
-                .map_err(io::Error::other)?;
-                Ok(Self::NetherNetLan(Box::new(LanTransport::new(
-                    connection,
-                    data.session_id,
-                ))))
-            }
-            NativeTransport::NetherNetMessaging => {
-                unreachable!("handled before endpoint resolution")
-            }
-        }
+        endpoint::connect(target, deadline).await
     }
 
     /// Borrows the LAN discovery admission challenge, absent on RakNet.

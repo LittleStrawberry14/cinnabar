@@ -106,7 +106,13 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
                 address: address.to_string(),
                 transport: NativeTransport::NetherNetLan,
             };
-            let transport = transport::Transport::connect(&target, None).await.unwrap();
+            let transport = transport::Transport::connect(
+                &target,
+                None,
+                tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
+            )
+            .await
+            .unwrap();
             let observations = Arc::new(Mutex::new(Vec::new()));
             let mut connection = Connection::new(transport);
             connection.observe_batches(Arc::clone(&observations));
