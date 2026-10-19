@@ -3,6 +3,8 @@
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) mod paired;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod paired_bds;
 
 use std::{
     io::{BufRead, BufReader, Cursor, Read, Write},

@@ -1,7 +1,11 @@
 //! Actual accepting Login/pack/world continuations paired with the running Go world.
 
+mod backend;
+mod bds;
 pub(super) mod play;
 mod send;
+pub(super) use backend::HostedBackend;
+mod packs;
 pub use play::{ClosingHostedPeer, NativeHostedPeer};
 use send::SendAuthority;
 mod process;
@@ -11,7 +15,7 @@ use super::{HostedApproval, HostedLoginApproval, NativeHostedLoginPolicy, Native
 use bedrock_client::server::{
     ServerAcknowledgmentEvent, ServerApprovalEvent, ServerHandshake, ServerHandshakeOptions,
     ServerLoginEvent, ServerPacksReady, ServerSettingsEvent,
-    session::{AcceptedSession, ServerPackDelivery, ServerPackEvent, ServerSpawnEvent},
+    session::{AcceptedSession, ServerSpawnEvent},
 };
 use bridge::host_world::{
     ActiveBackendPeer, BackendWorldReady, HostProcess, PendingBackendPeer, contract::Identity,
@@ -305,112 +309,16 @@ impl NativeHostedWorld {
         policy: NativeHostedLoginPolicy,
         deadline: Instant,
     ) -> io::Result<(ActiveBackendPeer, AcceptedSession<HostedLoginApproval>)> {
-        self.wait_login(ready.login(), &policy, ready.grant())
-            .await?;
         let snapshot = native_host_packs(process.snapshot())?;
-        let delivery = ServerPackDelivery {
-            chunk_size: bridge::host_world::contract::MAX_PACK_READ_BYTES,
-            ..Default::default()
-        };
-        let (mut session, packets) = ready
-            .start_packs(
+        let ready = self
+            .deliver_packs(
+                wire,
+                ready,
                 snapshot,
-                delivery,
+                packs::PackSource::Dragonfly(&mut backend),
                 &policy,
-                Instant::now(),
-                policy.utc().map_err(|_| rejected())?,
+                deadline,
             )
-            .map_err(|_| rejected())?;
-        self.send_setup(
-            wire.prepare_packets(packets, deadline)?,
-            SendAuthority::Login(session.login(), &policy, session.grant()),
-        )
-        .await?;
-        let ready = loop {
-            self.wait_login(session.login(), &policy, session.grant())
-                .await?;
-            let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.wait_login(session.login(), &policy, session.grant())
-                .await?;
-            match session
-                .receive(packet, Instant::now())
-                .map_err(|_| rejected())?
-            {
-                ServerPackEvent::Send {
-                    session: retained,
-                    packets,
-                } => {
-                    self.wait_login(retained.login(), &policy, retained.grant())
-                        .await?;
-                    self.send_setup(
-                        wire.prepare_packets(packets, deadline)?,
-                        SendAuthority::Login(retained.login(), &policy, retained.grant()),
-                    )
-                    .await?;
-                    session = retained;
-                }
-                ServerPackEvent::ReadChunk(read) => {
-                    self.wait_login(read.login(), &policy, read.grant()).await?;
-                    let archive = u32::try_from(read.archive_index()).map_err(|_| rejected())?;
-                    let length = u32::try_from(read.byte_len()).map_err(|_| rejected())?;
-                    let bytes = self
-                        .peer_io(
-                            Some(deadline),
-                            backend.read_pack(archive, read.offset(), length, deadline),
-                        )
-                        .await?;
-                    self.wait_login(read.login(), &policy, read.grant()).await?;
-                    let pending = read
-                        .supply(bytes.to_vec(), Instant::now())
-                        .map_err(|_| rejected())?;
-                    self.wait_login(pending.login(), &policy, pending.grant())
-                        .await?;
-                    self.send_setup(
-                        wire.prepare_packets(vec![pending.packet().clone().into()], deadline)?,
-                        SendAuthority::Login(pending.login(), &policy, pending.grant()),
-                    )
-                    .await?;
-                    self.wait_login(pending.login(), &policy, pending.grant())
-                        .await?;
-                    let (retained, packets) =
-                        pending.flushed(Instant::now()).map_err(|_| rejected())?;
-                    self.send_setup(
-                        wire.prepare_packets(packets, deadline)?,
-                        SendAuthority::Login(retained.login(), &policy, retained.grant()),
-                    )
-                    .await?;
-                    session = retained;
-                }
-                ServerPackEvent::Chunk(pending) => {
-                    self.wait_login(pending.login(), &policy, pending.grant())
-                        .await?;
-                    self.send_setup(
-                        wire.prepare_packets(vec![pending.packet().clone().into()], deadline)?,
-                        SendAuthority::Login(pending.login(), &policy, pending.grant()),
-                    )
-                    .await?;
-                    self.wait_login(pending.login(), &policy, pending.grant())
-                        .await?;
-                    let (retained, packets) =
-                        pending.flushed(Instant::now()).map_err(|_| rejected())?;
-                    self.send_setup(
-                        wire.prepare_packets(packets, deadline)?,
-                        SendAuthority::Login(retained.login(), &policy, retained.grant()),
-                    )
-                    .await?;
-                    session = retained;
-                }
-                ServerPackEvent::WorldReady(ready) => break ready,
-                ServerPackEvent::Unhandled {
-                    session: retained,
-                    packet,
-                } => {
-                    wire.handle_unhandled(&packet)?;
-                    session = retained;
-                }
-            }
-        };
-        self.wait_login(ready.login(), &policy, ready.grant())
             .await?;
         let backend = self
             .attach_backend(&ready.grant().approval, backend, deadline)

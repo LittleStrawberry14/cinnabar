@@ -169,6 +169,17 @@ impl NativeHostedUpstream {
         self.connection.next_raw().await
     }
 
+    /// Releases only the last actual raw cursor after its destination's complete send.
+    /// True means that original packet was a usable terminal, not a remote processing receipt.
+    pub fn release_received(&mut self) -> io::Result<bool> {
+        if !self.initialized {
+            return Err(invalid());
+        }
+        let terminal = self.connection.current_terminal()?.is_some();
+        self.connection.finish_current();
+        Ok(terminal)
+    }
+
     /// Prepares one original guest packet on the same upstream without committing its cipher/permit.
     pub fn prepare_raw(
         &mut self,
@@ -234,6 +245,11 @@ pub struct NativeHostedUpstreamClosing {
 }
 
 impl NativeHostedUpstreamClosing {
+    /// Releases the same already accepted cursor after a completed downstream effect.
+    pub fn release_received(&mut self) -> io::Result<bool> {
+        self.upstream.release_received()
+    }
+
     /// Settles only original admitted receipts, then closes the same transport even on failure.
     /// Cancellation retains the first cutoff, receipt, input FIFO and archive source lease.
     pub async fn finish_close(&mut self) -> io::Result<()> {

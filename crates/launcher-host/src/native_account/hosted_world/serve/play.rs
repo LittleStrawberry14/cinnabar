@@ -2,7 +2,9 @@
 
 pub(in crate::native_account::hosted_world) mod output;
 use output::Output;
+mod backend;
 mod step;
+use backend::{BackendProgress, ClosingPeerBackend, PeerBackend};
 use step::Phase;
 pub(in crate::native_account::hosted_world) use step::Step;
 
@@ -21,7 +23,7 @@ use std::{
 #[must_use]
 pub struct NativeHostedPeer {
     wire: NativeAcceptingIo,
-    backend: ActiveBackendPeer,
+    backend: PeerBackend,
     accepted: AcceptedSession<HostedLoginApproval>,
     output: Output,
     phase: Phase,
@@ -34,7 +36,7 @@ pub struct NativeHostedPeer {
 pub struct ClosingHostedPeer {
     wire: Option<NativeAcceptingIo>,
     retired: Option<NativeAcceptingRetired>,
-    backend: Option<ClosingBackendPeer>,
+    backend: Option<ClosingPeerBackend>,
     accepted: AcceptedSession<HostedLoginApproval>,
     output: Output,
     deadline: Instant,
@@ -63,7 +65,28 @@ impl NativeHostedPeer {
     ) -> Self {
         Self {
             wire,
-            backend,
+            backend: PeerBackend::Dragonfly(backend),
+            accepted,
+            output: Output::Idle,
+            phase: Phase::Receive,
+            backend_deadline: None,
+            turn_control,
+        }
+    }
+
+    /// Takes the actual BDS initialized handoff without creating another transport or coordinator.
+    pub(super) fn new_bds(
+        wire: NativeAcceptingIo,
+        backend: protocol::NativeHostedUpstream,
+        accepted: AcceptedSession<HostedLoginApproval>,
+        turn_control: Arc<nethernet_tokio::SessionSender>,
+    ) -> Self {
+        Self {
+            wire,
+            backend: PeerBackend::Bds {
+                upstream: backend,
+                ended: false,
+            },
             accepted,
             output: Output::Idle,
             phase: Phase::Receive,
@@ -157,6 +180,9 @@ impl ClosingHostedPeer {
         }
         if self.failure.is_some() && !self.settled {
             self.settle_output().await;
+            if let Some(backend) = &mut self.backend {
+                let _ = backend.settle_failure().await;
+            }
             self.backend = None;
             self.settled = true;
         }
@@ -207,8 +233,10 @@ impl ClosingHostedPeer {
                     let output = &mut self.output;
                     let deadline = self.deadline;
                     host.peer_io(Some(deadline), async {
-                        let packet = backend.recv().await?.ok_or_else(ended)?;
-                        output.stage(wire, packet, deadline)
+                        if let Some(packet) = backend.recv().await? {
+                            output.stage(wire, packet, deadline)?;
+                        }
+                        Ok(())
                     })
                     .await?;
                 }

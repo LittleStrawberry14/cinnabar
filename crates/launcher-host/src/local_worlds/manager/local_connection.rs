@@ -1,7 +1,7 @@
 //! Original local-player endpoints from the actual manager opening, independent of Core routing.
 
 use super::*;
-use std::{io, net::SocketAddr};
+use std::io;
 
 /// A weak capability for one actual local server opening; it never starts or owns another world.
 #[derive(Clone)]
@@ -51,64 +51,7 @@ impl NativeLocalWorldSelection {
 
     /// Returns only the original still-running numeric endpoint; no DNS/display-text lookup occurs.
     pub fn connection_target(&self) -> io::Result<protocol::NativeConnectionTarget> {
-        self.validate()?;
-        let local = self.opening.target();
-        if (self.opening.world().backend, local.transport)
-            == (Backend::Bds, Transport::NetherNetLan)
-        {
-            let address = local
-                .lan_address
-                .as_deref()
-                .and_then(|value| value.parse::<SocketAddr>().ok())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "local world returned an invalid LAN endpoint",
-                    )
-                })?;
-            let level = local
-                .level_name
-                .as_deref()
-                .filter(|level| *level == self.world_id())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "local world returned another LAN level",
-                    )
-                })?;
-            return protocol::NativeConnectionTarget::local_lan(
-                address,
-                level.to_owned(),
-                std::time::Duration::from_millis(u64::from(
-                    bridge::contract::LOCAL_LAN_DISCOVERY_TIMEOUT_MS,
-                )),
-            );
-        }
-        let transport = match (self.opening.world().backend, local.transport) {
-            (Backend::Dragonfly, Transport::RakNet) => protocol::NativeTransport::RakNet,
-            (Backend::Bds, Transport::NetherNet) => protocol::NativeTransport::LocalNetherNetHttp,
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "local world advertises an unsupported native transport",
-                ));
-            }
-        };
-        let address = local
-            .address
-            .parse::<SocketAddr>()
-            .ok()
-            .filter(|address| address.ip().is_loopback() && address.port() != 0)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "local world returned an invalid loopback endpoint",
-                )
-            })?;
-        Ok(protocol::NativeConnectionTarget::new(
-            address.to_string(),
-            transport,
-        ))
+        self.opening.native_connection_target()
     }
 
     /// Borrows the stable original world ID, solely for local presentation/session identity.

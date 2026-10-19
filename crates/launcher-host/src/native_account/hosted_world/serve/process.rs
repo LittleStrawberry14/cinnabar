@@ -69,7 +69,11 @@ impl NativeHostedWorld {
     }
 
     /// Retains the original process/opening while unrelated account work temporarily owns its proof.
-    async fn wait_process(&mut self, opening: &HostOpening, deadline: Instant) -> io::Result<()> {
+    pub(super) async fn wait_process(
+        &mut self,
+        opening: &HostOpening,
+        deadline: Instant,
+    ) -> io::Result<()> {
         loop {
             self.peer_io(Some(deadline), std::future::ready(Ok(())))
                 .await?;

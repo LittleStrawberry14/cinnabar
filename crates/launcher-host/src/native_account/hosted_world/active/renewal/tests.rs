@@ -136,7 +136,7 @@ async fn initialized_world_peer_survives_same_key_mint_and_fresh_turn_on_origina
         let server = async {
             let initialized = driving(
                 &mut active.server,
-                active.world.accept_dragonfly_peer(
+                active.world.accept_backend_peer(
                     &mut active.process,
                     accepted,
                     key,

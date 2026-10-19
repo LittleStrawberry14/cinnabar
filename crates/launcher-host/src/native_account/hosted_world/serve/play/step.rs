@@ -7,6 +7,7 @@ pub(super) enum Phase {
     Receive,
     BackendFlush,
     BackendReceive,
+    BackendCapacity,
     Forward,
     Capacity,
     Acknowledge,
@@ -15,6 +16,7 @@ pub(super) enum Phase {
 pub(in crate::native_account::hosted_world) enum Step {
     External(Bytes),
     Capacity,
+    BackendCapacity,
     Progress,
     Ended,
 }
@@ -40,14 +42,18 @@ impl NativeHostedPeer {
                 self.stage_output(packet)
             }
             Phase::BackendFlush => match self.backend.flush_send().await {
-                Ok(()) => {
+                Ok(BackendProgress::Complete) => {
                     self.backend_deadline = None;
                     self.phase = Phase::Receive;
                     Ok(Step::Progress)
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                Ok(BackendProgress::Read) => {
                     self.phase = Phase::BackendReceive;
                     Ok(Step::Progress)
+                }
+                Ok(BackendProgress::Capacity) => {
+                    self.phase = Phase::BackendCapacity;
+                    Ok(Step::BackendCapacity)
                 }
                 Err(error) => Err(error),
             },
@@ -67,6 +73,7 @@ impl NativeHostedPeer {
                 }
             }
             Phase::Capacity => Ok(Step::Capacity),
+            Phase::BackendCapacity => Ok(Step::BackendCapacity),
             Phase::Acknowledge => {
                 let deadline = self.output.deadline().expect("delivered output retained");
                 self.backend.received(deadline).await?;
@@ -108,6 +115,10 @@ impl NativeHostedPeer {
             Step::Capacity => {
                 self.wire.resume_send()?.reserved_capacity()?.commit()?;
                 self.phase = Phase::Forward;
+            }
+            Step::BackendCapacity => {
+                self.backend.commit_capacity()?;
+                self.phase = Phase::BackendFlush;
             }
             Step::Progress => {}
             Step::Ended => return Ok(true),
