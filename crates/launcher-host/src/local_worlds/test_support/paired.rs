@@ -9,10 +9,10 @@ const PACK_ID: Uuid = Uuid::from_u128(0x61_0000_0000_4000_8000_0000_0000_0001);
 const MODULE_ID: Uuid = Uuid::from_u128(0x61_0000_0000_4000_8000_0000_0000_0002);
 const SERVER_ENV: &str = "CINNABAR_NATIVE_HOST_WORLD_SERVER";
 
-pub(super) struct World {
-    pub(super) manager: Manager,
-    pub(super) archive: Vec<u8>,
-    pub(super) pack: Uuid,
+pub(crate) struct World {
+    pub(crate) manager: Manager,
+    pub(crate) archive: Vec<u8>,
+    pub(crate) pack: Uuid,
     _directory: tempfile::TempDir,
 }
 
@@ -22,7 +22,7 @@ impl World {
         clippy::print_stderr,
         reason = "the test harness must name the missing optional localserver fixture"
     )]
-    pub(super) fn open() -> Option<Self> {
+    pub(crate) fn open() -> Option<Self> {
         let Some(binary) = std::env::var_os(SERVER_ENV) else {
             eprintln!("missing fixture: {SERVER_ENV} (build tools/localserver)");
             return None;

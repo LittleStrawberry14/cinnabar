@@ -2,9 +2,9 @@
 
 mod authority;
 mod provider;
-mod world;
 
 use super::*;
+use crate::local_worlds::test_support::paired as world;
 use authority::Authority;
 use protocol::{ClientRandomId, LoginSettings, SessionLogin, WorldEvent};
 use provider::{Provider, VISITOR_NAME};

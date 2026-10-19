@@ -1,6 +1,9 @@
 //! Fixtures shared by the local-world tests: worlds, archives, a fake download service, fake
 //! servers and an in-memory runner.
 
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) mod paired;
+
 use std::{
     io::{BufRead, BufReader, Cursor, Read, Write},
     net::{TcpListener, TcpStream},
