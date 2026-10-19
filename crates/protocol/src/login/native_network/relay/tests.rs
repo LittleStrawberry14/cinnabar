@@ -129,10 +129,8 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
             peer.session.closed().await;
         };
         let client = async {
-            let target = NativeConnectionTarget {
-                address: address.to_string(),
-                transport: NativeTransport::NetherNetLan,
-            };
+            let target =
+                NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
             let connected = transport::Transport::connect(
                 &target,
                 None,

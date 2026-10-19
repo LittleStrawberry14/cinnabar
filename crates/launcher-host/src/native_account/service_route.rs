@@ -79,16 +79,15 @@ impl ResolvedServiceRoute {
 
     /// Consumes the already-validated transport projection after its original response is retained.
     pub(super) fn into_target(self) -> protocol::NativeConnectionTarget {
-        protocol::NativeConnectionTarget {
-            address: self
-                .messaging_peer
+        protocol::NativeConnectionTarget::new(
+            self.messaging_peer
                 .map_or(self.address, |peer| peer.to_string()),
-            transport: if self.messaging_peer.is_some() {
+            if self.messaging_peer.is_some() {
                 protocol::NativeTransport::NetherNetMessaging
             } else {
                 protocol::NativeTransport::RakNet
             },
-        }
+        )
     }
 }
 

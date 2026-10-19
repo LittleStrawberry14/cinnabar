@@ -117,10 +117,10 @@ async fn realm_preparation_cancellation_preserves_the_existing_account_owner() {
         None,
     ));
     let held = account.begin().unwrap();
-    let target = protocol::NativeConnectionTarget {
-        address: format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
-        transport: protocol::NativeTransport::RakNet,
-    };
+    let target = protocol::NativeConnectionTarget::new(
+        format!("{}7", bridge::contract::REALM_TARGET_PREFIX),
+        protocol::NativeTransport::RakNet,
+    );
     let random_id = protocol::ClientRandomId::new(1).unwrap();
     let mut cancelled = Box::pin(Arc::clone(&account).prepare_connection(
         target.clone(),

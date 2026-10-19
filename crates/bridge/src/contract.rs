@@ -302,6 +302,9 @@ pub const METHOD_PRESENCE: &str = "presence.v1";
 /// Control method for local world.
 pub const METHOD_LOCAL_WORLD: &str = "local_world.v1";
 
+/// Original discovery budget for a selected local BDS LAN level.
+pub const LOCAL_LAN_DISCOVERY_TIMEOUT_MS: u32 = 8000;
+
 /// Control method for world invite.
 pub const METHOD_WORLD_INVITE: &str = "world_invite.v1";
 

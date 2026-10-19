@@ -178,10 +178,7 @@ async fn native_provider_expired_handoff_cannot_start_a_connection() {
     let settings = crate::LoginSettings::default();
     let observed = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
     let result = LoginSequence::connect_native_authenticated(
-        &NativeConnectionTarget {
-            address: "unresolved.invalid:0".into(),
-            transport: NativeTransport::RakNet,
-        },
+        &NativeConnectionTarget::new("unresolved.invalid:0".into(), NativeTransport::RakNet),
         SessionLogin {
             display_name: "Synthetic",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),

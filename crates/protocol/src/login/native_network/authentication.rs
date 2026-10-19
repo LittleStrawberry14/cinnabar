@@ -1,6 +1,8 @@
 //! Qualified provider credentials and their original finite validity.
 
+mod answer;
 mod hosting;
+pub(super) use answer::offline_answer_trust;
 pub use hosting::NativeHostingIdentity;
 mod messaging;
 mod provider;

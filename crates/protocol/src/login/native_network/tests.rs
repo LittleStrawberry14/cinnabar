@@ -7,10 +7,7 @@ async fn authenticated_join_refuses_a_transport_without_signed_identity_support(
     let settings = super::super::LoginSettings::default();
     let authentication = provider::authentication();
     let result = LoginSequence::connect_native_authenticated(
-        &NativeConnectionTarget {
-            address: "unresolved.invalid:0".into(),
-            transport: NativeTransport::NetherNetLan,
-        },
+        &NativeConnectionTarget::new("unresolved.invalid:0".into(), NativeTransport::NetherNetLan),
         SessionLogin {
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),

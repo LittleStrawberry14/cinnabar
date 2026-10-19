@@ -174,10 +174,7 @@ async fn tapped_native_join() {
     let client = async {
         let settings = super::super::super::LoginSettings::default();
         let (mut play, ()) = LoginSequence::connect_native(
-            &NativeConnectionTarget {
-                address: address.to_string(),
-                transport: NativeTransport::NetherNetLan,
-            },
+            &NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan),
             SessionLogin {
                 display_name: "Fixture",
                 client_random_id: crate::ClientRandomId::new(1).unwrap(),

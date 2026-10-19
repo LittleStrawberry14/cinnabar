@@ -12,19 +12,19 @@ pub(crate) fn native_target(
         return None;
     }
     if launcher_host::native_account::is_realm_target(address) {
-        return Some(NativeConnectionTarget {
-            address: address.trim().to_owned(),
-            transport: NativeTransport::RakNet,
-        });
+        return Some(NativeConnectionTarget::new(
+            address.trim().to_owned(),
+            NativeTransport::RakNet,
+        ));
     }
     match launcher_host::launcher_core::target_for(address) {
         bridge::ConnectTarget::RakNet(address) => {
-            Some(NativeConnectionTarget { address, transport })
+            Some(NativeConnectionTarget::new(address, transport))
         }
-        bridge::ConnectTarget::Gathering(_) => Some(NativeConnectionTarget {
-            address: address.trim().to_owned(),
-            transport: NativeTransport::RakNet,
-        }),
+        bridge::ConnectTarget::Gathering(_) => Some(NativeConnectionTarget::new(
+            address.trim().to_owned(),
+            NativeTransport::RakNet,
+        )),
         bridge::ConnectTarget::Realm(_) | bridge::ConnectTarget::Friend(_) => None,
     }
 }

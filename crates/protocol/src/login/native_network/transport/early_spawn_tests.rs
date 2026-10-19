@@ -197,10 +197,7 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
         let client = async {
             let settings = super::super::super::LoginSettings::default();
             let (mut play, runtime_id) = LoginSequence::connect_native(
-                &NativeConnectionTarget {
-                    address: address.to_string(),
-                    transport: NativeTransport::NetherNetLan,
-                },
+                &NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan),
                 SessionLogin {
                     display_name: "Fixture",
                     client_random_id: crate::ClientRandomId::new(1).unwrap(),

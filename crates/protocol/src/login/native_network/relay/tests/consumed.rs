@@ -102,10 +102,8 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             peer.session.closed().await;
         };
         let client = async {
-            let target = NativeConnectionTarget {
-                address: address.to_string(),
-                transport: NativeTransport::NetherNetLan,
-            };
+            let target =
+                NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
             let transport = transport::Transport::connect(
                 &target,
                 None,
