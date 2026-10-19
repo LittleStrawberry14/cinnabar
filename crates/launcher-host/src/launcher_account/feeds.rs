@@ -63,15 +63,17 @@ pub(super) fn poll_featured(
     shared: &Mutex<Snapshot>,
     stop: &Receiver<()>,
     changes: &Receiver<()>,
+    mut changed: tokio::sync::watch::Receiver<super::featured_feed::Wake>,
     runtime: &tokio::runtime::Handle,
 ) {
     let feeds = CoreFeeds {
         socket_dir,
         art: Some(art),
     };
+    let mut feed = super::featured_feed::Feed::default();
     loop {
         while changes.try_recv().is_ok() {}
-        let failed = runtime.block_on(featured_round(&feeds, shared));
+        let failed = runtime.block_on(feed.round(&feeds, Some(art), shared, &mut changed));
         if !wait_changes(
             stop,
             changes,
@@ -128,7 +130,7 @@ async fn home_round(source: &impl FeedSource, shared: &Mutex<Snapshot>) -> (Opti
 }
 
 /// Publishes featured details without allowing an older layout read to erase visible counts.
-async fn featured_round(source: &impl FeedSource, shared: &Mutex<Snapshot>) -> bool {
+pub(super) async fn featured_round(source: &impl FeedSource, shared: &Mutex<Snapshot>) -> bool {
     let (generation, include_player_counts) = {
         let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         (snapshot.auth_generation, snapshot.player_counts_visible)
@@ -256,6 +258,30 @@ mod tests {
         async fn friends(&self) -> Result<Vec<Friend>, BridgeError> {
             self.answer(&self.friends).await
         }
+    }
+
+    /// Native account unavailability cannot borrow the Core feed's unrelated signed-in account.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    #[tokio::test(start_paused = true)]
+    async fn native_featured_without_an_account_never_requests_the_core_source() {
+        let source = GatedFeeds::default();
+        let shared = Mutex::new(Snapshot {
+            featured_source: super::super::featured_feed::Source::Native(None),
+            ..Default::default()
+        });
+        let (_wake, mut changed) =
+            tokio::sync::watch::channel(super::super::featured_feed::Wake::Account);
+        let mut feed = super::super::featured_feed::Feed::default();
+        assert!(
+            tokio::time::timeout(
+                super::super::ARTWORK_BUDGET,
+                feed.round(&source, None, &shared, &mut changed),
+            )
+            .await
+            .expect("missing native owner completes locally")
+        );
+        assert_eq!(source.started.load(Ordering::SeqCst), 0);
+        assert!(shared.lock().unwrap().featured.is_none());
     }
 
     fn poll<F: Future>(future: std::pin::Pin<&mut F>) -> Poll<F::Output> {

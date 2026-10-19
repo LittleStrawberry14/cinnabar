@@ -4,6 +4,7 @@ mod acquisition;
 mod catalog;
 mod catalog_worker;
 mod directory;
+mod featured;
 mod friend_join;
 mod friends;
 mod home;
@@ -18,9 +19,12 @@ mod profile;
 mod read_identity;
 mod realms;
 mod restore;
+mod service_route;
 mod world_metadata;
 pub use catalog::{CatalogCards, CatalogListing};
 pub use catalog_worker::CatalogWorker;
+pub use featured::NativeGatheringSelection;
+pub(crate) use featured::{FeaturedEntries, FeaturedIdentity};
 pub use friend_join::{
     FriendAdmission, FriendJoin, FriendSelection, JoinProgress, NativeFriendSelection,
 };

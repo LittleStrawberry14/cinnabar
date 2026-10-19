@@ -398,6 +398,9 @@ pub const MESSAGE_EVENT_READ_ALL: &str = "ReadAll";
 /// Messaging event for delete.
 pub const MESSAGE_EVENT_DELETE: &str = "Delete";
 
+/// Existing successful featured layout refresh interval.
+pub const FEATURED_FEED_CACHE_SECONDS: u32 = 300;
+
 /// Existing successful Home service refresh interval.
 pub const HOME_FEED_CACHE_SECONDS: u32 = 900;
 

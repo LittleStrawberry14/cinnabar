@@ -143,6 +143,7 @@
     {"rust_name": "MESSAGE_EVENT_DELETE_ALL_READ", "go_name": "MessageEventDeleteAllRead", "value": "DeleteAllRead", "rust_type": "str", "doc": "Messaging event for delete all read."},
     {"rust_name": "MESSAGE_EVENT_READ_ALL", "go_name": "MessageEventReadAll", "value": "ReadAll", "rust_type": "str", "doc": "Messaging event for read all."},
     {"rust_name": "MESSAGE_EVENT_DELETE", "go_name": "MessageEventDelete", "value": "Delete", "rust_type": "str", "doc": "Messaging event for delete."},
+    {"rust_name": "FEATURED_FEED_CACHE_SECONDS", "go_name": "FeaturedFeedCacheSeconds", "value": 300, "rust_type": "u32", "doc": "Existing successful featured layout refresh interval."},
     {"rust_name": "HOME_FEED_CACHE_SECONDS", "go_name": "HomeFeedCacheSeconds", "value": 900, "rust_type": "u32", "doc": "Existing successful Home service refresh interval."},
     {"rust_name": "HOME_FEED_REFRESH_SECONDS", "go_name": "HomeFeedRefreshSeconds", "value": 40, "rust_type": "u32", "doc": "Original complete Home/featured service refresh budget."},
     {"rust_name": "DEFAULT_SERVICE_LANGUAGE", "go_name": "DefaultServiceLanguage", "value": "en-US", "rust_type": "str", "doc": "Launcher service locale before a client supplies one."},

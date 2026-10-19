@@ -28,6 +28,9 @@ pub struct NetworkConfig {
     /// The original selected friend owner and bounded cleanup reservation.
     #[cfg(feature = "native-networking")]
     pub native_friend: Option<friend::FriendConnectionRequest>,
+    /// Original account-bound featured selection; allocation is explicit and never inferred from its card.
+    #[cfg(feature = "native-networking")]
+    pub native_gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
     pub display_name: String,
     /// The user storage owner's opaque persisted login identifier.
     pub client_random_id: protocol::ClientRandomId,
@@ -58,17 +61,23 @@ pub fn spawn_network(
     let socket_dir = config.endpoint.core_directory().map(Path::to_path_buf);
     #[cfg(feature = "native-networking")]
     if matches!(&config.endpoint, protocol::SessionEndpoint::Native(target)
-        if launcher_host::native_account::is_realm_target(&target.address))
+        if launcher_host::native_account::is_realm_target(&target.address)
+            || matches!(launcher_host::launcher_core::target_for(&target.address), bridge::ConnectTarget::Gathering(_)))
         && config.native_account.is_none()
+        && config.native_gathering.is_none()
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            "joining a Realm requires a verified native account",
+            "joining this service requires a verified native account",
         ));
     }
     let player_skin = config.player_skin.to_client_skin();
     #[cfg(feature = "native-networking")]
-    if config.native_account.is_some() && config.native_friend.is_some() {
+    if usize::from(config.native_account.is_some())
+        + usize::from(config.native_friend.is_some())
+        + usize::from(config.native_gathering.is_some())
+        > 1
+    {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "native connection has conflicting account owners",
@@ -87,7 +96,8 @@ pub fn spawn_network(
         )
     });
     #[cfg(feature = "native-networking")]
-    let native_preparation = if let Some(account) = config.native_account {
+    let native_preparation = if config.native_account.is_some() || config.native_gathering.is_some()
+    {
         if !matches!(&config.endpoint, protocol::SessionEndpoint::Native(target) if target.transport == protocol::NativeTransport::RakNet)
         {
             return Err(std::io::Error::new(
@@ -110,9 +120,15 @@ pub fn spawn_network(
                 Some(&skin),
                 &settings,
             );
-            account
-                .prepare_connection(target, claims, client_random_id)
-                .await
+            if let Some(selection) = config.native_gathering {
+                selection.prepare(claims, client_random_id).await
+            } else {
+                config
+                    .native_account
+                    .expect("selected account preparation")
+                    .prepare_connection(target, claims, client_random_id)
+                    .await
+            }
         }) as client_session::NativeConnectionPreparation)
     } else {
         None

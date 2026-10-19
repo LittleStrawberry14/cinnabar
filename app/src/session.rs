@@ -36,6 +36,8 @@ pub(crate) mod destination;
 mod native_account;
 #[cfg(feature = "native-networking")]
 mod native_friend;
+#[cfg(feature = "native-networking")]
+mod native_gathering;
 #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 mod native_transfer_tests;
 mod url_policy;
@@ -76,6 +78,8 @@ pub(crate) struct SessionController {
     native_friend: Option<launcher_host::native_account::NativeFriendSelection>,
     #[cfg(feature = "native-networking")]
     native_friend_session: bool,
+    #[cfg(feature = "native-networking")]
+    native_gathering: Option<launcher_host::native_account::NativeGatheringSelection>,
     #[cfg(feature = "native-networking")]
     friend_cleanup: crate::runtime::network::session::friend::FriendCleanupOwner,
     /// Polls the per-session core this join started for its server trust question.
@@ -146,6 +150,8 @@ impl SessionController {
             native_friend: None,
             #[cfg(feature = "native-networking")]
             native_friend_session: false,
+            #[cfg(feature = "native-networking")]
+            native_gathering: None,
             #[cfg(feature = "native-networking")]
             friend_cleanup: Default::default(),
             trust: None,
@@ -232,6 +238,7 @@ impl SessionController {
         {
             self.native_friend = None;
             self.native_friend_session = false;
+            self.native_gathering = None;
         }
         self.kept_packs.keep_for_rejoin();
     }
@@ -250,9 +257,13 @@ impl SessionController {
             .native_transport
             .and_then(|transport| destination::native_target(address, transport, self.local_world))
         {
-            let realm = launcher_host::native_account::is_realm_target(address);
-            if realm && auth_cache.is_none() {
-                return Err("Joining a Realm requires a verified native account.".into());
+            let service = launcher_host::native_account::is_realm_target(address)
+                || matches!(
+                    launcher_host::launcher_core::target_for(address),
+                    bridge::ConnectTarget::Gathering(_)
+                );
+            if service && auth_cache.is_none() {
+                return Err("Joining this service requires a verified native account.".into());
             }
             if auth_cache.is_some() && target.transport != protocol::NativeTransport::RakNet {
                 return Err("Authenticated native joins currently require RakNet.".into());
@@ -374,6 +385,7 @@ impl SessionResources<'_> {
         {
             controller.native_friend = None;
             controller.native_friend_session = false;
+            controller.native_gathering = None;
         }
         let generation = controller.next_generation();
         if let (Some(far), Some(stream)) = (
@@ -546,6 +558,7 @@ fn poll_join(
             let login_settings = controller.login_settings(menu, session.input.as_deref());
             #[cfg(feature = "native-networking")]
             let native_account = if controller.native_friend.is_none()
+                && controller.native_gathering.is_none()
                 && matches!(endpoint, protocol::SessionEndpoint::Native(_))
             {
                 native_auth_cache.map(|path| controller.native_account_for(menu, path))
@@ -575,6 +588,8 @@ fn poll_join(
                 native_account,
                 #[cfg(feature = "native-networking")]
                 native_friend,
+                #[cfg(feature = "native-networking")]
+                controller.native_gathering.take(),
                 login_settings,
                 client_random_id,
                 session.actor_artwork.as_deref().map(|artwork| &artwork.0),
@@ -640,6 +655,9 @@ fn start_network(
     #[cfg(feature = "native-networking")] native_friend: Option<
         crate::runtime::network::session::friend::FriendConnectionRequest,
     >,
+    #[cfg(feature = "native-networking")] native_gathering: Option<
+        launcher_host::native_account::NativeGatheringSelection,
+    >,
     login_settings: protocol::LoginSettings,
     client_random_id: protocol::ClientRandomId,
     actor_artwork: Option<&render_model::ActorArtworkPages>,
@@ -659,6 +677,8 @@ fn start_network(
             native_account,
             #[cfg(feature = "native-networking")]
             native_friend,
+            #[cfg(feature = "native-networking")]
+            native_gathering,
             display_name: menu.display_name().to_owned(),
             client_random_id,
             client_blob_cache: cache.cache(),
@@ -771,6 +791,10 @@ fn drive_intents(
     #[cfg(feature = "native-networking")]
     if let Some(selection) = menu.take_native_friend_intent() {
         native_friend::begin(menu, session, selection);
+    }
+    #[cfg(feature = "native-networking")]
+    if let Some(selection) = menu.take_native_gathering_intent() {
+        native_gathering::begin(menu, session, selection);
     }
     poll_join(commands, menu, session, cache);
 }

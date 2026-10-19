@@ -21,13 +21,13 @@ use tokio_util::task::TaskTracker;
 
 use super::account_control::{AccountControl, AccountEvent, RealmMembershipResponse};
 use launcher::menu::view::{
-    ButtonArt, InboxItem, JoinStage, LiveEventCard, MenuGameCard, MenuHome, MenuProfile, PingInfo,
-    ServerDetails, ServerTrustPrompt,
+    ButtonArt, InboxItem, JoinStage, LiveEventCard, MenuHome, MenuProfile, PingInfo,
+    ServerTrustPrompt,
 };
 use launcher::menu::{
     CATALOG_REFRESH_INTERVAL,
     auth::AuthState,
-    view::{MenuFriendCard, MenuRealmCard, MenuServerCard},
+    view::{MenuFriendCard, MenuRealmCard},
 };
 
 #[cfg(test)]
@@ -35,10 +35,13 @@ mod home_promo;
 
 mod artwork;
 mod cinnabar_players;
+mod featured_feed;
 mod feeds;
 mod home_feed;
 mod shared_players;
 mod workers;
+#[cfg(test)]
+use featured_feed::card as featured_card;
 use feeds::{CoreFeeds, catalog_round};
 mod events;
 mod invites;
@@ -85,6 +88,11 @@ struct Snapshot {
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     home_language: String,
     home_cancel: Option<tokio::sync::watch::Sender<home_feed::Wake>>,
+    featured_cancel: Option<tokio::sync::watch::Sender<featured_feed::Wake>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    featured_source: featured_feed::Source,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    featured_gatherings: Vec<Option<crate::native_account::NativeGatheringSelection>>,
     pending_home_scope: home_feed::Scope,
     delivered_home_scope: home_feed::Scope,
     home_reports: Option<Sender<home_feed::Report>>,
@@ -149,6 +157,11 @@ impl Snapshot {
         self.realms = None;
         self.friends = None;
         self.featured = None;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        self.featured_gatherings.clear();
+        if let Some(wake) = &self.featured_cancel {
+            featured_feed::retire(wake);
+        }
         self.profile = None;
         self.people = None;
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -222,6 +235,9 @@ impl Drop for LauncherAccount {
             if let Some(wake) = &snapshot.home_cancel {
                 wake.send_replace(home_feed::Wake::Stop);
             }
+            if let Some(wake) = &snapshot.featured_cancel {
+                wake.send_replace(featured_feed::Wake::Stop);
+            }
             snapshot.home_reports = None;
         });
         self.presence_lifetime.retire();
@@ -263,6 +279,7 @@ impl LauncherAccount {
                 people_source: invites::Source::Native(account.clone()),
                 realm_source: realm_membership::Source::Native(account.clone()),
                 home_source: home_feed::Source::Native(account.clone()),
+                featured_source: featured_feed::Source::Native(account.clone()),
                 home_language: if language.is_empty() {
                     bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
                 } else {
@@ -799,9 +816,8 @@ impl AccountControl for LauncherAccount {
         self.with(|snapshot| (!snapshot.events.is_empty()).then(|| snapshot.events.remove(0)))
     }
 
-    fn featured(&mut self) -> Option<Vec<(MenuServerCard, ServerDetails)>> {
-        let servers = self.with(|snapshot| snapshot.featured.take())?;
-        Some(servers.iter().map(featured_card).collect())
+    fn featured(&mut self) -> Option<Vec<crate::account_control::FeaturedRow>> {
+        self.with(featured_feed::take_rows)
     }
 
     /// Queues an inbox action on the dedicated reporting worker.
@@ -912,43 +928,6 @@ impl AccountControl for LauncherAccount {
     fn send_invites(&mut self, xuids: Vec<String>) {
         self.invites.send(&self.snapshot, xuids);
     }
-}
-
-/// Splits the core's featured entry into its menu card and selected details.
-fn featured_card(server: &FeaturedServer) -> (MenuServerCard, ServerDetails) {
-    let card = MenuServerCard {
-        name: server.name.clone(),
-        address: server.address.clone(),
-        caption: server.caption.clone(),
-        image_path: server.logo.path.clone(),
-        icon: None,
-    };
-    let details = ServerDetails {
-        group: server.group.clone(),
-        player_count: server.player_count,
-        description: server.description.clone(),
-        banner: server.background.path.clone(),
-        news_title: server.news_title.clone(),
-        news: server.news.clone(),
-        screenshots: server
-            .screenshots
-            .iter()
-            .filter(|shot| !shot.path.is_empty())
-            .map(|shot| shot.path.clone())
-            .collect(),
-        games: server
-            .games
-            .iter()
-            .map(|game| MenuGameCard {
-                title: game.title.clone(),
-                subtitle: game.subtitle.clone(),
-                description: game.description.clone(),
-                image_path: game.image.path.clone(),
-            })
-            .collect(),
-        logo_url: server.logo.url.clone(),
-    };
-    (card, details)
 }
 
 #[cfg(test)]

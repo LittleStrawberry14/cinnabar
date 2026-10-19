@@ -275,6 +275,8 @@ const (
 	MessageEventReadAll = "ReadAll"
 	// MessageEventDelete: Messaging event for delete.
 	MessageEventDelete = "Delete"
+	// FeaturedFeedCacheSeconds: Existing successful featured layout refresh interval.
+	FeaturedFeedCacheSeconds = 300
 	// HomeFeedCacheSeconds: Existing successful Home service refresh interval.
 	HomeFeedCacheSeconds = 900
 	// HomeFeedRefreshSeconds: Original complete Home/featured service refresh budget.

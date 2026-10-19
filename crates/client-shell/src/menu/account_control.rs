@@ -97,10 +97,21 @@ impl MenuRuntime {
             self.feeds.details.extend(
                 featured
                     .iter()
-                    .map(|(card, details)| (card.address.clone(), details.clone())),
+                    .map(|row| (row.card.address.clone(), row.details.clone())),
             );
+            #[cfg(feature = "native-networking")]
+            {
+                self.native_gatherings = featured
+                    .iter()
+                    .filter_map(|row| {
+                        row.gathering
+                            .clone()
+                            .map(|selection| (row.card.address.clone(), selection))
+                    })
+                    .collect();
+            }
             self.featured
-                .replace(featured.into_iter().map(|(card, _)| card).collect());
+                .replace(featured.into_iter().map(|row| row.card).collect());
             if let Some(address) = selected {
                 self.feeds.selected_featured = self
                     .featured
@@ -261,8 +272,10 @@ mod tests {
         fn poll_event(&mut self) -> Option<AccountEvent> {
             None
         }
-        fn featured(&mut self) -> Option<Vec<(MenuServerCard, ServerDetails)>> {
-            self.0.take()
+        fn featured(&mut self) -> Option<Vec<launcher_host::account_control::FeaturedRow>> {
+            self.0
+                .take()
+                .map(|rows| rows.into_iter().map(Into::into).collect())
         }
     }
 
