@@ -25,6 +25,7 @@
     {"rust_name": "RELAY_IDLE_SECONDS", "go_name": "RelayIdleSeconds", "value": 600, "rust_type": "u32", "doc": "Original idle lifetime of a detached relay account."},
     {"rust_name": "RELAY_RESUME_SECONDS", "go_name": "RelayResumeSeconds", "value": 120, "rust_type": "u32", "doc": "Original lifetime of each independently issued resume bearer."},
     {"rust_name": "RELAY_HELLO_SECONDS", "go_name": "RelayHelloSeconds", "value": 10, "rust_type": "u32", "doc": "Original pre-Hello and control write budget."},
+    {"rust_name": "RELAY_CERTIFICATE_RELOAD_SECONDS", "go_name": "RelayCertificateReloadSeconds", "value": 60, "rust_type": "u32", "doc": "Interval between operator certificate file reload attempts."},
     {"rust_name": "RELAY_RESUME_BYTES", "go_name": "RelayResumeBytes", "value": 32, "rust_type": "usize", "doc": "Random bytes in one relay resume capability."},
     {"rust_name": "RELAY_CONTROL_REQUEST_BURST", "go_name": "RelayControlRequestBurst", "value": 4, "rust_type": "u32", "doc": "Control request token-bucket burst."},
     {"rust_name": "RELAY_ACTION_REFILL_MILLIS", "go_name": "RelayActionRefillMillis", "value": 5000, "rust_type": "u32", "doc": "Time to replenish one per-peer admission action."},
