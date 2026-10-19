@@ -1,6 +1,6 @@
 //! One concrete paired play lifetime, owned and polled by the existing application worker.
 
-use super::{HostedLoginApproval, NativeHostedWorld};
+use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld};
 use bedrock_client::server::session::AcceptedSession;
 use bridge::host_world::{ActiveBackendPeer, ClosingBackendPeer, contract::CLOSE_MILLIS};
 use protocol::{NativeAcceptingIo, NativeAcceptingRetired};
@@ -87,9 +87,13 @@ impl NativeHostedPeer {
                 }
                 Event::World(Some(packet)) => {
                     let deadline = cleanup_deadline();
-                    host.peer_io(Some(deadline), self.wire.send_raw(packet, deadline))
-                        .await?;
-                    host.recheck_approval(&self.accepted.grant().approval)?;
+                    host.send_member_raw(
+                        &self.accepted.grant().approval,
+                        &mut self.wire,
+                        packet,
+                        deadline,
+                    )
+                    .await?;
                     host.peer_io(Some(deadline), self.backend.received(deadline))
                         .await?;
                 }
@@ -112,9 +116,13 @@ impl NativeHostedPeer {
             })?;
         host.recheck_approval(&self.accepted.grant().approval)?;
         let deadline = cleanup_deadline();
-        host.peer_io(Some(deadline), self.wire.send_raw(packet, deadline))
-            .await?;
-        host.recheck_approval(&self.accepted.grant().approval)?;
+        host.send_member_raw(
+            &self.accepted.grant().approval,
+            &mut self.wire,
+            packet,
+            deadline,
+        )
+        .await?;
         host.peer_io(Some(deadline), self.backend.received(deadline))
             .await
     }
@@ -130,6 +138,21 @@ impl NativeHostedPeer {
             backend_done: false,
             finished: false,
         }
+    }
+}
+
+impl NativeHostedWorld {
+    /// Drives one original member write and rechecks its existing grant after completion.
+    pub(in crate::native_account::hosted_world) async fn send_member_raw(
+        &mut self,
+        approval: &HostedApproval,
+        wire: &mut NativeAcceptingIo,
+        packet: bytes::Bytes,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.peer_io(Some(deadline), wire.send_raw(packet, deadline))
+            .await?;
+        self.recheck_approval(approval)
     }
 }
 
