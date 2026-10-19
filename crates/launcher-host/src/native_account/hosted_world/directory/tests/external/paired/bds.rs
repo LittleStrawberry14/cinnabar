@@ -22,7 +22,6 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
             .prepare_backend(deadline)
             .await
             .unwrap();
-        eprintln!("BDS fixture prepared original backend (LAN: {lan})");
         let client_key = Arc::new(SigningKey::generate());
         let SignedAssociation {
             accepted,
@@ -59,9 +58,7 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
                     deadline,
                 )
                 .await?;
-            eprintln!("BDS fixture accepted original peer (LAN: {lan})");
             let (mut closing, play) = peer.run(&mut authority.host).await;
-            eprintln!("BDS fixture play ended (LAN: {lan}): {:?}", play.as_ref().err().map(|error| (error.kind(), error.to_string())));
             let closed = closing.finish_close(&mut authority.host).await;
             Ok::<_, io::Error>((
                 play.err().map(|error| (error.kind(), error.to_string())),
@@ -86,25 +83,27 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
                 |packs, game| (packs.into_archives(), game),
             )
             .await?;
-            eprintln!("BDS fixture client joined original world (LAN: {lan})");
             // This is the sole original client initialization, not a fixture-created runtime ID.
             session.finish_loading().await?;
-            eprintln!("BDS fixture client initialized (LAN: {lan})");
+            let mut terrain = session.terrain_before_spawn();
+            // Startup preserves its original radius grant in the play FIFO. Consume it before
+            // issuing another request so that it cannot satisfy the live-response assertion.
+            let admitted_radius = loop {
+                match session.recv_world_event(0).await? {
+                    WorldEvent::ChunkRadiusUpdated(radius) => break radius,
+                    WorldEvent::LevelChunk(_) | WorldEvent::SubChunks(_) => terrain = true,
+                    _ => {}
+                }
+            };
+            assert!(admitted_radius > 0, "actual startup radius was not admitted");
             session
                 .send(protocol::request_chunk_radius_packet(3, 3))
                 .await?;
-            let mut terrain = session.terrain_before_spawn();
             let mut response = false;
             while !(terrain && response) {
                 match session.recv_world_event(0).await? {
-                    WorldEvent::ChunkRadiusUpdated(radius) => {
-                        eprintln!("BDS fixture actual radius (LAN: {lan}): {radius}");
-                        response |= radius == 3;
-                    }
-                    WorldEvent::LevelChunk(_) | WorldEvent::SubChunks(_) => {
-                        if !terrain { eprintln!("BDS fixture received actual terrain (LAN: {lan})"); }
-                        terrain = true;
-                    }
+                    WorldEvent::ChunkRadiusUpdated(radius) if radius == admitted_radius => response = true,
+                    WorldEvent::LevelChunk(_) | WorldEvent::SubChunks(_) => terrain = true,
                     _ => {}
                 }
             }
