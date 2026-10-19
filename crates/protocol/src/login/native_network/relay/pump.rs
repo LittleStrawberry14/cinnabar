@@ -1,9 +1,7 @@
 //! Concrete application capabilities around the same bounded desktop connection pump.
 
 use super::{NativeRelayConnection, packet_id, terminal};
-use crate::session_transport::native::{
-    self, ByteCredit, DriverEnd, IncomingBody, NativeSender, PreparedPump,
-};
+use crate::session_transport::native::{self, DriverEnd, IncomingBody, NativeSender, PreparedPump};
 use crate::session_wire::CoreMessage;
 use bedrock_protocol_1_26_51::{packets::PacketId, wire};
 use bytes::Bytes;
@@ -40,7 +38,6 @@ pub struct NativeRelayInbound {
     incoming: mpsc::Receiver<IncomingBody>,
     tail: Option<oneshot::Receiver<PendingInput>>,
     current: Option<wire::Frames>,
-    permit: Option<ByteCredit>,
     ended: bool,
 }
 
@@ -65,8 +62,9 @@ pub struct NativeRelayClosing {
 impl NativeRelayConnection {
     /// Moves this exact established connection into the original bounded pump without spawning.
     /// The caller must continuously poll the unique driver beside its application I/O.
-    /// Input byte credit remains held through the active batch cursor. A valid body larger
-    /// than the queue budget occupies it alone; returned packet slices belong to the caller.
+    /// Input byte credit remains held through the active batch cursor and every returned
+    /// shared packet view. A valid body larger than the queue budget occupies it alone
+    /// until its last retained view is released.
     pub fn into_pump(self) -> (NativeRelaySender, NativeRelayInbound, NativeRelayDriver) {
         split(
             native::prepare_with_byte_budget(
@@ -106,7 +104,6 @@ fn split(
             incoming,
             tail: Some(tail),
             current: None,
-            permit: None,
             ended,
         },
         driver,
@@ -162,7 +159,6 @@ impl NativeRelayInbound {
         if result.is_err() {
             self.ended = true;
             self.current = None;
-            self.permit = None;
         }
         result
     }
@@ -172,7 +168,6 @@ impl NativeRelayInbound {
         loop {
             let Some(entry) = self.current.as_mut().and_then(Iterator::next) else {
                 self.current = None;
-                self.permit = None;
                 let item = match self.incoming.recv().await {
                     Some(item) => item,
                     None => {
@@ -186,12 +181,10 @@ impl NativeRelayInbound {
                             .ok_or(io::ErrorKind::UnexpectedEof)?
                     }
                 };
-                let IncomingBody { body, permit } = item;
                 self.current = Some(wire::Frames::new(
-                    body?,
+                    item.into_body()?,
                     crate::raw_packet::MAX_RAW_BATCH_PACKETS,
                 ));
-                self.permit = permit;
                 continue;
             };
             let entry = entry.map_err(io::Error::other)?;
@@ -205,7 +198,6 @@ impl NativeRelayInbound {
                 drop(raw);
                 drop(entry);
                 self.current = None;
-                self.permit = None;
                 return Ok(message);
             }
             if packet_id(&raw)? != PacketId::Transfer {

@@ -34,7 +34,6 @@ async fn the_real_frame_cursor_preserves_prefix_and_terminal_after_driver_channe
         incoming,
         tail: Some(tail),
         current: None,
-        permit: None,
         ended: false,
     };
     let CoreMessage::Batch(packets) = incoming.recv().await.unwrap() else {

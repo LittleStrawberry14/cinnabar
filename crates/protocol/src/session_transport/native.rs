@@ -35,7 +35,7 @@ pub(crate) struct IncomingBody {
 
 impl IncomingBody {
     /// Keeps optional credit with every shared view of the original body.
-    fn into_body(self) -> io::Result<Bytes> {
+    pub(crate) fn into_body(self) -> io::Result<Bytes> {
         match (self.body, self.permit) {
             (Ok(body), Some(credit)) => Ok(Bytes::from_owner(CreditedBody {
                 body,
