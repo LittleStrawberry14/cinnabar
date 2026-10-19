@@ -7,10 +7,6 @@ use protocol::{
 };
 
 /// Crosses real TLS/control/play, native login, verified archives and shared client world startup.
-#[expect(
-    clippy::print_stderr,
-    reason = "fixture skips and completed world milestones are explicit acceptance evidence"
-)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accepted_play_reaches_owned_bds_world() {
     let address = match std::env::var("CINNABAR_GATEWAY_BDS_ADDRESS") {
