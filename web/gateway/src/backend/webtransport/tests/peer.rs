@@ -105,30 +105,7 @@ impl Fixture {
 
     /// Uses the maintained public client builder and retains its original control driver.
     pub(super) async fn peer(&self, path: &str, origin: Option<&str>) -> Peer {
-        let connection = self.connect().await.unwrap();
-        let mut builder = h3::client::builder();
-        builder
-            .enable_webtransport(true)
-            .enable_extended_connect(true)
-            .enable_datagram(true)
-            .max_webtransport_sessions(1)
-            .max_field_section_size(u64::try_from(RELAY_CONTROL_BYTES).unwrap())
-            .send_grease(false);
-        let (driver, requests) = builder
-            .build(h3_quinn::Connection::new(connection.clone()))
-            .await
-            .unwrap();
-        let mut peer = Peer {
-            connection,
-            requests,
-            driver: Mutex::new(driver),
-            session: SessionId::try_from(0).unwrap(),
-            connect: None,
-        };
-        let request = peer.request(path, origin).await;
-        peer.session = request.id().into();
-        peer.connect = Some(request);
-        peer
+        Peer::from_connection(self.connect().await.unwrap(), path, origin).await
     }
 
     /// Awaits the original handlers, permit release and service erasure before dropping endpoints.
@@ -156,7 +133,7 @@ impl Drop for Fixture {
     }
 }
 
-pub(super) struct Peer {
+pub(crate) struct Peer {
     pub(super) connection: quinn::Connection,
     pub(super) session: SessionId,
     requests: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
@@ -165,6 +142,37 @@ pub(super) struct Peer {
 }
 
 impl Peer {
+    /// Keeps the same public HTTP3 driver on an already verified original operator connection.
+    pub(crate) async fn from_connection(
+        connection: quinn::Connection,
+        path: &str,
+        origin: Option<&str>,
+    ) -> Self {
+        let mut builder = h3::client::builder();
+        builder
+            .enable_webtransport(true)
+            .enable_extended_connect(true)
+            .enable_datagram(true)
+            .max_webtransport_sessions(1)
+            .max_field_section_size(u64::try_from(RELAY_CONTROL_BYTES).unwrap())
+            .send_grease(false);
+        let (driver, requests) = builder
+            .build(h3_quinn::Connection::new(connection.clone()))
+            .await
+            .unwrap();
+        let mut peer = Peer {
+            connection,
+            requests,
+            driver: Mutex::new(driver),
+            session: SessionId::try_from(0).unwrap(),
+            connect: None,
+        };
+        let request = peer.request(path, origin).await;
+        peer.session = request.id().into();
+        peer.connect = Some(request);
+        peer
+    }
+
     /// Sends a real CONNECT with the maintained public request/Protocol encoder.
     pub(super) async fn request(&mut self, path: &str, origin: Option<&str>) -> RequestStream {
         let mut request = Request::builder()
@@ -183,7 +191,7 @@ impl Peer {
     }
 
     /// Observes actual HEADERS on the original CONNECT before using application streams.
-    pub(super) async fn status(&mut self) -> StatusCode {
+    pub(crate) async fn status(&mut self) -> StatusCode {
         response(&self.driver, self.connect.as_mut().unwrap()).await
     }
 
@@ -205,8 +213,22 @@ impl Peer {
         tokio::io::join(recv, send)
     }
 
+    /// Observes one actual CONNECT DATA chunk without completing its original receive stream.
+    pub(crate) async fn connect_chunk(&mut self) -> Bytes {
+        let stream = self.connect.as_mut().unwrap();
+        drive(&self.driver, async {
+            let mut chunk = stream
+                .recv_data()
+                .await
+                .unwrap()
+                .expect("original CONNECT DATA");
+            chunk.copy_to_bytes(chunk.remaining())
+        })
+        .await
+    }
+
     /// Observes original CONNECT DATA and validated FIN while retaining the same HTTP/3 owner.
-    pub(super) async fn connect_end(&mut self) -> usize {
+    pub(crate) async fn connect_end(&mut self) -> usize {
         let stream = self.connect.as_mut().unwrap();
         drive(&self.driver, async {
             let mut bytes = 0;
@@ -243,7 +265,7 @@ impl Peer {
     }
 
     /// Aborts only this actual fixture connection; the original gateway performs application cleanup.
-    pub(super) fn close(&self) {
+    pub(crate) fn close(&self) {
         self.connection.close(0_u32.into(), b"");
     }
 }

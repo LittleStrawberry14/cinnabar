@@ -85,6 +85,24 @@ impl Drop for Files {
     }
 }
 
+/// Trusts the same two synthetic pairs and disables resumption for fresh certificate observations.
+fn client_tls(first: &Pair, second: &Pair) -> ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.add(first.certificate.clone()).unwrap();
+    roots.add(second.certificate.clone()).unwrap();
+    let mut client = ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    client.alpn_protocols = vec![b"http/1.1".to_vec()];
+    // A resumed TLS session intentionally carries its original certificate observation.
+    client.resumption = rustls::client::Resumption::disabled();
+    client
+}
+
 struct Fixture {
     task: Option<JoinHandle<io::Result<()>>>,
     stop: Option<oneshot::Sender<()>>,
@@ -115,19 +133,7 @@ impl Fixture {
                 let _ = stopped.await;
             },
         ));
-        let mut roots = RootCertStore::empty();
-        roots.add(first.certificate.clone()).unwrap();
-        roots.add(second.certificate.clone()).unwrap();
-        let mut client = ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        client.alpn_protocols = vec![b"http/1.1".to_vec()];
-        // A resumed TLS session intentionally carries its original certificate observation.
-        client.resumption = rustls::client::Resumption::disabled();
+        let client = client_tls(first, second);
         Self {
             task: Some(task),
             stop: Some(stop),
@@ -266,3 +272,6 @@ async fn operator_refuses_invalid_initial_material_before_binding() {
     assert!(!error.to_string().contains("not a private key"));
     assert!(!error.to_string().contains(files.0.to_str().unwrap()));
 }
+
+#[cfg(feature = "webtransport")]
+mod paired;

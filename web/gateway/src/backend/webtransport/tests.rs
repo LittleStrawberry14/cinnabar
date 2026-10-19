@@ -7,7 +7,8 @@ use super::*;
 use bridge::relay_control::{Capability, Event, Hello, Request as ControlRequest};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use peer::{Fixture, Peer};
+use peer::Fixture;
+pub(crate) use peer::Peer;
 use protocol::session_wire::{self, CoreMessage, SessionDisconnect};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -31,12 +32,12 @@ fn hello(channel: &str, generation: u64, join: u64) -> Bytes {
 }
 
 /// Reads an actual bounded control event from the retained same QUIC stream.
-async fn event(client: &mut Client) -> Event {
+pub(crate) async fn event(client: &mut Client) -> Event {
     serde_json::from_slice(&client.next().await.unwrap().unwrap()).unwrap()
 }
 
 /// Establishes the actual account/controller capability; no manually constructed account or Ready.
-async fn control(peer: &Peer) -> (Client, Capability) {
+pub(crate) async fn control(peer: &Peer) -> (Client, Capability) {
     let stream = peer.stream().await;
     let mut control = Framed::new(stream, bridge::BridgeCodec::with_max(RELAY_CONTROL_BYTES));
     control
