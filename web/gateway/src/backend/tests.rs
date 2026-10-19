@@ -29,6 +29,17 @@ use tokio_rustls::{
 use tokio_util::codec::Framed;
 use tokio_websockets::ClientBuilder;
 
+#[cfg(all(feature = "operator", feature = "webtransport"))]
+pub(crate) use super::webtransport::tests::{
+    Peer as PairedPeer, control as paired_control, event as paired_event,
+};
+
+/// Borrows only the original gateway's registry before its serving owner takes the gateway.
+#[cfg(all(feature = "operator", feature = "webtransport"))]
+pub(crate) fn gateway_registry(gateway: &Gateway) -> Arc<Registry> {
+    Arc::clone(&gateway.registry)
+}
+
 const LIMIT: usize = RELAY_CONTROL_BYTES + size_of::<u32>();
 pub(crate) type Client = Framed<Socket<TlsStream<TcpStream>>, bridge::BridgeCodec>;
 
