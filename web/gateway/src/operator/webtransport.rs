@@ -24,6 +24,18 @@ pub async fn run_paired(
         gateway.quic_config()?,
         udp_address,
     )?);
+    serve_paired(config, certificates, gateway, listener, endpoint, shutdown).await
+}
+
+/// Drives the original paired listeners, resolver and retained endpoint through joint retirement.
+pub(super) async fn serve_paired(
+    config: ListenConfig,
+    certificates: Arc<Certificates>,
+    gateway: Gateway,
+    listener: TcpListener,
+    endpoint: Endpoint,
+    shutdown: impl Future<Output = ()>,
+) -> io::Result<()> {
     let stop = CancellationToken::new();
     let tcp = stream::unfold(listener, |listener| async {
         Some((listener.accept().await.map(|(stream, _)| stream), listener))
@@ -59,7 +71,7 @@ pub async fn run_paired(
 }
 
 /// Retires the original UDP endpoint on cancellation while normal shutdown awaits its drain.
-struct Endpoint(quinn::Endpoint);
+pub(super) struct Endpoint(pub(super) quinn::Endpoint);
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.0.close(0_u32.into(), b"");
