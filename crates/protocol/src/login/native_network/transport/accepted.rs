@@ -2,12 +2,14 @@
 
 use super::Inbox;
 use bytes::Bytes;
-use nethernet_tokio::{AcceptedSession, Retired};
-use std::{io, time::Instant};
+use nethernet_tokio::{AcceptedSession, Retired, SessionSender};
+use std::{future::Future, io, sync::Arc, time::Instant};
 
 pub(in crate::login::native_network) struct AcceptedTransport {
     state: Option<State>,
     inbox: Inbox,
+    input_failure: Option<Arc<io::Error>>,
+    input_terminal_seen: bool,
 }
 enum State {
     Established(AcceptedSession),
@@ -20,6 +22,62 @@ impl AcceptedTransport {
         Self {
             state: Some(State::Established(accepted)),
             inbox: Inbox::default(),
+            input_failure: None,
+            input_terminal_seen: false,
+        }
+    }
+
+    /// Borrows capacity from this exact established association, without exposing its sender.
+    pub(super) fn sender(&self) -> io::Result<SessionSender> {
+        match self.state.as_ref().expect("synchronous phase transition") {
+            State::Established(accepted) => Ok(accepted.session.sender()),
+            State::Retired(_) => Err(super::closing()),
+        }
+    }
+
+    /// Distinguishes a completed operation result from a retained-input failure.
+    pub(super) async fn progress<T: Send>(
+        &mut self,
+        progress: impl Future<Output = T> + Send,
+    ) -> io::Result<T> {
+        if let Some(error) = &self.input_failure {
+            return Err(io::Error::new(error.kind(), Arc::clone(error)));
+        }
+        let receiver = match self.state.as_mut().expect("synchronous phase transition") {
+            State::Established(accepted) => &mut accepted.reliable,
+            State::Retired(accepted) => &mut accepted.reliable,
+        };
+        let incoming = futures::stream::unfold(receiver, |receiver| async move {
+            match receiver.recv().await {
+                Ok(Some(data)) => Some((Ok(data), receiver)),
+                Ok(None) => None,
+                Err(error) => Some((Err(io::Error::other(error)), receiver)),
+            }
+        });
+        match self
+            .inbox
+            .send(async { Ok(progress.await) }, incoming)
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let error = Arc::new(error);
+                let result = io::Error::new(error.kind(), Arc::clone(&error));
+                self.input_failure = Some(error);
+                Err(result)
+            }
+        }
+    }
+
+    /// Settles an already committed receipt without repolling failed or exhausted input.
+    pub(super) async fn settle<T: Send>(
+        &mut self,
+        progress: impl Future<Output = T> + Send,
+    ) -> io::Result<T> {
+        if self.input_failure.is_some() {
+            Ok(progress.await)
+        } else {
+            self.progress(progress).await
         }
     }
 
@@ -56,6 +114,16 @@ impl AcceptedTransport {
     pub(super) async fn recv(&mut self) -> io::Result<Bytes> {
         if let Some(data) = self.inbox.pop() {
             return Ok(data);
+        }
+        if let Some(error) = &self.input_failure {
+            if !self.input_terminal_seen {
+                self.input_terminal_seen = true;
+                return Err(io::Error::new(error.kind(), Arc::clone(error)));
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "accepted NetherNet peer closed",
+            ));
         }
         let result = match self.state.as_mut().expect("synchronous phase transition") {
             State::Established(accepted) => accepted.reliable.recv().await,

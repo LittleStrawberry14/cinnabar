@@ -1,8 +1,13 @@
 //! Concrete wire ownership for an already admitted NetherNet server association.
 
 mod packs;
+mod send;
 mod world;
 pub use packs::native_host_packs;
+pub use send::{
+    NativeAcceptingCapacity, NativeAcceptingSend, NativeAcceptingSendOutcome,
+    NativeAcceptingSendRetirement,
+};
 pub use world::NativeHostWorld;
 
 use super::{Connection, PacketConnection, transport::Transport};
@@ -134,24 +139,10 @@ impl NativeAcceptingIo {
     /// Sends one actual Go packet through the same established batch codec.
     /// The single write future owns cipher progress until completion or connection retirement.
     pub async fn send_raw(&mut self, raw: Bytes, deadline: Instant) -> io::Result<()> {
-        let limit = self.connection.max_decoded_bytes();
-        let mut framed = Vec::new();
-        wire::Writer::with_limit(&mut framed, limit)
-            .write_len_var_u32(raw.len())
-            .map_err(|_| invalid())?;
-        if raw.is_empty()
-            || framed
-                .len()
-                .checked_add(raw.len())
-                .is_none_or(|n| n > limit)
-        {
-            return Err(invalid());
-        }
-        framed.extend_from_slice(&raw);
+        let framed = self.connection.raw_body(raw).map_err(|_| invalid())?;
         wait(
             deadline,
-            self.connection
-                .send_body_until(Bytes::from(framed), Some(deadline)),
+            self.connection.send_body_until(framed, Some(deadline)),
         )
         .await?
     }

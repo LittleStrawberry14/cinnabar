@@ -18,7 +18,7 @@ use bedrock_net::{
 };
 use bytes::Bytes;
 use nethernet_tokio::{ConnectionConfig, LanConfig, LanSignaling, NetherClient};
-use std::{io, net::SocketAddr, time::Instant};
+use std::{future::Future, io, net::SocketAddr, time::Instant};
 
 pub(super) const LAN_CONNECTION_TYPE: u8 = 4;
 
@@ -30,6 +30,36 @@ pub(super) enum Transport {
 }
 
 impl Transport {
+    /// Takes a private capacity handle only from the same established accepted association.
+    pub(super) fn accepted_sender(&self) -> io::Result<nethernet_tokio::SessionSender> {
+        match self {
+            Self::Accepted(accepted) => accepted.sender(),
+            _ => Err(prepared_unsupported()),
+        }
+    }
+
+    /// Keeps the original accepted input progressing beside one retained operation.
+    pub(super) async fn progress_accepted<T: Send>(
+        &mut self,
+        progress: impl Future<Output = T> + Send,
+    ) -> io::Result<T> {
+        match self {
+            Self::Accepted(accepted) => accepted.progress(progress).await,
+            _ => Err(prepared_unsupported()),
+        }
+    }
+
+    /// Finishes an existing receipt after local admission has been sealed.
+    pub(super) async fn settle_accepted<T: Send>(
+        &mut self,
+        progress: impl Future<Output = T> + Send,
+    ) -> io::Result<T> {
+        match self {
+            Self::Accepted(accepted) => accepted.settle(progress).await,
+            _ => Err(prepared_unsupported()),
+        }
+    }
+
     /// Takes only the caller's actual Ready association, never dialing another backend.
     pub(super) fn from_accepted(accepted: nethernet_tokio::AcceptedSession) -> Self {
         Self::Accepted(Box::new(AcceptedTransport::new(accepted)))
@@ -248,3 +278,11 @@ mod pack_url_policy_tests;
 
 #[cfg(test)]
 mod pack_url_parallel_tests;
+
+/// Rejects prepared effects on a different transport without starting another association.
+fn prepared_unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "prepared send requires accepted NetherNet",
+    )
+}
