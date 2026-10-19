@@ -223,15 +223,16 @@ async fn accepted_socket_capacity_precedes_tls_and_retires_on_cancel() {
     .unwrap();
 }
 
-/// Real TLS refusals precede101 for forbidden origins, missing protocol and the held play path.
+/// Real TLS refusals precede101 for forbidden origins, missing protocol and unknown paths.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn origin_subprotocol_and_play_are_checked_before_upgrade() {
+async fn origin_subprotocol_and_unknown_paths_are_checked_before_upgrade() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut fixture = Fixture::new().await;
+        let unknown_path = format!("{RELAY_PLAY_PATH}/unknown");
         for (path, extra, expected) in [
             (RELAY_CONTROL_PATH, format!("Origin: https://foreign.example\r\nSec-WebSocket-Protocol: {RELAY_SOCKET_PROTOCOL}\r\n"), "403 Forbidden"),
             (RELAY_CONTROL_PATH, String::new(), "400 Bad Request"),
-            (RELAY_PLAY_PATH, format!("Sec-WebSocket-Protocol: {RELAY_SOCKET_PROTOCOL}\r\n"), "404 Not Found"),
+            (unknown_path.as_str(), format!("Sec-WebSocket-Protocol: {RELAY_SOCKET_PROTOCOL}\r\n"), "404 Not Found"),
             (RELAY_CONTROL_PATH, format!("Origin: https://{}\r\nOrigin: https://foreign.example\r\nSec-WebSocket-Protocol: {RELAY_SOCKET_PROTOCOL}\r\n", fixture.address), "400 Bad Request"),
         ] {
             let mut tls = fixture.secure().await;
@@ -331,4 +332,5 @@ async fn completed_service_driver_retains_sessions_until_connections_retire() {
     .unwrap();
 }
 
+mod channel;
 mod play;
