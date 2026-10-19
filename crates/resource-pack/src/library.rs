@@ -1,10 +1,11 @@
 //! Installed global packs and an editable, highest-priority-first selection.
 
 use crate::{
-    AdmissionError, ValidatedPackStack, manifest::Purpose, parser::validate_archive_parts,
+    AdmissionError, MAX_LOCAL_ARCHIVE_BYTES, MAX_LOCAL_PACKS, ValidatedPackStack,
+    manifest::Purpose,
+    parser::{AdmissionOptions, validate_archive_parts},
     subpacks as tiers,
 };
-use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -143,7 +144,7 @@ impl GlobalPackLibrary {
         } else {
             Catalog::default()
         };
-        if catalog.active.len() > MAX_PACKS {
+        if catalog.active.len() > MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         let active = catalog.active.clone();
@@ -190,7 +191,7 @@ impl GlobalPackLibrary {
         if !crate::is_pack_import_path(path) {
             return Err(LibraryError::UnsupportedExtension);
         }
-        let bytes = read_bounded(path, MAX_ARCHIVE_BYTES)?;
+        let bytes = read_bounded(path, MAX_LOCAL_ARCHIVE_BYTES)?;
         let (report, archives) = crate::import::read_import(bytes, path)?;
         self.import_prepared(crate::PreparedImport { report, archives })
     }
@@ -256,7 +257,7 @@ impl GlobalPackLibrary {
         &mut self,
         selection: &[ActivePack],
     ) -> Result<Arc<ValidatedPackStack>, LibraryError> {
-        if selection.len() > MAX_PACKS {
+        if selection.len() > MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         let mut seen = std::collections::HashSet::new();
@@ -278,7 +279,10 @@ impl GlobalPackLibrary {
 
     /// Reads one installed pack's own icon without activating it or consulting overlays.
     pub fn pack_icon(&self, metadata: &InstalledPack) -> Result<Option<Box<[u8]>>, LibraryError> {
-        let bytes = read_bounded(&self.root.join(metadata.filename()), MAX_ARCHIVE_BYTES)?;
+        let bytes = read_bounded(
+            &self.root.join(metadata.filename()),
+            MAX_LOCAL_ARCHIVE_BYTES,
+        )?;
         let (pack, _, _) = validate_archive_parts(
             metadata.id,
             &metadata.version_text(),
@@ -308,7 +312,7 @@ impl GlobalPackLibrary {
         if self.active.iter().any(|pack| pack.id == id) {
             return Ok(());
         }
-        if self.active.len() >= MAX_PACKS {
+        if self.active.len() >= MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         self.active.insert(
@@ -377,13 +381,15 @@ impl GlobalPackLibrary {
         selection: &[ActivePack],
         imports: &[crate::PreparedImport],
     ) -> Result<Arc<ValidatedPackStack>, LibraryError> {
-        if selection.len() > MAX_PACKS {
+        if selection.len() > MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         let mut seen = std::collections::HashSet::new();
+        let reads = Arc::new(crate::read_cache::ReadCache::default());
         let mut stack = ValidatedPackStack {
             packs: Box::default(),
             rejections: Box::default(),
+            fingerprint: Default::default(),
         };
         for active in selection.iter().rev() {
             if !seen.insert(active.id) {
@@ -406,29 +412,37 @@ impl GlobalPackLibrary {
             let bytes = if let Some((_, bytes)) = prepared {
                 bytes.clone()
             } else {
-                read_bounded(&self.root.join(metadata.filename()), MAX_ARCHIVE_BYTES)?
+                read_bounded(
+                    &self.root.join(metadata.filename()),
+                    MAX_LOCAL_ARCHIVE_BYTES,
+                )?
             };
-            let (pack, _, _) = validate_archive_parts(
+            let (pack, _, _) = crate::parser::validate_archive_parts_cached(
                 active.id,
                 &metadata.version_text(),
                 &active.subpack,
                 bytes,
                 None,
-                None,
-                Purpose::Rendering,
+                AdmissionOptions {
+                    memory: None,
+                    purpose: Purpose::Rendering,
+                },
+                Arc::clone(&reads),
             )?;
             let next = ValidatedPackStack {
                 packs: vec![pack].into_boxed_slice(),
                 rejections: Box::default(),
+                fingerprint: Default::default(),
             };
             stack = ValidatedPackStack::compose(&stack, &next)?;
         }
+        let _ = stack.fingerprint();
         Ok(Arc::new(stack))
     }
 
     /// Persists an acknowledged runtime selection without changing newer staged edits.
     pub fn commit_selection(&mut self, selection: &[ActivePack]) -> Result<(), LibraryError> {
-        if selection.len() > MAX_PACKS {
+        if selection.len() > MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         let mut selection = selection.to_vec();

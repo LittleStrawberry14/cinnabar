@@ -1,10 +1,10 @@
 //! Bounded import of ordinary pack archives and resource halves of add-on bundles.
 
-use bedrock_packs::jsonc::{normalize_jsonc, parse_jsonc};
-use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
+use bedrock_packs::jsonc::parse_jsonc;
 
 use crate::{
-    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES, MAX_MANIFEST_BYTES,
+    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES, MAX_LOCAL_ARCHIVE_BYTES,
+    MAX_LOCAL_PACKS, MAX_MANIFEST_BYTES,
     library::{ImportReport, InstalledPack, LibraryError},
     manifest::{Purpose, Version, read_manifest},
     parser::{
@@ -60,7 +60,7 @@ pub fn prepare_import(path: &Path) -> Result<PreparedImport, LibraryError> {
         directory::archive(path)?
     } else if metadata.is_file() && !metadata.file_type().is_symlink() && is_pack_import_path(path)
     {
-        crate::library::read_bounded(path, MAX_ARCHIVE_BYTES)?
+        crate::library::read_bounded(path, MAX_LOCAL_ARCHIVE_BYTES)?
     } else {
         return Err(LibraryError::UnsupportedExtension);
     };
@@ -100,7 +100,7 @@ pub(crate) fn read_import(
     read_bundle(bytes, &source, 0, &mut report, &mut imported)
         .map_err(|error| file_error(&source, error))?;
     if imported.iter().map(|(_, bytes)| bytes.len()).sum::<usize>()
-        > bedrock_packs::MAX_STACK_ARCHIVE_BYTES
+        > crate::MAX_LOCAL_STACK_ARCHIVE_BYTES
     {
         return Err(AdmissionError::StackArchiveTooLarge.into());
     }
@@ -115,7 +115,7 @@ fn read_bundle(
     report: &mut ImportReport,
     imported: &mut ImportedArchives,
 ) -> Result<(), LibraryError> {
-    if bytes.len() > MAX_ARCHIVE_BYTES {
+    if bytes.len() > MAX_LOCAL_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge.into());
     }
     prepare_zip_bytes(&mut bytes)?;
@@ -135,11 +135,11 @@ fn read_bundle(
         .collect::<HashSet<_>>();
     let mut roots = roots.into_iter().collect::<Vec<_>>();
     roots.sort();
-    if roots.len() > MAX_PACKS {
+    if roots.len() > MAX_LOCAL_PACKS {
         return Err(AdmissionError::TooManyPacks.into());
     }
     for root in &roots {
-        if imported.len() >= MAX_PACKS {
+        if imported.len() >= MAX_LOCAL_PACKS {
             return Err(AdmissionError::TooManyPacks.into());
         }
         let result = read_candidate(&mut archive, &paths, root, &roots);
@@ -155,7 +155,7 @@ fn read_bundle(
             if !roots.iter().any(|root| path.starts_with(root))
                 && is_pack_import_path(Path::new(path))
             {
-                let bytes = match read_entry(&mut archive, *index, MAX_ARCHIVE_BYTES as u64) {
+                let bytes = match read_entry(&mut archive, *index, MAX_LOCAL_ARCHIVE_BYTES as u64) {
                     Ok(bytes) => bytes,
                     Err(error) => {
                         report.rejected.push(format!("{source}/{path}: {error}"));
@@ -163,7 +163,7 @@ fn read_bundle(
                     }
                 };
                 nested_bytes = nested_bytes.saturating_add(bytes.len());
-                if nested_bytes > bedrock_packs::MAX_STACK_ARCHIVE_BYTES {
+                if nested_bytes > crate::MAX_LOCAL_STACK_ARCHIVE_BYTES {
                     return Err(AdmissionError::StackArchiveTooLarge.into());
                 }
                 let nested_source = format!("{source}/{path}");
@@ -298,8 +298,7 @@ fn read_candidate(
 
 /// Accepts content-only indexes but never requests or derives marketplace keys.
 fn reject_encrypted_index(bytes: &[u8]) -> Result<(), LibraryError> {
-    let normalized = normalize_jsonc(bytes).ok_or(LibraryError::Encrypted)?;
-    let root: Value = serde_json::from_slice(&normalized).map_err(|_| LibraryError::Encrypted)?;
+    let root: Value = parse_jsonc(bytes).map_err(|_| LibraryError::Encrypted)?;
     if root["content"].as_array().is_some_and(|entries| {
         entries
             .iter()

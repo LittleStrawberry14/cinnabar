@@ -3,7 +3,6 @@
 //! Structural ZIP damage or a bad manifest drops one pack; odd entries inside an
 //! otherwise sound archive are skipped and counted instead.
 
-use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS, MAX_STACK_ARCHIVE_BYTES};
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
@@ -15,11 +14,11 @@ use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive};
 
 use crate::{
-    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK, MAX_FILE_BYTES,
-    MAX_MANIFEST_BYTES, MAX_PATH_BYTES,
+    AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_ENTRIES_PER_PACK,
     crypto::{ContentKey, contents_file_keys},
     manifest::{Purpose, read_manifest},
-    pack::{EntryIndex, ValidatedPack, read_entry},
+    pack::{ArchiveBytes, EntryIndex, ValidatedPack, read_entry},
+    read_cache::ReadCache,
 };
 use crate::{
     MAX_DECLARED_BYTES_PER_STACK, MAX_ENTRIES_PER_STACK, PackRejection, ValidatedPackStack,
@@ -44,9 +43,6 @@ pub enum ArchiveKind {
 
 /// Validates one unencrypted archive under a nil identity; used by fuzzing.
 pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
-    if bytes.len() > MAX_ARCHIVE_BYTES {
-        return Err(AdmissionError::ArchiveTooLarge);
-    }
     validate_archive_parts(
         Uuid::nil(),
         "0.0.0",
@@ -67,9 +63,6 @@ pub fn verify_archive_identity(
     pack_id: Uuid,
     version: &str,
 ) -> Result<ArchiveKind, AdmissionError> {
-    if bytes.len() > MAX_ARCHIVE_BYTES {
-        return Err(AdmissionError::ArchiveTooLarge);
-    }
     validate_archive_parts(
         pack_id,
         version,
@@ -82,23 +75,29 @@ pub fn verify_archive_identity(
     .map(|(_, _, kind)| kind)
 }
 
+/// Manifest use and device selection for one cache-backed admission pass.
+pub(crate) struct AdmissionOptions {
+    pub(crate) memory: Option<u32>,
+    pub(crate) purpose: Purpose,
+}
+
 /// Admits highest-priority-first server entries, then stores layers lowest priority first.
-/// Stack-wide bounds drop later entries; rejection indexes retain the server order.
+/// Structural checks retain rejection indexes in the server order.
 pub(super) fn validate_stack(
     archives: Vec<ResourcePackArchive>,
     memory: Option<u32>,
 ) -> ValidatedPackStack {
-    let mut packs = Vec::with_capacity(archives.len().min(MAX_PACKS));
+    let mut packs = Vec::with_capacity(archives.len());
     let mut rejections = Vec::new();
-    let (mut archive_bytes, mut entry_count, mut declared_bytes) = (0usize, 0usize, 0u64);
+    let (mut entry_count, mut declared_bytes) = (0usize, 0u64);
     let mut seen = HashSet::with_capacity(archives.len());
+    let reads = Arc::new(ReadCache::default());
     for (stack_index, archive) in archives.into_iter().enumerate() {
         let admitted = admit_stack_entry(
             archive,
             &mut seen,
-            packs.len(),
-            archive_bytes,
             memory,
+            Arc::clone(&reads),
             |pack, declared| {
                 let entries = entry_count.saturating_add(pack.entry_count());
                 let bytes = declared_bytes.saturating_add(declared);
@@ -112,8 +111,7 @@ pub(super) fn validate_stack(
             },
         );
         match admitted {
-            Ok((pack, size, (entries, declared))) => {
-                archive_bytes += size;
+            Ok((pack, (entries, declared))) => {
                 (entry_count, declared_bytes) = (entries, declared);
                 packs.push(pack);
             }
@@ -124,30 +122,22 @@ pub(super) fn validate_stack(
         }
     }
     packs.reverse();
-    ValidatedPackStack {
+    let stack = ValidatedPackStack {
         packs: packs.into_boxed_slice(),
         rejections: rejections.into_boxed_slice(),
-    }
+        fingerprint: Default::default(),
+    };
+    let _ = stack.fingerprint();
+    stack
 }
 
 fn admit_stack_entry<T>(
     archive: ResourcePackArchive,
     seen: &mut HashSet<Uuid>,
-    admitted: usize,
-    archive_bytes: usize,
     memory: Option<u32>,
+    reads: Arc<ReadCache>,
     stack_bounds: impl FnOnce(&ValidatedPack, u64) -> Result<T, AdmissionError>,
-) -> Result<(ValidatedPack, usize, T), AdmissionError> {
-    if admitted >= MAX_PACKS {
-        return Err(AdmissionError::TooManyPacks);
-    }
-    let size = archive.archive.len();
-    if size > MAX_ARCHIVE_BYTES {
-        return Err(AdmissionError::ArchiveTooLarge);
-    }
-    if archive_bytes.saturating_add(size) > MAX_STACK_ARCHIVE_BYTES {
-        return Err(AdmissionError::StackArchiveTooLarge);
-    }
+) -> Result<(ValidatedPack, T), AdmissionError> {
     if seen.contains(&archive.pack_id) {
         return Err(AdmissionError::DuplicatePack);
     }
@@ -157,35 +147,57 @@ fn admit_stack_entry<T>(
     } else {
         Some(ContentKey::new(key).ok_or(AdmissionError::InvalidContentKey)?)
     };
-    let (pack, declared, _) = validate_archive_parts(
+    let (pack, declared, _) = validate_archive_parts_cached(
         archive.pack_id,
         &archive.version,
         &archive.sub_pack_name,
         archive.archive,
         key,
-        memory,
-        Purpose::Rendering,
+        AdmissionOptions {
+            memory,
+            purpose: Purpose::Rendering,
+        },
+        reads,
     )?;
     let bounds = stack_bounds(&pack, declared)?;
     seen.insert(pack.pack_id);
-    Ok((pack, size, bounds))
+    Ok((pack, bounds))
 }
 
+/// Admits one archive with its own bounded read cache.
 pub(crate) fn validate_archive_parts(
+    pack_id: Uuid,
+    version: &str,
+    sub_pack_name: &str,
+    archive_bytes: Vec<u8>,
+    key: Option<ContentKey>,
+    memory: Option<u32>,
+    purpose: Purpose,
+) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
+    validate_archive_parts_cached(
+        pack_id,
+        version,
+        sub_pack_name,
+        archive_bytes,
+        key,
+        AdmissionOptions { memory, purpose },
+        Arc::default(),
+    )
+}
+
+/// Admits a pack whose plaintext storage shares the caller's byte budget.
+pub(crate) fn validate_archive_parts_cached(
     pack_id: Uuid,
     version: &str,
     sub_pack_name: &str,
     mut archive_bytes: Vec<u8>,
     key: Option<ContentKey>,
-    memory: Option<u32>,
-    purpose: Purpose,
+    options: AdmissionOptions,
+    reads: Arc<ReadCache>,
 ) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
-    if archive_bytes.len() > MAX_ARCHIVE_BYTES {
-        return Err(AdmissionError::ArchiveTooLarge);
-    }
     let expected_entries = prepare_zip_bytes(&mut archive_bytes)?;
-    let bytes: Arc<[u8]> = archive_bytes.into();
-    let mut zip = ZipArchive::new(Cursor::new(Arc::clone(&bytes)))
+    let bytes = Arc::new(archive_bytes);
+    let mut zip = ZipArchive::new(Cursor::new(ArchiveBytes(Arc::clone(&bytes))))
         .map_err(|_| AdmissionError::MalformedZip)?;
     if zip.len() != expected_entries || zip.len() > MAX_ENTRIES_PER_PACK {
         return Err(AdmissionError::TooManyEntries);
@@ -215,14 +227,14 @@ pub(crate) fn validate_archive_parts(
             && matches!(
                 file.compression(),
                 CompressionMethod::Stored | CompressionMethod::Deflated
-            )
-            && file.size() <= MAX_FILE_BYTES;
+            );
         match path {
             Some(path) if usable && folded_seen.insert(path.to_ascii_lowercase()) => {
                 let entry = EntryIndex {
                     archive_index,
                     uncompressed_size: file.size(),
                     key: None,
+                    cached: reads.entry(),
                 };
                 physical.insert(path, entry);
             }
@@ -255,6 +267,8 @@ pub(crate) fn validate_archive_parts(
         archive_bytes,
         declared_bytes: declared,
         zip,
+        content_hash: Arc::default(),
+        reads,
         files: rooted,
         folded: HashMap::new(),
         file_order: Box::default(),
@@ -263,13 +277,9 @@ pub(crate) fn validate_archive_parts(
         skipped_entries: skipped,
     };
     let manifest_bytes = pack
-        .read_file_with_limit(manifest_path, MAX_MANIFEST_BYTES as u64)
-        .map_err(|error| match error {
-            AdmissionError::FileTooLarge => AdmissionError::ManifestTooLarge,
-            other => other,
-        })?
+        .read_file(manifest_path)?
         .ok_or(AdmissionError::MissingManifest)?;
-    let manifest = read_manifest(&manifest_bytes, pack_id, version, purpose)?;
+    let manifest = read_manifest(&manifest_bytes, pack_id, version, options.purpose)?;
     let kind = if has_world_template {
         ArchiveKind::WorldTemplate
     } else if manifest.has_resources && manifest.has_behaviors {
@@ -281,7 +291,7 @@ pub(crate) fn validate_archive_parts(
     } else {
         ArchiveKind::Skins
     };
-    let selected = if let Some(memory) = memory {
+    let selected = if let Some(memory) = options.memory {
         crate::subpacks::supported(&manifest.subpacks, sub_pack_name, memory)
     } else {
         manifest
@@ -291,7 +301,7 @@ pub(crate) fn validate_archive_parts(
             .map_or("", |pack| pack.folder.as_str())
     };
     pack.files = logical_files(&pack.files, selected)?;
-    if memory.is_some() {
+    if options.memory.is_some() {
         pack.sub_pack_name = selected.into();
     }
     pack.folded = pack
@@ -426,7 +436,7 @@ pub(crate) fn is_regular_file(mode: Option<u32>) -> bool {
 /// Normalizes separators and a leading `./`; paths that could escape the pack
 /// root or carry control characters are refused.
 pub(crate) fn canonical_path(raw: &[u8]) -> Option<Box<str>> {
-    if raw.is_empty() || raw.len() > MAX_PATH_BYTES || raw.contains(&0) {
+    if raw.is_empty() || raw.contains(&0) {
         return None;
     }
     let path = std::str::from_utf8(raw).ok()?.replace('\\', "/");
