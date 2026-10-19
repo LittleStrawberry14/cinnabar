@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
+	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
 	"github.com/hashimthearab/rust-mcbe/core/internal/latencytrace"
 	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/hashimthearab/rust-mcbe/core/internal/streamnet"
@@ -270,9 +271,6 @@ type dialerDownstream interface {
 	Proto() minecraft.Protocol
 }
 
-// maxUpstreamDecompressedBatch bounds one decompressed upstream network batch.
-const maxUpstreamDecompressedBatch = 256 * 1024 * 1024
-
 // newUpstreamDialerForAdmission observes incoming pack negotiation before filtering
 // subclients and leaves payload observation to callers that need packet bodies.
 func newUpstreamDialerForAdmission(
@@ -287,7 +285,7 @@ func newUpstreamDialerForAdmission(
 		DownloadResourcePack: ignoreResourcePack,
 		ResourcePackDownload: boundedResourcePackDownload(),
 		EnableBatchReading:   true,
-		MaxDecompressedLen:   maxUpstreamDecompressedBatch,
+		MaxDecompressedLen:   bridgecontract.MaxUpstreamDecompressedBatchBytes,
 		FlushRate:            -1, // the relay's packet readers own flushing
 		AcceptPacketHeader: func(h packet.Header) bool {
 			// Observe even rejected subclients before body decoding or login handling.
