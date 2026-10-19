@@ -27,7 +27,13 @@ fn cancelled_later_exchange_preserves_pending_refresh_and_discards_late_ui_compl
         .unwrap();
     let (cancel, mut cancelled) = oneshot::channel();
     cancel.send(()).unwrap();
-    let result = runtime.block_on(authorize_pending(&mut account, &pending, &mut cancelled));
+    let (presentation, _) = bounded(super::super::EVENT_CAPACITY);
+    let result = runtime.block_on(authorize_pending(
+        &mut account,
+        &pending,
+        &presentation,
+        &mut cancelled,
+    ));
     assert!(matches!(result, Err(Failure::Cancelled)));
     assert!(
         !layout.auth_cache().exists(),

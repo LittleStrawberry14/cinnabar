@@ -6,8 +6,24 @@ impl NativeAccount {
     /// Validates the selected saved account without minting a Minecraft service credential.
     /// Cancellation retains any SDK-visible OAuth rotation through the operation's existing Drop owner.
     pub async fn validate(self: Arc<Self>) -> io::Result<launcher::accounts::AccountProfile> {
+        self.validate_selected(None).await
+    }
+
+    /// Keeps an interactive saved-account continuation on its original leased generation.
+    pub(crate) async fn validate_generation(
+        self: Arc<Self>,
+        generation: &str,
+    ) -> io::Result<launcher::accounts::AccountProfile> {
+        self.validate_selected(Some(generation)).await
+    }
+
+    /// Shares the original verification and publication owner with a captured optional generation fence.
+    async fn validate_selected(
+        self: Arc<Self>,
+        generation: Option<&str>,
+    ) -> io::Result<launcher::accounts::AccountProfile> {
         tokio::time::timeout(ACQUISITION_TIMEOUT, async {
-            let mut operation = self.acquire_verified().await?;
+            let mut operation = self.acquire_verified_for(generation).await?;
             let identity = operation
                 .cached
                 .as_ref()
@@ -157,13 +173,25 @@ impl NativeAccount {
             .is_none_or(|identity| !identity.current_credential)
         {
             operation.rearm()?;
-            let authorization = operation
+            let result = operation
                 .cached
                 .as_mut()
                 .expect("account owner")
                 .owner
                 .xbox_authorization()
-                .await?;
+                .await;
+            let authorization = match result {
+                Err(error)
+                    if error
+                        .get_ref()
+                        .is_some_and(|cause| cause.is::<xbox::AccountCreationRequired>()) =>
+                {
+                    // A browser continuation may outlive this borrow only after its same proof is durable.
+                    operation.persist()?;
+                    return Err(error);
+                }
+                result => result?,
+            };
             operation.verify_identity(authorization.xuid(), authorization.gamertag())?;
         }
         Ok(operation)

@@ -28,6 +28,9 @@ use crate::native_account::{
 const SIGN_IN_DEADLINE: Duration = Duration::from_secs(20 * 60);
 const PUBLICATION_DEADLINE: Duration = Duration::from_secs(3);
 
+mod signup;
+use signup::Signup;
+
 enum Message {
     State(AuthState),
     Verified(AccountProfile, Option<PendingSignIn>),
@@ -139,7 +142,9 @@ impl NativeAuth {
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
                     if matches!(
                         self.state,
-                        AuthState::Checking | AuthState::AwaitingCode { .. }
+                        AuthState::Checking
+                            | AuthState::AwaitingCode { .. }
+                            | AuthState::AwaitingXboxSignup { .. }
                     ) {
                         self.state = AuthState::Failed(
                             "Sign-in stopped before it completed. Try again.".into(),
@@ -207,21 +212,10 @@ async fn run(
 ) -> Result<(), Failure> {
     if !adding {
         let account = Arc::new(NativeAccount::new(store.clone(), device, selected.clone()));
-        let result = tokio::select! {
-            biased;
-            _ = &mut cancel => return Err(Failure::Cancelled),
-            result = account.validate() => result,
-        };
-        match result {
-            Ok(profile) => return send(sender, Message::Verified(profile, None)),
-            Err(error)
-                if requires_sign_in(&error)
-                    || (selected.is_none() && error.kind() == io::ErrorKind::NotFound) => {}
-            Err(_) => {
-                return Err(Failure::Failed(
-                    "Could not validate the saved account. Try again.",
-                ));
-            }
+        if let Some(profile) =
+            signup::saved_profile(&store, account, selected.as_deref(), sender, &mut cancel).await?
+        {
+            return send(sender, Message::Verified(profile, None));
         }
     }
     let pending = tokio::select! {
@@ -244,7 +238,7 @@ async fn run(
         .into_account(credentials)
         .map_err(|_| Failure::Failed("Could not create the account owner. Try again."))?;
     persist_proof(&pending, &account).await?;
-    let authorization = authorize_pending(&mut account, &pending, &mut cancel).await?;
+    let authorization = authorize_pending(&mut account, &pending, sender, &mut cancel).await?;
     let profile = AccountProfile::from_identity(authorization.xuid(), authorization.gamertag())
         .map_err(|_| {
             Failure::Failed("Xbox returned invalid account profile metadata. Try again.")
@@ -262,19 +256,34 @@ async fn run(
 async fn authorize_pending(
     account: &mut xbox::Account,
     pending: &PendingSignIn,
+    sender: &Sender<Message>,
     cancel: &mut oneshot::Receiver<()>,
 ) -> Result<Arc<xbox::Authorization>, Failure> {
-    let result = tokio::select! {
-        biased;
-        _ = cancel => Err(Failure::Cancelled),
-        result = tokio::time::timeout(ACQUISITION_TIMEOUT, account.authorize(XBOX_RELYING_PARTY)) =>
-            result.map_err(|_| Failure::Failed("Xbox sign-in timed out. Try again."))
-                .and_then(|result| result.map_err(|_| Failure::Failed("Could not verify the Xbox profile. Xbox profile setup requires the default sign-in mode."))),
-    };
-    // Cancellation or a later exchange error cannot discard a refresh already adopted by this SDK owner.
-    persist(pending, account.credentials()).await?;
-    persist_proof(pending, account).await?;
-    result
+    let mut signup = Signup::default();
+    loop {
+        let cutoff = signup.acquisition_cutoff(tokio::time::Instant::now())?;
+        let result = tokio::select! {
+            biased;
+            _ = &mut *cancel => Err(Failure::Cancelled),
+            result = tokio::time::timeout_at(cutoff, account.authorize(XBOX_RELYING_PARTY)) =>
+                result.map_err(|_| Failure::Failed("Xbox sign-in timed out. Try again.")),
+        };
+        // Every borrowed attempt publishes SDK-visible rotation before presenting or retrying.
+        persist(pending, account.credentials()).await?;
+        persist_proof(pending, account).await?;
+        match result? {
+            Ok(authorization) => return Ok(authorization),
+            Err(bedrock_services::Error::AccountCreationRequired(challenge)) => {
+                signup.present(challenge.signup_url(), tokio::time::Instant::now(), sender)?;
+                signup.wait(cancel).await?;
+            }
+            Err(_) => {
+                return Err(Failure::Failed(
+                    "Could not verify the Xbox profile. Try again.",
+                ));
+            }
+        }
+    }
 }
 
 /// Uses the SDK's explicit pacing and slow-down state without creating a hidden polling task.
