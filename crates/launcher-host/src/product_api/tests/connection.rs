@@ -30,6 +30,7 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
         let initial=config();
         api.configure(initial.clone());
         let (pending_seen,pending_ready)=oneshot::channel();
+        let (welcome_seen,welcome_ready)=oneshot::channel();
         let uuid="00112233-4455-6677-8899-aabbccddeeff";
         let server=async {
             let (stream,_)=listener.accept().await.unwrap();
@@ -57,6 +58,8 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             let prefix=schema["$defs"]["Proof"]["properties"]["signature"]["description"].as_str().unwrap().split('"').nth(1).unwrap();
             key.verify(format!("{prefix}{nonce}").as_bytes(),&signature).unwrap();
             socket.send(Message::text(json!({"type":"welcome","xuid":identity.xuid(),"lookup_batch_max":2,"lookup_bucket_capacity":4,"cache_ttl_ms":500,"loadout_revision":30}).to_string())).await.unwrap();
+            welcome_ready.await.unwrap();
+            socket.send(Message::text(json!({"type":"release","channel":initial.channel,"version":"1.0.1","build":43,"published_at":"2026-10-19T00:00:00.000Z"}).to_string())).await.unwrap();
             let first:Value=serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
             assert_eq!(first["type"],"lookup");
             assert_eq!(first["xuids"],json!(["11"]));
@@ -98,7 +101,15 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
                 if api.with(|state| state.live.is_some()) {break;}
                 changed.await;
             }
-            let answer=api.lookup(&["11".into(),uuid.into()]).await.unwrap();
+            welcome_seen.send(()).unwrap();
+            loop {
+                if let Some(release)=api.take_release() {
+                    assert_eq!(release.version,"1.0.1");
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            let answer=api.lookup(&["11".into(),uuid.into()]).await.expect("idle welcomed product owner did not dispatch and complete the original lookup");
             assert_eq!(answer.resolved,["11"]);
             assert_eq!(answer.resolved_uuids,[uuid]);
             assert_eq!(answer.cinnabar,["11"]);
