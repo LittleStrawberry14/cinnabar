@@ -17,12 +17,21 @@ use std::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 type Work = Pin<Box<dyn Future<Output = Completion> + Send>>;
+type ServiceLoop = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
+
+/// Owns cleanup after service completion until the retained physical connections retire.
+pub(super) struct RegistryDriver {
+    operation: Option<ServiceLoop>,
+    lifetime: Option<Driver>,
+    registry: Arc<Registry>,
+}
 
 struct Completion {
     session: Weak<Session>,
@@ -296,12 +305,19 @@ impl Registry {
         Ok(())
     }
 
-    /// Drives retained HTTP/device work and idle retirement; dropping it closes this application owner.
-    pub(super) async fn drive(self: &Arc<Self>) -> io::Result<()> {
-        if self.driving.swap(true, Ordering::AcqRel) {
-            return Err(busy());
+    /// Creates the actual cleanup owner, acquiring exclusive driving only on its first poll.
+    /// Retain this future itself until physical connections retire, even after it completes.
+    pub(super) fn drive(self: &Arc<Self>) -> RegistryDriver {
+        let registry = Arc::clone(self);
+        RegistryDriver {
+            operation: Some(Box::pin(Arc::clone(&registry).drive_services())),
+            lifetime: None,
+            registry,
         }
-        let _lifetime = Driver(Arc::clone(self));
+    }
+
+    /// Runs the original service work while its outer driver retains cleanup ownership.
+    async fn drive_services(self: Arc<Self>) -> io::Result<()> {
         let mut work = FuturesUnordered::new();
         let mut maintenance =
             tokio::time::interval(Duration::from_secs(u64::from(RELAY_KEEPALIVE_SECONDS)));
@@ -453,6 +469,33 @@ impl Drop for Attachment {
         if state.attached == 0 {
             state.detached_at = Instant::now();
         }
+    }
+}
+
+impl Future for RegistryDriver {
+    type Output = io::Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let driver = self.get_mut();
+        if driver.operation.is_none() {
+            return Poll::Pending;
+        }
+        if driver.lifetime.is_none() {
+            if driver.registry.driving.swap(true, Ordering::AcqRel) {
+                driver.operation = None;
+                return Poll::Ready(Err(busy()));
+            }
+            driver.lifetime = Some(Driver(Arc::clone(&driver.registry)));
+        }
+        let result = match driver.operation.as_mut() {
+            Some(operation) => operation.as_mut().poll(cx),
+            None => return Poll::Pending,
+        };
+        if result.is_ready() {
+            // Release completed work without dropping the outer cleanup guard.
+            driver.operation = None;
+        }
+        result
     }
 }
 

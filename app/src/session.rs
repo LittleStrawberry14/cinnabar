@@ -36,6 +36,7 @@ pub(crate) mod destination;
 mod native_account;
 #[cfg(feature = "native-networking")]
 mod native_friend;
+mod url_policy;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
 
@@ -64,6 +65,7 @@ pub(crate) struct SessionController {
     /// Automatic transfer-follow hops remaining in the current chain.
     transfer_hops_remaining: u32,
     connecting: bool,
+    parallel_resource_pack_urls: bool,
     #[cfg(feature = "native-networking")]
     native_transport: Option<protocol::NativeTransport>,
     #[cfg(feature = "native-networking")]
@@ -133,6 +135,7 @@ impl SessionController {
             local_world: false,
             transfer_hops_remaining: MAX_TRANSFER_CHAIN_HOPS,
             connecting: false,
+            parallel_resource_pack_urls: false,
             #[cfg(feature = "native-networking")]
             native_transport: None,
             #[cfg(feature = "native-networking")]
@@ -532,7 +535,7 @@ fn poll_join(
             if let Some(directory) = directory {
                 controller.bind_directory(directory);
             }
-            let login_settings = login_settings(menu, session.input.as_deref());
+            let login_settings = controller.login_settings(menu, session.input.as_deref());
             #[cfg(feature = "native-networking")]
             let native_account = if controller.native_friend.is_none()
                 && matches!(endpoint, protocol::SessionEndpoint::Native(_))
@@ -593,6 +596,7 @@ fn poll_join(
 pub(crate) fn login_settings(
     menu: &MenuRuntime,
     input: Option<&client_state::SemanticInputSnapshot>,
+    parallel_resource_pack_urls: bool,
 ) -> protocol::LoginSettings {
     protocol::LoginSettings {
         language_code: pack_runtime::pack_language::active_language_code(),
@@ -607,6 +611,7 @@ pub(crate) fn login_settings(
         filter_profanity: menu.settings_snapshot().0.value(SettingId::FilterProfanity) != 0,
         view_distance_chunks: menu.settings_snapshot().0.value(SettingId::RenderDistance) as u8,
         resource_pack_cache_dir: Some(menu.layout().resource_pack_cache_dir()),
+        parallel_resource_pack_urls,
     }
 }
 
@@ -990,7 +995,7 @@ mod tests {
                 layout,
                 client_shell::player_skin::LocalPlayerSkin::generated_default("Direct"),
             );
-            let settings = login_settings(&menu, None);
+            let settings = login_settings(&menu, None, false);
             assert_eq!(settings.filter_profanity, filter_profanity);
         }
     }
@@ -1012,7 +1017,7 @@ mod tests {
             layout,
             client_shell::player_skin::LocalPlayerSkin::generated_default("Direct"),
         );
-        let settings = login_settings(&menu, None);
+        let settings = login_settings(&menu, None, false);
         assert_eq!(settings.gui_scale_offset, -1);
         assert_eq!(settings.input_mode, protocol::PlayerInputMode::Mouse);
     }
@@ -1040,7 +1045,7 @@ mod tests {
                 client_shell::player_skin::LocalPlayerSkin::generated_default("Direct"),
             );
             assert_eq!(
-                login_settings(&menu, None).view_distance_chunks,
+                login_settings(&menu, None, false).view_distance_chunks,
                 radius as u8
             );
         }

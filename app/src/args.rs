@@ -17,6 +17,8 @@ Usage: cinnabar [OPTIONS] [PACK.mcpack|PACK.mcaddon|PACK.zip]...
 Options:
   --address <HOST:PORT>       Directly join a server (Go backend by default)
   --native-networking <KIND>  Opt in to Rust networking: raknet or nethernet-lan
+  --parallel-resource-pack-urls
+                               Opt native pack URL downloads into bounded parallel reads
   --socket-dir <PATH>          Override the platform runtime socket directory
   --import-pack <PATH>        Import an optional global resource pack
   --assets <PATH>              Compiled vanilla asset blob
@@ -100,6 +102,8 @@ pub struct ClientArgs {
     /// (and without an explicit socket directory) the client opens the menu.
     pub address: Option<String>,
     pub native_transport: Option<protocol::NativeTransport>,
+    /// Native-only URL scheduling choice retained across joins and server transfers.
+    pub parallel_resource_pack_urls: bool,
     pub socket_dir: PathBuf,
     pub socket_dir_explicit: bool,
     pub assets: Option<PathBuf>,
@@ -139,6 +143,7 @@ impl Default for ClientArgs {
         Self {
             address: None,
             native_transport: None,
+            parallel_resource_pack_urls: false,
             socket_dir: PathBuf::from(".local/run"),
             socket_dir_explicit: false,
             assets: None,
@@ -181,6 +186,8 @@ pub enum ArgsError {
     NativeNetworkingUnavailable,
     #[error("--native-networking must be raknet or nethernet-lan")]
     InvalidNativeTransport,
+    #[error("--parallel-resource-pack-urls requires --native-networking")]
+    ParallelPackUrlsRequireNativeNetworking,
     #[error(
         "acceptance and evidence options require the app's `acceptance` feature; rebuild without --no-default-features or enable --features acceptance"
     )]
@@ -279,6 +286,7 @@ impl ClientArgs {
                     parsed.require_transparent_presentation = true;
                 }
                 Some("--movement-candidate-physics") => parsed.movement_candidate_physics = true,
+                Some("--parallel-resource-pack-urls") => parsed.parallel_resource_pack_urls = true,
                 Some("--address" | "-address") => {
                     let value = next_value(&mut arguments, "--address")?
                         .into_string()
@@ -455,6 +463,9 @@ impl ClientArgs {
         {
             return Err(ArgsError::NativeNetworkingUnavailable);
         }
+        if parsed.parallel_resource_pack_urls && parsed.native_transport.is_none() {
+            return Err(ArgsError::ParallelPackUrlsRequireNativeNetworking);
+        }
         parsed.validate_acceptance_support(cfg!(feature = "acceptance"))?;
         Ok(ParseOutcome::Run(Box::new(parsed)))
     }
@@ -502,6 +513,26 @@ where
 mod tests {
     use super::{ArgsError, ClientArgs, HELP, ParseOutcome};
     use std::path::PathBuf;
+
+    #[test]
+    fn parallel_pack_urls_require_an_explicit_native_launch() {
+        assert!(!ClientArgs::default().parallel_resource_pack_urls);
+        assert!(matches!(
+            ClientArgs::parse_from(["client", "--parallel-resource-pack-urls"]),
+            Err(ArgsError::ParallelPackUrlsRequireNativeNetworking)
+        ));
+        if !cfg!(feature = "native-networking") {
+            assert!(matches!(
+                ClientArgs::parse_from([
+                    "client",
+                    "--native-networking",
+                    "raknet",
+                    "--parallel-resource-pack-urls",
+                ]),
+                Err(ArgsError::NativeNetworkingUnavailable)
+            ));
+        }
+    }
 
     #[test]
     fn native_networking_allows_menu_selection_and_rejects_ambiguous_endpoints() {

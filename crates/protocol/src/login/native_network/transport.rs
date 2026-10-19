@@ -224,3 +224,6 @@ mod early_packet_tap_tests;
 
 #[cfg(test)]
 mod pack_url_policy_tests;
+
+#[cfg(test)]
+mod pack_url_parallel_tests;

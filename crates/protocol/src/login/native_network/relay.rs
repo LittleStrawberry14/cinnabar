@@ -151,7 +151,7 @@ impl NativeRelayConnecting {
                     ))
                 })?;
             let start_game = packet_id(&raw).map_err(failure)? == PacketId::StartGame;
-            self.startup.push(raw);
+            self.startup.push(Bytes::copy_from_slice(&raw));
             if start_game {
                 break;
             }
@@ -196,13 +196,16 @@ impl NativeRelayConnecting {
     /// Moves established application I/O only after the actual handoff boundary was reached.
     pub fn try_finish(mut self) -> Result<(NativeRelayConnection, NativeRelayHandoff), Self> {
         match self.complete.take() {
-            Some(handoff) => Ok((
-                NativeRelayConnection {
-                    connection: self.connection,
-                    terminal: false,
-                },
-                handoff,
-            )),
+            Some(handoff) => {
+                self.connection.finish_current();
+                Ok((
+                    NativeRelayConnection {
+                        connection: self.connection,
+                        terminal: false,
+                    },
+                    handoff,
+                ))
+            }
             None => Err(self),
         }
     }

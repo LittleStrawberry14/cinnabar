@@ -56,7 +56,10 @@ pub(super) async fn negotiate(
             messaging: None,
             ..credentials
         },
-        packs::Acquisition::Desktop(login.settings.resource_pack_cache_dir.as_deref()),
+        packs::Acquisition::Desktop {
+            cache_root: login.settings.resource_pack_cache_dir.as_deref(),
+            parallel_urls: login.settings.parallel_resource_pack_urls,
+        },
     )
     .await?;
     Ok(NegotiatedConnection { connection, packs })

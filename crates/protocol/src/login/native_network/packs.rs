@@ -13,7 +13,7 @@ use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
 use std::{io, path::Path, sync::Arc};
 
-const MAX_CDN_DOWNLOADS: usize = 4;
+pub(super) const MAX_CDN_DOWNLOADS: usize = 4;
 
 #[cfg(test)]
 tokio::task_local! {
@@ -24,7 +24,10 @@ tokio::task_local! {
 /// The desktop's guarded local cache/CDN edge, or gateway transfer on the existing game socket only.
 #[derive(Clone, Copy)]
 pub(super) enum Acquisition<'a> {
-    Desktop(Option<&'a Path>),
+    Desktop {
+        cache_root: Option<&'a Path>,
+        parallel_urls: bool,
+    },
     InBand,
 }
 
@@ -39,17 +42,24 @@ pub(super) async fn acquire(
     let cache = if offers.is_empty() || matches!(policy, Acquisition::InBand) {
         None
     } else {
-        let Acquisition::Desktop(cache_root) = policy else {
+        let Acquisition::Desktop { cache_root, .. } = policy else {
             unreachable!("in-band transfer never opens cache")
         };
         wait_io(connection, acquisition::open_cache(cache_root)).await
     };
-    let client = if matches!(policy, Acquisition::Desktop(_))
+    let client = if matches!(policy, Acquisition::Desktop { .. })
         && offers.iter().any(|offer| !offer.cdn_url.is_empty())
     {
         acquisition::http_client().ok()
     } else {
         None
+    };
+    let concurrency = match policy {
+        Acquisition::Desktop {
+            parallel_urls: true,
+            ..
+        } => MAX_CDN_DOWNLOADS,
+        _ => 1,
     };
     let preloads = stream::iter(offers.into_iter().enumerate().map(|(index, offer)| {
         let (cache, client, cancelled) = (cache.clone(), client.clone(), Arc::clone(&cancelled.0));
@@ -58,7 +68,7 @@ pub(super) async fn acquire(
             (index, offer, result)
         }
     }))
-    .buffer_unordered(MAX_CDN_DOWNLOADS)
+    .buffer_unordered(concurrency)
     .collect::<Vec<_>>();
     let mut preloads = wait_io(connection, preloads).await;
     preloads.sort_unstable_by_key(|(index, _, _)| *index);
