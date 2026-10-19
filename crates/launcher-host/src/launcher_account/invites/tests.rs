@@ -28,7 +28,13 @@ async fn core_invite_people_keep_the_existing_rpc_and_rows() {
     let selected = Selection::capture(&shared.lock().unwrap());
     let (wake, mut changed) = watch::channel(Wake::Account);
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     let server = async {
         let (mut stream, request) = request(&listener).await;
         retire(&wake);
@@ -66,7 +72,13 @@ async fn account_retirement_cancels_the_actual_invite_people_rpc() {
     });
     let selected = Selection::capture(&shared.lock().unwrap());
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     tokio::pin!(reading);
     let (mut stream, _) = tokio::select! {
         request = request(&listener) => request,
@@ -101,7 +113,13 @@ async fn stopping_invite_worker_cancels_the_actual_people_rpc() {
     let shared = Mutex::new(Snapshot::default());
     let selected = Selection::capture(&shared.lock().unwrap());
     let images = artwork::people_images(&directory.path().join("artwork"));
-    let reading = people(directory.path(), &images, &shared, &selected, &mut changed);
+    let reading = people(
+        Some(directory.path()),
+        &images,
+        &shared,
+        &selected,
+        &mut changed,
+    );
     tokio::pin!(reading);
     let (mut stream, _) = tokio::select! {
         request = request(&listener) => request,

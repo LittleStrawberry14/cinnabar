@@ -1,4 +1,4 @@
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use launcher::local_worlds::world::{Generator, UnavailableReason};
 
@@ -670,7 +670,7 @@ fn native_bds_host_intent_keeps_the_original_http_or_lan_opening() {
         assert!(!intent.same(&manager.native_host_intent().unwrap()));
         assert_eq!(
             selection.validate().unwrap_err().kind(),
-            io::ErrorKind::NotConnected
+            std::io::ErrorKind::NotConnected
         );
         assert!(
             !runner.last().stopped(),
