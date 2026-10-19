@@ -41,15 +41,6 @@ pub const KIND_TRANSFER: u8 = 5;
 /// Terminal core disconnect message.
 pub const KIND_DISCONNECT: u8 = 6;
 
-/// Most selected server pack archives admitted for one join.
-pub const MAX_SELECTED_PACKS: usize = 32;
-
-/// Largest admitted server pack archive in bytes.
-pub const MAX_PACK_ARCHIVE_BYTES: usize = 67108864;
-
-/// Largest total selected server pack archives in bytes.
-pub const MAX_SELECTED_PACK_BYTES: usize = 134217728;
-
 /// Resource-pack wire type for an admitted addon archive.
 pub const RESOURCE_PACK_TYPE_ADDON: u8 = 1;
 

@@ -14,7 +14,7 @@ reads = [
     "core/authcache/service_device_namespace.txt",
     "core/proxy/resource_pack_window.txt",
     "assets/bedrock-target.json",
-    "assets/block-data-sources.json",
+    "assets/block-projection-v2193.json",
     "crates/protocol-ids/data/protocol-ids.json",
     "crates/protocol-ids/data/actor-data-extensions.json",
     "crates/protocol-ids/data/movement-contract.json",

@@ -29,12 +29,6 @@ const (
 	SessionKindTransfer = 5
 	// SessionKindDisconnect: Terminal core disconnect message.
 	SessionKindDisconnect = 6
-	// MaxSelectedPacks: Most selected server pack archives admitted for one join.
-	MaxSelectedPacks = 32
-	// MaxPackArchiveBytes: Largest admitted server pack archive in bytes.
-	MaxPackArchiveBytes = 67108864
-	// MaxSelectedPackBytes: Largest total selected server pack archives in bytes.
-	MaxSelectedPackBytes = 134217728
 	// ResourcePackTypeAddon: Resource-pack wire type for an admitted addon archive.
 	ResourcePackTypeAddon = 1
 	// ResourcePackTypeBehaviour: Resource-pack wire type for an opaque behavior archive.
