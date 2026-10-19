@@ -248,12 +248,12 @@ fn saved_schema_snapshot_keeps_all_setting_and_binding_keys() {
 fn reload_shaders_defaults_to_r_and_remaps_only_in_shader_pack_builds() {
     let r = semantic_input::PhysicalControl::KeyboardUsage(0x15);
     let mut options = SettingsOptions::default();
-    let Some(row) = BindingId::ReloadShaders.row(false) else {
-        assert!(!super::SHADER_PACK_BINDINGS);
+    let row = BindingId::ReloadShaders.row(false);
+    assert_eq!(row.is_some(), super::SHADER_PACK_BINDINGS);
+    let Some(row) = row else {
         assert_eq!(options.named_key_control(BindingId::ReloadShaders), None);
         return;
     };
-    assert!(super::SHADER_PACK_BINDINGS);
     assert_eq!(
         super::custom_key_label(BindingId::ReloadShaders.name()),
         Some("Reload Shaders")
