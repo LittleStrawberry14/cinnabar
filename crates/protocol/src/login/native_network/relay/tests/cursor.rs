@@ -9,51 +9,78 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn filtered_cursor_preserves_accepted_prefix_before_a_later_invalid_header() {
-    tokio::time::timeout(Duration::from_secs(20), async {
-        let FixtureRoute {
-            mut listener,
-            target,
-            ..
-        } = fixture_route(Route::Lan).await;
-        let expected = crate::Packet::new(packets::SetTime {
-            time: wire::ZigZag32(7),
-        });
-        let server = async {
-            let peer = listener.accept().await.unwrap();
-            let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
-            let raw = [packet_bytes(&expected), Bytes::from_static(&[0x80])];
-            let mut messages = codec.encode(&raw).unwrap();
-            assert_eq!(messages.len(), 1);
-            peer.session.send(messages.remove(0)).await.unwrap();
-            peer.session.closed().await;
-        };
-        let client = async {
-            let transport = transport::Transport::connect(
-                &target,
-                None,
-                None,
-                tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
-            )
-            .await
-            .unwrap();
-            let mut connection = Connection::new(transport);
-            connection.primary_only();
-            let body = connection.recv_body().await.unwrap();
-            assert_eq!(
-                body,
-                crate::session_transport::batch_body(std::slice::from_ref(&expected)).unwrap()
-            );
-            assert!(
-                connection.recv_body().await.is_err(),
-                "later malformed header was lost"
-            );
-            connection.close().await.unwrap();
-        };
-        tokio::join!(server, client);
-        listener.close().await.unwrap();
-    })
-    .await
-    .expect("finite actual filtered cursor prefix fixture stalled");
+    use crate::login::native_network::transport::early_spawn_tests::{
+        FixtureRoute, Route, fixture_route,
+    };
+    use crate::session_transport::tests::packet_bytes;
+
+    let expected = crate::Packet::new(packets::SetTime {
+        time: wire::ZigZag32(7),
+    });
+    let ((messages, sent), (first, second, closed), listener_closed) =
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let FixtureRoute {
+                mut listener,
+                target,
+                ..
+            } = fixture_route(Route::Lan).await;
+            let server = async {
+                let peer = listener.accept().await.unwrap();
+                let codec = BatchCodec::new(BatchHeader::NetherNet, BatchLimits::default());
+                let raw = [packet_bytes(&expected), Bytes::from_static(&[0x80])];
+                let messages = codec.encode(&raw).unwrap();
+                let count = messages.len();
+                let mut sent = Ok(());
+                for message in messages {
+                    if let Err(error) = peer.session.send(message).await {
+                        sent = Err(error);
+                        break;
+                    }
+                }
+                peer.session.closed().await;
+                drop(peer);
+                (count, sent)
+            };
+            let client = async {
+                let transport = transport::Transport::connect(
+                    &target,
+                    None,
+                    None,
+                    tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
+                )
+                .await
+                .unwrap();
+                let mut connection = Connection::new(transport);
+                connection.primary_only();
+                let first = connection.recv_body().await;
+                let second = connection.recv_body().await;
+                let closed = connection.close().await;
+                drop(connection);
+                (first, second, closed)
+            };
+            let (server, client) = tokio::join!(server, client);
+            let listener_closed = listener.close().await;
+            drop(listener);
+            (server, client, listener_closed)
+        })
+        .await
+        .expect("finite actual filtered cursor prefix fixture stalled");
+
+    sent.unwrap();
+    closed.unwrap();
+    listener_closed.unwrap();
+    assert_eq!(messages, 1, "fixture split the original packet batch");
+    assert_eq!(
+        first.expect("a later malformed header discarded the original valid prefix"),
+        crate::session_transport::batch_body(std::slice::from_ref(&expected)).unwrap()
+    );
+    let error = second.expect_err("later malformed header was lost");
+    assert!(
+        error
+            .get_ref()
+            .is_some_and(|error| error.is::<wire::DecodeError>()),
+        "later malformed header lost its original wire decode cause: {error}"
+    );
 }
 
 #[tokio::test]
