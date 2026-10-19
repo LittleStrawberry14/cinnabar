@@ -100,6 +100,8 @@ pub struct WorldsClient {
     /// Set once the client is detached; an open in progress finishes before it is set.
     revoked: Arc<Mutex<bool>>,
     _core: Option<CoreLink>,
+    #[cfg(test)]
+    worker: Option<thread::JoinHandle<()>>,
 }
 
 impl WorldsClient {
@@ -144,7 +146,7 @@ impl WorldsClient {
         let worker_revoked = Arc::clone(&revoked);
         let (effects, effect_rx) = unbounded::<Request>();
         let (event_tx, events) = unbounded::<Reply>();
-        thread::Builder::new()
+        let _worker = thread::Builder::new()
             .name("local-worlds".to_owned())
             .spawn(move || {
                 manager.reclaim_abandoned_imports();
@@ -211,6 +213,8 @@ impl WorldsClient {
             events,
             revoked,
             _core: core,
+            #[cfg(test)]
+            worker: Some(_worker),
         })
     }
 
@@ -487,3 +491,6 @@ mod tests {
 
 #[cfg(test)]
 mod thumbnail_tests;
+
+#[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+mod native_retirement_tests;
