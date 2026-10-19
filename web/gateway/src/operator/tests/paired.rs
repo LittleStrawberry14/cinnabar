@@ -92,10 +92,10 @@ impl PairedFixture {
         let identity = connection
             .peer_identity()
             .expect("verified rustls peer identity");
-        let certificates = identity
-            .downcast::<Vec<CertificateDer<'static>>>()
-            .ok()
-            .expect("actual rustls certificate chain");
+        let certificates = match identity.downcast::<Vec<CertificateDer<'static>>>() {
+            Ok(certificates) => certificates,
+            Err(_) => panic!("actual rustls certificate chain"),
+        };
         let certificate = certificates[0].clone();
         (connection, certificate)
     }
