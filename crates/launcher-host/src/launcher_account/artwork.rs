@@ -74,6 +74,12 @@ pub(super) struct FeedArt {
 }
 
 impl FeedArt {
+    /// Borrows the same bounded decoder/cache for authenticated native persona bytes.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub(super) fn images(&self) -> &ImageDirectory {
+        &self.images
+    }
+
     /// Starts the worker; dropping this stops it without finishing queued downloads.
     pub(super) fn start(
         images: ImageDirectory,

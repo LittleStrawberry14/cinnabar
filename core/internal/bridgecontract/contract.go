@@ -275,6 +275,12 @@ const (
 	MessageEventReadAll = "ReadAll"
 	// MessageEventDelete: Messaging event for delete.
 	MessageEventDelete = "Delete"
+	// HomeFeedCacheSeconds: Existing successful Home service refresh interval.
+	HomeFeedCacheSeconds = 900
+	// HomeFeedRefreshSeconds: Original complete Home/featured service refresh budget.
+	HomeFeedRefreshSeconds = 40
+	// DefaultServiceLanguage: Launcher service locale before a client supplies one.
+	DefaultServiceLanguage = "en-US"
 	// MessageEventClick: Messaging event for click.
 	MessageEventClick = "Click"
 	// MessageEventDismiss: Messaging event for dismiss.

@@ -398,6 +398,15 @@ pub const MESSAGE_EVENT_READ_ALL: &str = "ReadAll";
 /// Messaging event for delete.
 pub const MESSAGE_EVENT_DELETE: &str = "Delete";
 
+/// Existing successful Home service refresh interval.
+pub const HOME_FEED_CACHE_SECONDS: u32 = 900;
+
+/// Original complete Home/featured service refresh budget.
+pub const HOME_FEED_REFRESH_SECONDS: u32 = 40;
+
+/// Launcher service locale before a client supplies one.
+pub const DEFAULT_SERVICE_LANGUAGE: &str = "en-US";
+
 /// Messaging event for click.
 pub const MESSAGE_EVENT_CLICK: &str = "Click";
 

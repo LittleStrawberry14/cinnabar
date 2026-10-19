@@ -132,8 +132,14 @@ The default picker and outgoing invitations keep the Go host owner. Shared displ
 bounds, Go/Rust projection controls, native/default cancellation regressions and
 strict host Clippy pass. Uncommon Unicode-version ordering and live picker
 acceptance remain open.
-Native invitation sending and inbox adoption need their concrete account/session
-consumers; a people row does not provide membership or invitation authority.
+Native invitation sending still needs its active host consumer; a people row does
+not provide membership or invitation authority. Native marketing Home/inbox reads
+and reports now have a selected-account consumer on the existing shared workers.
+The four service parts retain same-session partial values under the original
+refresh budget and cache policy. Reports retain the shown SDK session and language;
+its replacement retires optimistic inbox actions. Go remains the default. SDK API
+alignment, owning execution, full signed Home acceptance and live account checks
+remain incomplete.
 
 The existing Realm invitation UI now selects the same native account for preview
 and explicit acceptance. Preparation retains its verified credential lease;

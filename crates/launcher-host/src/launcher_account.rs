@@ -36,6 +36,7 @@ mod home_promo;
 mod artwork;
 mod cinnabar_players;
 mod feeds;
+mod home_feed;
 mod shared_players;
 mod workers;
 use feeds::{CoreFeeds, catalog_round};
@@ -77,6 +78,14 @@ struct Snapshot {
     feed_wake: Option<Sender<()>>,
     /// Wakes Home independently when its account identity changes.
     home_wake: Option<Sender<()>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    home_source: home_feed::Source,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    home_language: String,
+    home_cancel: Option<tokio::sync::watch::Sender<home_feed::Wake>>,
+    pending_home_scope: home_feed::Scope,
+    delivered_home_scope: home_feed::Scope,
+    home_reports: Option<Sender<home_feed::Report>>,
     /// Wakes Profile independently when its account identity changes.
     profile_wake: Option<tokio::sync::watch::Sender<profile_worker::Wake>>,
     /// Selects one presentation source for this account's existing profile worker.
@@ -139,6 +148,11 @@ impl Snapshot {
         self.realm_membership = None;
         self.realm_ticket = None;
         self.home = None;
+        self.pending_home_scope = home_feed::Scope::default();
+        self.delivered_home_scope = home_feed::Scope::default();
+        if let Some(wake) = &self.home_cancel {
+            home_feed::retire(wake);
+        }
         if let Some(wake) = &self.people_wake {
             invites::retire(wake);
         }
@@ -178,7 +192,7 @@ pub struct LauncherAccount {
     snapshot: Arc<Mutex<Snapshot>>,
     sign_out: Sender<()>,
     profile_refresh: tokio::sync::watch::Sender<profile_worker::Wake>,
-    message_reports: Sender<MessageEvent>,
+    message_reports: Sender<home_feed::Report>,
     invites: invites::Requests,
     realm_membership: realm_membership::Requests,
     cinnabar_rosters: Sender<cinnabar_players::Roster>,
@@ -191,6 +205,12 @@ pub struct LauncherAccount {
 impl Drop for LauncherAccount {
     fn drop(&mut self) {
         profile_worker::stop(&self.profile_refresh);
+        self.with(|snapshot| {
+            if let Some(wake) = &snapshot.home_cancel {
+                wake.send_replace(home_feed::Wake::Stop);
+            }
+            snapshot.home_reports = None;
+        });
         self.presence_lifetime.retire();
     }
 }
@@ -203,13 +223,14 @@ impl LauncherAccount {
         Self::start(socket_dir, artwork, Snapshot::default(), runtime, tasks)
     }
 
-    /// Starts native title presence after the previous core was reaped, and native profile reads.
-    /// Both use the menu's existing selected owner, shared with catalog and game operations.
+    /// Starts native account services after the previous core was reaped.
+    /// They share the menu's selected owner with catalog and game operations.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     pub fn with_native_presence(
         socket_dir: PathBuf,
         artwork: PathBuf,
         account: Option<Arc<crate::native_account::NativeAccount>>,
+        language: &str,
         runtime: Handle,
         tasks: TaskTracker,
     ) -> Self {
@@ -221,6 +242,12 @@ impl LauncherAccount {
                 profile_source: profile_worker::Source::Native(account.clone()),
                 people_source: invites::Source::Native(account.clone()),
                 realm_source: realm_membership::Source::Native(account.clone()),
+                home_source: home_feed::Source::Native(account.clone()),
+                home_language: if language.is_empty() {
+                    bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
+                } else {
+                    language.replace('_', "-")
+                },
                 native_presence_account: account,
                 ..Default::default()
             },
@@ -539,6 +566,7 @@ pub fn menu_home(home: &Home, now_unix: i64) -> MenuHome {
             route_to_servers: event.route_to_servers,
         });
     MenuHome {
+        message_session: None,
         play_art: art(bridge::contract::MESSAGE_SURFACE_PLAY_BUTTON),
         inbox_unread: home
             .inbox
@@ -748,15 +776,22 @@ impl AccountControl for LauncherAccount {
 
     /// Queues an inbox action on the dedicated reporting worker.
     fn report_message(&mut self, event: MessageEvent) {
-        let _ = self.message_reports.send(event);
+        let report = self.with(|snapshot| home_feed::Report::capture(snapshot, event));
+        let _ = self.message_reports.send(report);
     }
 
     fn home(&mut self) -> Option<MenuHome> {
-        let home = self.with(|snapshot| snapshot.home.take())?;
+        let (home, scope) = self.with(|snapshot| {
+            let home = snapshot.home.take()?;
+            snapshot.delivered_home_scope = snapshot.pending_home_scope.clone();
+            Some((home, snapshot.delivered_home_scope.clone()))
+        })?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs() as i64);
-        Some(menu_home(&home, now))
+        let mut view = menu_home(&home, now);
+        view.message_session = scope.marker();
+        Some(view)
     }
 
     fn set_ping_targets(&mut self, targets: Vec<String>) {

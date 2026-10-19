@@ -230,6 +230,7 @@ impl LauncherCoreSlot {
                     core.socket_dir.clone(),
                     menu.layout.launcher_artwork_dir(),
                     native,
+                    &pack_runtime::pack_language::active_language_code(),
                     runtime,
                     tasks,
                 )
