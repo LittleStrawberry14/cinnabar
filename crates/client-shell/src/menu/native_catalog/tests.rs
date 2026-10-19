@@ -28,7 +28,7 @@ fn realm(name: &str) -> MenuRealmCard {
 }
 
 /// Reuses the production card projection for a synthetic listed world.
-fn friend(world: &str) -> MenuFriendCard {
+pub(super) fn friend(world: &str) -> MenuFriendCard {
     launcher::menu::view::CatalogFriend {
         gamertag: "Synthetic friend".into(),
         xuid: "456".into(),

@@ -30,3 +30,11 @@ pub(super) fn begin(
         )),
     });
 }
+
+#[cfg(feature = "developer-control")]
+impl SessionController {
+    /// Reports existing local cleanup ownership without claiming a remote acknowledgement.
+    pub(crate) fn native_friend_cleanup_observation(&self) -> (bool, bool) {
+        self.friend_cleanup.observation()
+    }
+}

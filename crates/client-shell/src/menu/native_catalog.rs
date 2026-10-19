@@ -145,6 +145,11 @@ impl MenuRuntime {
                 Some("That friend world is no longer available. Refresh to try again.".into());
             return;
         };
+        self.queue_native_friend(selection);
+    }
+
+    /// Sends the original selected owner through the same menu-to-session handoff.
+    fn queue_native_friend(&mut self, selection: NativeFriendSelection) {
         self.remember_session_origin();
         self.stop_catalog();
         self.intents.join = None;
@@ -211,6 +216,7 @@ impl MenuRuntime {
                 self.friends
                     .replace(worlds.iter().map(|world| world.card().clone()).collect());
                 self.native_catalog.friend_worlds = worlds;
+                self.native_catalog.epoch = self.native_catalog.epoch.wrapping_add(1);
             }
             Err(_) => failed = true,
         }
@@ -306,3 +312,6 @@ impl MenuRuntime {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "developer-control")]
+mod control;

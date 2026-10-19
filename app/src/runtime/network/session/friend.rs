@@ -26,6 +26,16 @@ struct CleanupLease {
 }
 
 impl FriendCleanupOwner {
+    /// Observes the original reservation and uncertain-member slot for developer acceptance.
+    #[cfg(feature = "developer-control")]
+    pub(crate) fn observation(&self) -> (bool, bool) {
+        let state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (state.reserved, state.pending.is_some())
+    }
+
     /// Reserves the sole cleanup slot before any new remote membership is created.
     fn reserve(&self) -> io::Result<CleanupLease> {
         let mut state = self
@@ -178,6 +188,17 @@ impl SessionCompanion for FriendCompanion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "developer-control")]
+    fn cleanup_observation_follows_the_original_reserved_lifetime() {
+        let owner = FriendCleanupOwner::default();
+        assert_eq!(owner.observation(), (false, false));
+        let lease = owner.reserve().unwrap();
+        assert_eq!(owner.observation(), (true, false));
+        drop(lease);
+        assert_eq!(owner.observation(), (false, false));
+    }
 
     #[test]
     fn cleanup_capacity_backpressures_another_join_until_the_reserved_owner_returns() {
