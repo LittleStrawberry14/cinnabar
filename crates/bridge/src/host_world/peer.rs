@@ -4,7 +4,7 @@ use super::{
     Frame, Reader, Writer,
     contract::*,
     invalid,
-    process::{bounded, parse, send_json},
+    process::{bounded, check_deadline, parse, send_json},
 };
 use bytes::Bytes;
 use std::{io, time::Instant};
@@ -22,6 +22,15 @@ struct PendingRead {
     length: u32,
     deadline: Instant,
 }
+
+/// One admitted Attach, retaining its original socket halves and finite deadline.
+#[must_use = "finish this admitted Attach or drop it to retire its socket"]
+pub struct AttachingBackendPeer {
+    reader: Reader,
+    writer: Writer,
+    deadline: Instant,
+}
+
 /// Actual Go world output, still awaiting verified client runtime-ID initialization.
 pub struct BackendWorldReady {
     reader: Reader,
@@ -121,14 +130,26 @@ impl PendingBackendPeer {
         result
     }
 
-    /// Only the application holding the actual typed ServerWorldReady may dispatch this attach.
-    /// Cancellation drops the same reserved socket, so Go cannot silently replace it.
-    pub async fn attach(mut self, deadline: Instant) -> io::Result<BackendWorldReady> {
+    /// Admits one Attach synchronously after the caller's current ServerWorldReady authority check.
+    pub fn begin_attach(mut self, deadline: Instant) -> io::Result<AttachingBackendPeer> {
         if self.read.is_some() {
             return Err(invalid());
         }
-        bounded(deadline, async move {
-            self.writer.admit(Kind::Attach, &[])?;
+        check_deadline(deadline)?;
+        self.writer.admit(Kind::Attach, &[])?;
+        Ok(AttachingBackendPeer {
+            reader: self.reader,
+            writer: self.writer,
+            deadline,
+        })
+    }
+}
+
+impl AttachingBackendPeer {
+    /// Finishes only the admitted Attach and original World response.
+    /// Keep this future pinned; canceling the owning operation drops its actual socket.
+    pub async fn finish(mut self) -> io::Result<BackendWorldReady> {
+        bounded(self.deadline, async move {
             self.writer.flush().await?;
             let frame = self.reader.recv().await?.ok_or_else(invalid)?;
             if frame.kind != Kind::World {

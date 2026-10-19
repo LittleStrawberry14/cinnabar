@@ -17,7 +17,7 @@ use protocol::{NativeAcceptingIo, NativeHostWorld, native_host_packs};
 use std::{io, sync::Arc, time::Instant};
 
 impl NativeHostedWorld {
-    /// Retains original membership checks around the real backend Attach operation.
+    /// Applies current service state and original membership before synchronous Attach admission.
     /// Cryptographic Login and typed ServerWorldReady remain with the calling pack owner.
     pub(super) async fn attach_backend(
         &mut self,
@@ -25,10 +25,12 @@ impl NativeHostedWorld {
         backend: PendingBackendPeer,
         deadline: Instant,
     ) -> io::Result<BackendWorldReady> {
-        self.recheck_approval(approval)?;
-        let backend = self
-            .peer_io(Some(deadline), backend.attach(deadline))
+        self.directory_mut()?
+            .service_barrier(Some(deadline))
             .await?;
+        self.recheck_approval(approval)?;
+        let backend = backend.begin_attach(deadline)?;
+        let backend = self.peer_io(Some(deadline), backend.finish()).await?;
         self.recheck_approval(approval)?;
         Ok(backend)
     }

@@ -134,7 +134,11 @@ async fn host_process_duplex_receipts_and_final_close_keep_the_same_payload_slot
             .await
             .unwrap();
         assert_eq!(peer.read_pack(0, 3, 2, deadline).await.unwrap(), b"ef"[..]);
-        let peer = peer.attach(deadline).await.unwrap();
+        let attaching = peer.begin_attach(deadline).unwrap();
+        let finishing = attaching.finish();
+        tokio::pin!(finishing);
+        assert!(futures::poll!(finishing.as_mut()).is_pending());
+        let peer = finishing.await.unwrap();
         assert_eq!(peer.world(), b"original-world");
         let mut peer = peer.initialized(true, 2, deadline).await.unwrap();
         peer.queue_send(b"client-input", deadline).unwrap();

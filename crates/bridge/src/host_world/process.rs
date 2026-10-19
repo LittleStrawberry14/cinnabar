@@ -252,16 +252,20 @@ pub(super) async fn bounded<T>(
     deadline: Instant,
     io: impl std::future::Future<Output = io::Result<T>>,
 ) -> io::Result<T> {
-    if Instant::now() >= deadline {
-        return Err(expired());
-    }
+    check_deadline(deadline)?;
     let result = tokio::time::timeout_at(deadline.into(), io)
         .await
         .map_err(|_| expired())??;
+    check_deadline(deadline)?;
+    Ok(result)
+}
+
+/// Rejects an expired original operation before synchronous admission or after progress.
+pub(super) fn check_deadline(deadline: Instant) -> io::Result<()> {
     if Instant::now() >= deadline {
         return Err(expired());
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Hex encodes only fixed-size IPC entropy using the existing standard formatter.

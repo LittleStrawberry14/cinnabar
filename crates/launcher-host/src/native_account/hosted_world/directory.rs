@@ -52,6 +52,12 @@ impl HostDirectory {
         self.current()?;
         Ok(self.opening.clone())
     }
+
+    /// Applies ready RTA changes and complete refreshes before the caller's next admission check.
+    pub(super) async fn service_barrier(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        self.peer_io(deadline, std::future::ready(Ok(()))).await
+    }
+
     /// Keeps one actual peer future pinned while the sole RTA owner refreshes complete snapshots.
     /// A refresh is completed under its first deadline before another application result is exposed.
     pub(super) async fn peer_io<T>(
