@@ -63,8 +63,7 @@ pub(super) async fn acquire(
     let client = if offers.iter().any(|offer| !offer.cdn_url.is_empty()) {
         match policy {
             Acquisition::Desktop { .. } => acquisition::http_client().ok(),
-            Acquisition::Public => acquisition::public_http_client().ok(),
-            Acquisition::Hosted => None,
+            Acquisition::Public | Acquisition::Hosted => acquisition::public_http_client().ok(),
             #[cfg(feature = "test-support")]
             Acquisition::InBand => None,
         }

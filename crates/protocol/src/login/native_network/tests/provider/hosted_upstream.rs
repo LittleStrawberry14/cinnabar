@@ -1,6 +1,7 @@
 //! Original local HTTP/LAN upstream and real signed guest startup; no world or Ready is fabricated.
 
 use super::*;
+mod cdn;
 use crate::login::native_network::{
     NativeAcceptingSend, NativeHostedRelayProgress, NativeHostedUpstream,
     accepting::send::tests::{Pair, signed_pair_with_key},
@@ -47,6 +48,11 @@ async fn local_bds_http_and_selected_lan_keep_guest_packs_raw_startup_and_both_o
 
 /// Uses the real provider Login, pack source, two actual associations and initialized flush.
 async fn original_upstream(route: Route) {
+    original_upstream_with_cdn(route, None).await;
+}
+
+/// Keeps both original legs and startup while optionally acquiring the upstream archive by CDN.
+async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAddr>) {
     let FixtureRoute {
         mut listener,
         address,
@@ -61,6 +67,9 @@ async fn original_upstream(route: Route) {
     offer.pack_id_version.pack_version.version = VERSION.into();
     offer.pack_size = wire::U64LE(archive.len() as u64);
     offer.subpack_name = "original-offer-subpack".into();
+    if let Some(endpoint) = cdn {
+        offer.cdn_url = format!("http://{endpoint}/only-archive").into();
+    }
     let info = packets::ResourcePacksInfo {
         resource_pack_required: true,
         has_scripts: true,
@@ -140,40 +149,51 @@ async fn original_upstream(route: Route) {
             &*receive(&mut peer, &codec).await[0].data,
             packets::Packet::ClientCacheStatus(_)
         ));
+        let response = receive(&mut peer, &codec).await;
         assert!(matches!(
-            &*receive(&mut peer, &codec).await[0].data,
+            &*response[0].data,
             packets::Packet::ResourcePackClientResponse(_)
         ));
-        let data = packets::ResourcePackDataInfo {
-            resource_name: format!("{PACK_ID}_{VERSION}").into(),
-            chunk_size: wire::U32LE(archive.len() as u32),
-            number_of_chunks: wire::U32LE(1),
-            file_size: wire::U64LE(archive.len() as u64),
-            file_hash: Bytes::copy_from_slice(&Sha256::digest(&archive)),
-            is_premium_pack: true,
-            pack_type: wire::U8(6),
-        };
-        send(&peer, &codec, &[crate::Packet::new(data)]).await;
-        let chunk = receive(&mut peer, &codec).await;
-        let packets::Packet::ResourcePackChunkRequest(chunk) = &*chunk[0].data else {
-            panic!("actual original archive request missing")
-        };
-        assert_eq!(chunk.chunk.0, 0);
-        send(
-            &peer,
-            &codec,
-            &[crate::Packet::new(packets::ResourcePackChunkData {
-                resource_name: chunk.resource_name.clone(),
-                chunk_id: wire::U32LE(0),
-                byte_offset: wire::U64LE(0),
-                chunk_data: Bytes::copy_from_slice(&archive),
-            })],
-        )
-        .await;
-        assert!(matches!(
-            &*receive(&mut peer, &codec).await[0].data,
-            packets::Packet::ResourcePackClientResponse(_)
-        ));
+        if cdn.is_some() {
+            // The upstream never emits DataInfo or chunks for this actual preloaded archive.
+            assert!(matches!(
+                &*response[0].data,
+                packets::Packet::ResourcePackClientResponse(packets::ResourcePackClientResponse {
+                    response: bedrock_protocol_1_26_51::types::ResourcePackClientResponseData::DownloadingFinished { .. },
+                })
+            ));
+        } else {
+            let data = packets::ResourcePackDataInfo {
+                resource_name: format!("{PACK_ID}_{VERSION}").into(),
+                chunk_size: wire::U32LE(archive.len() as u32),
+                number_of_chunks: wire::U32LE(1),
+                file_size: wire::U64LE(archive.len() as u64),
+                file_hash: Bytes::copy_from_slice(&Sha256::digest(&archive)),
+                is_premium_pack: true,
+                pack_type: wire::U8(6),
+            };
+            send(&peer, &codec, &[crate::Packet::new(data)]).await;
+            let chunk = receive(&mut peer, &codec).await;
+            let packets::Packet::ResourcePackChunkRequest(chunk) = &*chunk[0].data else {
+                panic!("actual original archive request missing")
+            };
+            assert_eq!(chunk.chunk.0, 0);
+            send(
+                &peer,
+                &codec,
+                &[crate::Packet::new(packets::ResourcePackChunkData {
+                    resource_name: chunk.resource_name.clone(),
+                    chunk_id: wire::U32LE(0),
+                    byte_offset: wire::U64LE(0),
+                    chunk_data: Bytes::copy_from_slice(&archive),
+                })],
+            )
+            .await;
+            assert!(matches!(
+                &*receive(&mut peer, &codec).await[0].data,
+                packets::Packet::ResourcePackClientResponse(_)
+            ));
+        }
         let mut secondary = crate::Packet::new(packets::StartGame {
             runtime_id: ActorRuntimeID(999),
             ..Default::default()
@@ -354,7 +374,7 @@ async fn original_upstream(route: Route) {
             &codec,
             (&upstream, snapshot),
             &provider,
-            (utc, deadline),
+            (utc, deadline, cdn.is_none()),
         )
         .await;
         let mut relay = upstream
@@ -576,11 +596,11 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
         bedrock_client::server::session::ServerPackSnapshot,
     ),
     provider: &NativeTokenVerifier,
-    clock: (std::time::SystemTime, Instant),
+    clock: (std::time::SystemTime, Instant, bool),
 ) -> ServerWorldReady<u8> {
     let Pair { wire, client, .. } = pair;
     let (upstream, snapshot) = source;
-    let (utc, deadline) = clock;
+    let (utc, deadline, premium) = clock;
     let (mut server, initial) = ready
         .start_packs(
             snapshot,
@@ -643,8 +663,15 @@ async fn guest_packs<S: bedrock_net::BatchPhase>(
     let packets::Packet::ResourcePackDataInfo(data) = &packets[0] else {
         panic!("original DataInfo missing")
     };
-    assert!(data.is_premium_pack);
+    if premium {
+        assert!(data.is_premium_pack);
+    } else {
+        assert!(!data.is_premium_pack);
+    }
     assert_eq!(data.pack_type.0, 6);
+    let expected_hash: [u8; 32] =
+        Sha256::digest(upstream.read_pack(0, 0, data.file_size.0 as usize).unwrap()).into();
+    assert_eq!(data.file_hash.as_ref(), expected_hash.as_slice());
     finish_send(wire.prepare_packets(packets, deadline).unwrap()).await;
     let PacksEvent::Send { packs, packets } = packs
         .receive(client_receive(client, codec).await.remove(0))
