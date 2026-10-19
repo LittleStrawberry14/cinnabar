@@ -7,7 +7,7 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
     let (publisher, receiver) = watch::channel(None);
     let observation = channels.connection_observation.install(42, Some(receiver));
     assert_eq!(handle.round_trip_ms(7, 42), None);
-    publisher.send_replace(Some(Duration::from_micros(24_001)));
+    let _ = publisher.send_replace(Some(Duration::from_micros(24_001)));
     assert_eq!(
         handle.round_trip_ms(7, 42),
         Some(25),
@@ -15,11 +15,11 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
     );
     assert_eq!(handle.round_trip_ms(6, 42), None);
     assert_eq!(handle.round_trip_ms(7, 43), None);
-    publisher.send_replace(Some(Duration::MAX));
+    let _ = publisher.send_replace(Some(Duration::MAX));
     assert_eq!(handle.round_trip_ms(7, 42), Some(u32::MAX));
-    publisher.send_replace(Some(Duration::ZERO));
+    let _ = publisher.send_replace(Some(Duration::ZERO));
     assert_eq!(handle.round_trip_ms(7, 42), None);
-    publisher.send_replace(Some(Duration::from_millis(30)));
+    let _ = publisher.send_replace(Some(Duration::from_millis(30)));
     let (replacement, _) = network_channels::<()>(SessionGeneration::new(8));
     assert_eq!(
         replacement.round_trip_ms(8, 42),
@@ -27,7 +27,7 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
         "replacement has no original connection authority"
     );
     handle.shutdown();
-    publisher.send_replace(Some(Duration::from_millis(99)));
+    let _ = publisher.send_replace(Some(Duration::from_millis(99)));
     assert_eq!(handle.round_trip_ms(7, 42), None);
     drop(observation);
 }
