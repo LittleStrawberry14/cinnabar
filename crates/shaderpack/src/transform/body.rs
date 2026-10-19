@@ -2,6 +2,7 @@
 //! integer-backed bool uniforms.
 
 use super::TransformError;
+use super::declare::integer_bool;
 use super::items::{arr_len, mat_cols, matching, sampler_info};
 use crate::reflection::{SHADOW_SAMPLER_NAME, SamplerClass};
 use crate::token::{Tok, TokKind, id, int, p};
@@ -81,7 +82,18 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
     let mut scopes: Vec<Vec<&str>> = vec![vec![]];
     // A shadowing declaration whose declarator is still open, with its paren depth.
     let mut pending: Option<(&str, usize)> = None;
+    // Paren depths of open writes to integer-backed bools, closed at their expression's end.
+    let mut writes: Vec<usize> = vec![];
+    let mut skip = false;
     for (i, t) in toks.iter().enumerate() {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if writes.last() == Some(&calls.len()) && (t.is(";") || t.is(",") || t.is(")")) {
+            writes.pop();
+            out.push(p(")").at(t.line));
+        }
         if t.is("(") {
             calls.push(
                 i.checked_sub(1)
@@ -150,7 +162,17 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             continue;
         }
         if let Some(ctor) = cx.bools.get(n) {
-            if ctor == "bool" {
+            if toks.get(i + 1).is_some_and(|x| x.is("=")) {
+                // A block bool written (`noSimOngoing = true;`) stores its integer.
+                out.extend([
+                    t.clone(),
+                    p("=").at(line),
+                    id(&integer_bool(ctor)).at(line),
+                    p("(").at(line),
+                ]);
+                writes.push(calls.len());
+                skip = true;
+            } else if ctor == "bool" {
                 out.extend([
                     p("(").at(line),
                     t.clone(),
@@ -169,6 +191,45 @@ pub(super) fn rewrite_body(toks: &[Tok], cx: &BodyContext<'_>, used: &mut Sample
             continue;
         }
         out.push(t.clone());
+    }
+    out
+}
+
+/// The return type of a function header (`vec3 f(…)` → `vec3`), empty if there is none.
+pub(super) fn return_type(header: &[Tok]) -> String {
+    header
+        .iter()
+        .position(|t| t.is("("))
+        .and_then(|lp| lp.checked_sub(2))
+        .and_then(|i| header[i].ident())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// GLSL converts a returned value to the function's type (Eclipse returns `0` from a
+/// `uint` function); naga's parser does not, so every return of a numeric scalar or vector
+/// function constructs the type, which is free when the value already has it.
+pub(super) fn convert_returns(body: Vec<Tok>, ty: &str) -> Vec<Tok> {
+    let numeric = matches!(ty, "float" | "int" | "uint")
+        || ["vec", "ivec", "uvec"].iter().any(|v| {
+            ty.strip_prefix(v)
+                .is_some_and(|n| matches!(n, "2" | "3" | "4"))
+        });
+    if !numeric {
+        return body;
+    }
+    let mut out = Vec::with_capacity(body.len());
+    let mut open = false;
+    for (i, t) in body.iter().enumerate() {
+        if open && t.is(";") {
+            out.push(p(")").at(t.line));
+            open = false;
+        }
+        out.push(t.clone());
+        if t.ident() == Some("return") && body.get(i + 1).is_some_and(|n| !n.is(";")) {
+            out.extend([id(ty).at(t.line), p("(").at(t.line)]);
+            open = true;
+        }
     }
     out
 }

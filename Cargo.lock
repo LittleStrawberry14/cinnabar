@@ -8188,6 +8188,7 @@ dependencies = [
  "assets",
  "naga",
  "pp-rs",
+ "tempfile",
  "zip",
  "zip-footer",
 ]

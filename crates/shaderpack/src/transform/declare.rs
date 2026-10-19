@@ -401,7 +401,28 @@ fn block(
         c.resources.push(id(q));
     }
     c.resources.extend([id(bname), p("{")]);
-    c.resources.extend(members.iter().cloned());
+    // GLSL stores a block's bools as 32-bit integers, and WGSL has no host-shareable bool:
+    // the members are declared as integers and accessed through conversions, as bool
+    // uniforms are. A named instance's members are reached through `.` and stay bools.
+    let anonymous = inst.iter().all(|t| t.ident().is_none());
+    for m in split_items(members) {
+        match parse_decl(&m).filter(|md| anonymous && is_bool(&md.ty)) {
+            Some(md) => {
+                let integer = integer_bool(&md.ty);
+                for (name, _, _) in &md.decls {
+                    c.bools.insert(name.clone(), md.ty.clone());
+                }
+                c.resources.extend(m.iter().map(|t| {
+                    if t.ident() == Some(md.ty.as_str()) {
+                        id(&integer).at(t.line)
+                    } else {
+                        t.clone()
+                    }
+                }));
+            }
+            None => c.resources.extend(m),
+        }
+    }
     c.resources.push(p("}"));
     c.resources.extend(inst.iter().cloned());
     c.resources.push(p(";"));
@@ -418,8 +439,8 @@ fn is_bool(ty: &str) -> bool {
     ty == "bool" || ty.starts_with("bvec")
 }
 
-/// The integer type storing a bool type (`int`, `ivecN`).
-fn integer_bool(ty: &str) -> String {
+/// The integer type storing a bool type in a block (`int`, `ivecN`).
+pub(super) fn integer_bool(ty: &str) -> String {
     if ty == "bool" {
         "int".to_owned()
     } else {

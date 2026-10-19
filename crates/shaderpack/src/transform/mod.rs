@@ -8,9 +8,11 @@
 mod assemble;
 mod body;
 mod declare;
+mod dot;
 mod interface;
 mod items;
 mod legacy;
+mod narrow;
 mod specialize;
 
 use crate::preprocess::Preprocessed;
@@ -21,7 +23,7 @@ use crate::reflection::{
 };
 use crate::token::{Tok, lex};
 pub(crate) use assemble::{UboMember, assemble, merge_uniforms};
-use body::{BodyContext, SamplerUse, rewrite_body, rewrite_params};
+use body::{BodyContext, SamplerUse, convert_returns, return_type, rewrite_body, rewrite_params};
 pub(crate) use interface::ProgramInterface;
 use items::{Item, parse_decl, split_items};
 use std::collections::{HashMap, HashSet};
@@ -86,7 +88,10 @@ pub(crate) fn transform(
     iface: &mut ProgramInterface,
     names: &ResourceNames<'_>,
 ) -> Result<StageDraft, TransformError> {
-    let lg = legacy::rewrite(&pp.tokens, stage, pp.version)?;
+    let wide = narrow::lower(&pp.tokens);
+    let wide = wide.as_deref().unwrap_or(&pp.tokens);
+    let fused = dot::order(wide);
+    let lg = legacy::rewrite(fused.as_deref().unwrap_or(wide), stage, pp.version)?;
     let mut items: Vec<Item> = vec![];
     let mut user_funcs: HashSet<String> = HashSet::new();
     for it in split_items(&lg.toks) {
@@ -199,6 +204,7 @@ pub(crate) fn transform(
                 let brace = toks.iter().position(|t| t.is("{")).unwrap_or(toks.len());
                 let mut local = c.samplers.clone();
                 let mut header = rewrite_params(&toks[..brace], &mut local);
+                let return_ty = return_type(&header);
                 if name == "main"
                     && wrapper
                     && let Some(lp) = header.iter().position(|t| t.is("("))
@@ -212,7 +218,10 @@ pub(crate) fn transform(
                     bools: &c.bools,
                     user_funcs: &user_funcs,
                 };
-                out_body.extend(rewrite_body(&toks[brace..], &cx, &mut used));
+                out_body.extend(convert_returns(
+                    rewrite_body(&toks[brace..], &cx, &mut used),
+                    &return_ty,
+                ));
             }
             Item::Decl(_, toks) | Item::Other(toks) => {
                 let cx = BodyContext {
