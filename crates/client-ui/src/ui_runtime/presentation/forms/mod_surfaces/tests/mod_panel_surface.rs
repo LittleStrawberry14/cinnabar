@@ -22,7 +22,7 @@ fn authored() -> Panel {
         "bindings":[{"binding_name":"(#surface_width > 1)","binding_name_override":"#visible"}],
         "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":action,"mapping_type":"pressed"}]})
     };
-    panel.surface = Some(Surface { collections: Default::default(), 
+    panel.surface = Some(Surface { collections: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
@@ -250,7 +250,7 @@ fn prepared_panel_falls_back_for_changed_wrapper_facts() {
 fn reference_size_keeps_bottom_control_visible_and_clickable_in_small_viewports() {
     let mut panel = panel();
     panel.reference_size = Some([495.0, 304.0]);
-    panel.surface = Some(Surface { collections: Default::default(), 
+    panel.surface = Some(Surface { collections: Default::default(),
         transitions: Default::default(),
         screen: "extension.screen".into(),
         document: json!({"namespace":"extension","screen":{
@@ -563,7 +563,7 @@ fn relative_two_axis_drag_preserves_the_grab_offset_and_clamps_release() {
         unreachable!()
     };
     *value = 30.0;
-    spec.surface = Some(Surface { collections: Default::default(), 
+    spec.surface = Some(Surface { collections: Default::default(),
 transitions: Default::default(), screen: "drag.root".into(),
         bindings: Default::default(), document: json!({"namespace":"drag","root":{
             "type":"panel","size":[400,300],"controls":[{"handle":{
