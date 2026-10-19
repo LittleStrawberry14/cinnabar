@@ -4,7 +4,8 @@ use super::*;
 #[test]
 fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(7));
-    let (_zero_publisher, zero_receiver) = watch::channel(Some(Duration::from_millis(30)));
+    let (zero_publisher, zero_receiver) = protocol::test_support::rtt_observation();
+    zero_publisher.publish(Some(Duration::from_millis(30)));
     let zero_actor = channels
         .connection_observation
         .install(0, Some(zero_receiver));
@@ -14,10 +15,10 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
         "an absent local actor is never measured"
     );
     drop(zero_actor);
-    let (publisher, receiver) = watch::channel(None);
+    let (publisher, receiver) = protocol::test_support::rtt_observation();
     let observation = channels.connection_observation.install(42, Some(receiver));
     assert_eq!(handle.round_trip_ms(7, 42), None);
-    let _ = publisher.send_replace(Some(Duration::from_micros(24_001)));
+    publisher.publish(Some(Duration::from_micros(24_001)));
     assert_eq!(
         handle.round_trip_ms(7, 42),
         Some(25),
@@ -25,11 +26,11 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
     );
     assert_eq!(handle.round_trip_ms(6, 42), None);
     assert_eq!(handle.round_trip_ms(7, 43), None);
-    let _ = publisher.send_replace(Some(Duration::MAX));
+    publisher.publish(Some(Duration::MAX));
     assert_eq!(handle.round_trip_ms(7, 42), Some(u32::MAX));
-    let _ = publisher.send_replace(Some(Duration::ZERO));
+    publisher.publish(Some(Duration::ZERO));
     assert_eq!(handle.round_trip_ms(7, 42), None);
-    let _ = publisher.send_replace(Some(Duration::from_millis(30)));
+    publisher.publish(Some(Duration::from_millis(30)));
     let (replacement, _) = network_channels::<()>(SessionGeneration::new(8));
     assert_eq!(
         replacement.round_trip_ms(8, 42),
@@ -37,7 +38,7 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
         "replacement has no original connection authority"
     );
     handle.shutdown();
-    let _ = publisher.send_replace(Some(Duration::from_millis(99)));
+    publisher.publish(Some(Duration::from_millis(99)));
     assert_eq!(handle.round_trip_ms(7, 42), None);
     drop(observation);
 }
@@ -46,17 +47,19 @@ fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
 #[test]
 fn native_rtt_withdraws_on_owner_completion_and_abrupt_publisher_drop() {
     let (handle, channels) = network_channels::<()>(SessionGeneration::new(7));
-    let (publisher, receiver) = watch::channel(Some(Duration::from_millis(30)));
+    let (publisher, receiver) = protocol::test_support::rtt_observation();
+    publisher.publish(Some(Duration::from_millis(30)));
     let observation = channels.connection_observation.install(42, Some(receiver));
     assert_eq!(handle.round_trip_ms(7, 42), Some(30));
     drop(publisher);
     assert_eq!(
         handle.round_trip_ms(7, 42),
         None,
-        "closed watch retained its last Some sample"
+        "dropped publisher retained its last Some sample"
     );
     drop(observation);
-    let (_publisher, receiver) = watch::channel(Some(Duration::from_millis(40)));
+    let (publisher, receiver) = protocol::test_support::rtt_observation();
+    publisher.publish(Some(Duration::from_millis(40)));
     let observation = channels.connection_observation.install(42, Some(receiver));
     assert_eq!(handle.round_trip_ms(7, 42), Some(40));
     drop(observation);

@@ -35,15 +35,13 @@ pub(super) enum Transport {
 }
 
 impl Transport {
-    /// Subscribes to the selected transport's original full round-trip estimate.
-    pub(super) fn subscribe_rtt(
-        &self,
-    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+    /// Observes the selected transport's original full round-trip estimate.
+    pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
         match self {
-            Self::RakNet(transport) => transport.subscribe_rtt(),
-            Self::NetherNetLan(transport) => transport.subscribe_rtt(),
-            Self::Messaging(transport) => transport.subscribe_rtt(),
-            Self::Accepted(transport) | Self::LocalHttp(transport) => transport.subscribe_rtt(),
+            Self::RakNet(transport) => transport.observe_rtt(),
+            Self::NetherNetLan(transport) => transport.observe_rtt(),
+            Self::Messaging(transport) => transport.observe_rtt(),
+            Self::Accepted(transport) | Self::LocalHttp(transport) => transport.observe_rtt(),
         }
     }
 

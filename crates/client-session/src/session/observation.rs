@@ -6,7 +6,7 @@ pub(super) struct Observation(Arc<Mutex<Option<Connection>>>);
 
 struct Connection {
     runtime_id: u64,
-    rtt: watch::Receiver<Option<Duration>>,
+    rtt: protocol::RoundTripTime,
 }
 
 pub(super) struct Guard(Observation);
@@ -19,11 +19,7 @@ impl Drop for Guard {
 
 impl Observation {
     /// Retains only a read-only measurement after this session's real Login/bootstrap.
-    pub(super) fn install(
-        &self,
-        runtime_id: u64,
-        rtt: Option<watch::Receiver<Option<Duration>>>,
-    ) -> Guard {
+    pub(super) fn install(&self, runtime_id: u64, rtt: Option<protocol::RoundTripTime>) -> Guard {
         *self
             .0
             .lock()
@@ -40,7 +36,7 @@ impl Observation {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
-    /// Copies one current positive FULL RTT; a closed publisher invalidates its retained last value.
+    /// Copies one current positive full RTT; the original publisher owns terminal withdrawal.
     fn round_trip_ms(&self, runtime_id: u64) -> Option<u32> {
         let connection = self
             .0
@@ -49,8 +45,7 @@ impl Observation {
         let connection = connection
             .as_ref()
             .filter(|connection| connection.runtime_id == runtime_id)?;
-        let sample = *connection.rtt.borrow();
-        connection.rtt.has_changed().ok()?;
+        let sample = connection.rtt.get();
         let sample = sample.filter(|sample| !sample.is_zero())?;
         let millis = sample
             .as_nanos()

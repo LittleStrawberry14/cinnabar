@@ -15,11 +15,11 @@ enum Connection {
 
 impl RakNetTransport {
     /// Observes the same established transport without retaining its send capability.
-    pub(super) fn subscribe_rtt(
-        &self,
-    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+    pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
         match self.connection.as_ref()? {
-            Connection::Established(connection) => Some(connection.subscribe_rtt()),
+            Connection::Established(connection) => {
+                Some(crate::RoundTripTime::raknet(connection.observe_rtt()))
+            }
             _ => None,
         }
     }

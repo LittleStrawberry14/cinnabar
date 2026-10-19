@@ -20,10 +20,10 @@ enum State {
 
 impl AcceptedTransport {
     /// Observes the original ready association without extending its transport lifetime.
-    pub(super) fn subscribe_rtt(
-        &self,
-    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
-        self.sender().ok().map(|sender| sender.subscribe_rtt())
+    pub(super) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
+        self.sender()
+            .ok()
+            .map(|sender| crate::RoundTripTime::nethernet(sender.observe_rtt()))
     }
 
     /// Takes an existing Ready association; no new socket, dial or signaling route is created.

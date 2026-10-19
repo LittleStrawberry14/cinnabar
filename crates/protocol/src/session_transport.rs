@@ -101,9 +101,7 @@ impl InFlightSend {
 
 impl<R: bridge::FrameRead> SessionTransport<R> {
     /// Clones only the native transport's read-only observation, never its lifecycle owner.
-    pub(crate) fn subscribe_rtt(
-        &self,
-    ) -> Option<tokio::sync::watch::Receiver<Option<std::time::Duration>>> {
+    pub(crate) fn observe_rtt(&self) -> Option<crate::RoundTripTime> {
         match &self.reader {
             Reader::Core(_) => None,
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]

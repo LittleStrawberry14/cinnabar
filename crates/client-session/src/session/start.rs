@@ -159,7 +159,7 @@ impl<P: Send + 'static> NetworkChannels<P> {
         } = packs;
         let bootstrap = game_data.world;
         let _observation = connection_observation
-            .install(bootstrap.local_player_runtime_id, session.subscribe_rtt());
+            .install(bootstrap.local_player_runtime_id, session.observe_rtt());
         let settings = &game_data.settings;
         let inventory = start_game_inventory_authority(&game_data);
         let item_registry = match start_game_item_registry(&game_data) {
