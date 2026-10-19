@@ -133,7 +133,7 @@ impl ActiveHostedWorld {
             enum Event {
                 Lease,
                 Service,
-                Peer(nethernet_tokio::AcceptedSession),
+                Peer(Box<nethernet_tokio::AcceptedSession>),
                 Invite(Option<Invite>),
             }
             let event = tokio::select! { biased;
@@ -147,7 +147,7 @@ impl ActiveHostedWorld {
                         self.server.maintain().await.map(|()| None)
                     }
                 } => match accepted.map_err(|_| unavailable())? {
-                    Some(accepted) => Event::Peer(accepted),
+                    Some(accepted) => Event::Peer(Box::new(accepted)),
                     None => return Err(unavailable()),
                 },
             };
@@ -196,7 +196,7 @@ impl ActiveHostedWorld {
                             &mut self.server,
                             &mut self.process,
                             &self.identity,
-                            accepted,
+                            *accepted,
                         );
                         tokio::pin!(peer);
                         loop {
