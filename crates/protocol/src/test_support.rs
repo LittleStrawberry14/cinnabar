@@ -7,3 +7,10 @@ pub mod recipes;
 pub mod remote_equipment;
 pub mod startup;
 pub mod transactions;
+
+#[cfg(all(
+    feature = "native-networking",
+    feature = "test-support",
+    not(target_arch = "wasm32")
+))]
+pub use crate::login::native_network::fixtures::{hosted_client, hosted_provider};
