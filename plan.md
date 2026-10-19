@@ -61,6 +61,9 @@ ephemeral account and play owners, with validated certificate-file replacement a
 explicit shutdown. Its new operator controls still require execution. WebTransport
 listener and dedicated pack-stream adoption remain incomplete; WebSocket fallback
 does not close browser transport or deployment acceptance.
+Gateway pack acquisition now has a guarded public HTTP/HTTPS source candidate; CDN-only
+owning controls require execution. Hosted CDN-only packs remain incomplete where original
+upstream data metadata is unavailable; their existing chunk/metadata path is preserved.
 
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.

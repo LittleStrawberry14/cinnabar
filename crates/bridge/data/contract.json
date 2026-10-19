@@ -39,6 +39,7 @@
     {"rust_name": "RELAY_VERSION", "go_name": "RelayVersion", "value": 2, "rust_type": "u32", "doc": "Browser relay protocol version."},
     {"rust_name": "RELAY_CONTROL_BYTES", "go_name": "RelayControlBytes", "value": 4096, "rust_type": "usize", "doc": "Largest relay Hello or control JSON payload in bytes."},
     {"rust_name": "RELAY_PLAY_MESSAGE_BYTES", "go_name": "RelayPlayMessageBytes", "value": 8388608, "rust_type": "usize", "doc": "Largest WebSocket play message in bytes."},
+    {"rust_name": "GATEWAY_EGRESS_CANDIDATES", "go_name": "GatewayEgressCandidates", "value": 16, "rust_type": "usize", "doc": "Maximum resolved address candidates retained by native gateway egress."},
     {"rust_name": "QUEUED_FRAMES", "go_name": "QueuedFrames", "value": 16, "rust_type": "usize", "doc": "Maximum queued reliable frames or browser receive chunks."},
     {"rust_name": "RELAY_QUEUED_FRAME_BYTES", "go_name": "RelayQueuedFrameBytes", "value": 8388608, "rust_type": "usize", "doc": "Ordinary browser frame queue budget; a larger bridge frame is admitted alone."},
     {"rust_name": "RELAY_UPLOAD_BURST_BYTES", "go_name": "RelayUploadBurstBytes", "value": 8388608, "rust_type": "usize", "doc": "Upload rate limiter burst, independent of message and queue limits."},

@@ -71,7 +71,6 @@ async fn original_upstream(route: Route) {
             ..Default::default()
         },
         resource_packs: vec![offer],
-        ..Default::default()
     };
     let stack = packets::ResourcePackStack {
         texture_pack_required: true,

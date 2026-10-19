@@ -116,6 +116,9 @@ pub const RELAY_CONTROL_BYTES: usize = 4096;
 /// Largest WebSocket play message in bytes.
 pub const RELAY_PLAY_MESSAGE_BYTES: usize = 8388608;
 
+/// Maximum resolved address candidates retained by native gateway egress.
+pub const GATEWAY_EGRESS_CANDIDATES: usize = 16;
+
 /// Maximum queued reliable frames or browser receive chunks.
 pub const QUEUED_FRAMES: usize = 16;
 
