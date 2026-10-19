@@ -51,7 +51,7 @@ fn packet_input_app(
     let mut app = App::new();
     app.add_message::<KeyboardInput>()
         .add_message::<MouseButtonInput>()
-        .init_resource::<crate::modding::ReservedControls>()
+        .init_resource::<crate::semantic_controls::ReservedControls>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>()
         .insert_resource(packets)

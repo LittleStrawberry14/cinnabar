@@ -52,7 +52,7 @@ pub(crate) struct SemanticPhysicalInputs<'w, 's> {
     touch_targets: ResMut<'w, SemanticTouchTargets>,
     focus: Option<Res<'w, client_state::CursorFocus>>,
     driven: Option<Res<'w, client_state::DrivenInput>>,
-    reserved: Option<Res<'w, crate::modding::ReservedControls>>,
+    reserved: Option<Res<'w, crate::semantic_controls::ReservedControls>>,
 }
 
 pub(crate) fn collect_raw_input(
