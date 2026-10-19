@@ -132,7 +132,7 @@ impl Client {
             );
             Ok((state.epoch, state.scope.clone().ok_or_else(unavailable)?))
         })?;
-        self.0.changed.notify_one();
+        self.0.changed.notify_waiters();
         tokio::time::timeout_at(
             tokio::time::Instant::from_std(now + REQUEST_TIMEOUT),
             async {
@@ -170,7 +170,7 @@ impl Client {
             live.as_mut()
                 .map(|live| live.players.sync(local, now, unix_ms, revision))
         });
-        self.0.changed.notify_one();
+        self.0.changed.notify_waiters();
         result
     }
 
