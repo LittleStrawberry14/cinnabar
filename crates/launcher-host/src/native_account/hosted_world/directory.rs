@@ -942,4 +942,4 @@ impl HostDirectory {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::native_account::hosted_world) mod tests;

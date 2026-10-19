@@ -45,54 +45,14 @@ async fn public_activation_publishes_original_route_activity_and_invitation_then
             nethernet::identity::MINECRAFT_AUDIENCE.into(),
         )
         .await;
-        let public = RsaPublicKey::from_pkcs1_der(peer.issuer_public_key_der()).unwrap();
-        let jwks = serde_json::to_vec(&json!({"keys":[{
-            "kty":"RSA", "kid":HOSTED_ACTIVATION_KEY_ID, "alg":"RS256", "use":"sig",
-            "n":URL_SAFE_NO_PAD.encode(public.n().to_be_bytes()),
-            "e":URL_SAFE_NO_PAD.encode(public.e().to_be_bytes()),
-        }]}))
-        .unwrap();
-        let store = AccountStore::new(namespace.path().join("synthetic-oauth.json"));
-        let checkpoint = services.checkpoint().unwrap();
-        let credentials = services.credentials();
-        let expiry = oauth_expiry(credentials.expires_at()).unwrap();
-        let pending = transaction("reserve public host fixture sign-in", || {
-            store.try_begin_native_sign_in("public-host-generation", None)
-        });
-        transaction("publish public host fixture OAuth", || {
-            pending.try_publish(
-                credentials.access_token(),
-                credentials.refresh_token(),
-                &expiry,
-            )
-        });
-        transaction("publish public host fixture checkpoint", || {
-            pending.try_publish_checkpoint(checkpoint.as_bytes())
-        });
-        transaction("commit public host fixture sign-in", || {
-            pending.try_commit(
-                &AccountProfile::from_identity(identity.xuid(), identity.gamertag()).unwrap(),
-            )
-        });
-        let account = Arc::new(NativeAccount::new(
-            store,
-            namespace.path().join("synthetic-device.json"),
-            Some(identity.xuid().into()),
-        ));
-        install(&account, services, &identity);
-        {
-            let mut operation = Arc::clone(&account).acquire_verified().await.unwrap();
-            operation.cached.as_mut().unwrap().provider = Some(
-                protocol::test_support::hosted_provider(
-                    HOSTED_WORLD_ISSUER,
-                    minecraft::USER_AGENT,
-                    &jwks,
-                    Instant::now(),
-                )
-                .unwrap(),
-            );
-            operation.persist().unwrap();
-        }
+        let jwks = issuer_jwks(&peer);
+        let account = install_activation_account(
+            namespace.path(),
+            services,
+            &identity,
+            &serde_json::to_vec(&jwks).unwrap(),
+        )
+        .await;
         let deadline = Instant::now() + ACQUISITION_TIMEOUT;
         let original = world
             .manager
@@ -157,4 +117,88 @@ async fn public_activation_publishes_original_route_activity_and_invitation_then
     })
     .await
     .expect("finite public host activation fixture stalled");
+}
+
+/// Derives the original synthetic issuer's public JWKS without exposing its private signer.
+pub(in crate::native_account::hosted_world) fn issuer_jwks(
+    peer: &bedrock_services::test_support::HostedPeer,
+) -> serde_json::Value {
+    let public = RsaPublicKey::from_pkcs1_der(peer.issuer_public_key_der()).unwrap();
+    json!({"keys":[{
+        "kty":"RSA", "kid":HOSTED_ACTIVATION_KEY_ID, "alg":"RS256", "use":"sig",
+        "n":URL_SAFE_NO_PAD.encode(public.n().to_be_bytes()),
+        "e":URL_SAFE_NO_PAD.encode(public.e().to_be_bytes()),
+    }]})
+}
+
+/// Reuses the original signed account install and provider cache for both actual activation controls.
+pub(in crate::native_account::hosted_world) async fn install_activation_account(
+    directory: &std::path::Path,
+    services: minecraft::Minecraft,
+    identity: &bedrock_services::xbox::Authorization,
+    jwks: &[u8],
+) -> Arc<NativeAccount> {
+    let store = AccountStore::new(directory.join("synthetic-oauth.json"));
+    let checkpoint = services.checkpoint().unwrap();
+    let credentials = services.credentials();
+    let expiry = oauth_expiry(credentials.expires_at()).unwrap();
+    let pending = transaction("reserve public host fixture sign-in", || {
+        store.try_begin_native_sign_in("public-host-generation", None)
+    });
+    transaction("publish public host fixture OAuth", || {
+        pending.try_publish(
+            credentials.access_token(),
+            credentials.refresh_token(),
+            &expiry,
+        )
+    });
+    transaction("publish public host fixture checkpoint", || {
+        pending.try_publish_checkpoint(checkpoint.as_bytes())
+    });
+    transaction("commit public host fixture sign-in", || {
+        pending.try_commit(
+            &AccountProfile::from_identity(identity.xuid(), identity.gamertag()).unwrap(),
+        )
+    });
+    let account = Arc::new(NativeAccount::new(
+        store,
+        directory.join("synthetic-device.json"),
+        Some(identity.xuid().into()),
+    ));
+    install(&account, services, identity);
+    {
+        let mut operation = Arc::clone(&account).acquire_verified().await.unwrap();
+        operation.cached.as_mut().unwrap().provider = Some(
+            protocol::test_support::hosted_provider(
+                HOSTED_WORLD_ISSUER,
+                minecraft::USER_AGENT,
+                jwks,
+                Instant::now(),
+            )
+            .unwrap(),
+        );
+        operation.persist().unwrap();
+    }
+    account
+}
+
+/// Reads the actual acknowledged nonce without manufacturing an approval or changing the directory.
+pub(in crate::native_account::hosted_world) fn activation_nonce(
+    host: &NativeHostedWorld,
+    xuid: &str,
+) -> String {
+    let nonce = host
+        .directory
+        .as_ref()
+        .unwrap()
+        .approvals
+        .as_ref()
+        .unwrap()
+        .document()
+        .unwrap()[xuid]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    host.check_approval(xuid, &nonce).unwrap();
+    nonce
 }

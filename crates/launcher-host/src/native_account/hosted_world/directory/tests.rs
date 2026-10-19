@@ -9,10 +9,10 @@ use bedrock_services::{
 };
 use launcher::accounts::{AccountProfile, AccountStore};
 
-mod activation;
+pub(in crate::native_account::hosted_world) mod activation;
 mod contention;
 mod dispatch;
-mod external;
+pub(in crate::native_account::hosted_world) mod external;
 mod unchanged;
 
 /// Completes only nonblocking fixture storage transactions, retaining temporary lease contention.

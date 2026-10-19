@@ -15,18 +15,18 @@ use rsa::{
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub(super) const VISITOR_XUID: &str = "456";
-pub(super) const VISITOR_NAME: &str = "Visitor";
+pub(in crate::native_account::hosted_world) const VISITOR_XUID: &str = "456";
+pub(in crate::native_account::hosted_world) const VISITOR_NAME: &str = "Visitor";
 const KEY_ID: &str = "paired-world-issuer";
 
-pub(super) struct Provider {
+pub(in crate::native_account::hosted_world) struct Provider {
     signing: pkcs1v15::SigningKey<Sha256>,
-    pub(super) jwks: Vec<u8>,
+    pub(in crate::native_account::hosted_world) jwks: Vec<u8>,
 }
 
 impl Provider {
     /// Keeps the fixture issuer independent of both connection signing keys.
-    pub(super) fn new() -> Self {
+    pub(in crate::native_account::hosted_world) fn new() -> Self {
         let signing =
             pkcs1v15::SigningKey::new(RsaPrivateKey::new(&mut rand::rng(), 1024).unwrap());
         let public = signing.as_ref();
@@ -40,7 +40,7 @@ impl Provider {
     }
 
     /// Qualifies the synthetic response through the normal NativeAuthentication verifier and clock owner.
-    pub(super) fn authentication(
+    pub(in crate::native_account::hosted_world) fn authentication(
         &self,
         key: SigningKey,
         service_time: SystemTime,
