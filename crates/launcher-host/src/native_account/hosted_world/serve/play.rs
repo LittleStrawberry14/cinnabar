@@ -26,6 +26,7 @@ pub struct NativeHostedPeer {
     output: Output,
     phase: Phase,
     backend_deadline: Option<Instant>,
+    turn_control: Arc<nethernet_tokio::SessionSender>,
 }
 
 /// New play admission ended; original backend output can finish before actual transport retirement.
@@ -47,11 +48,18 @@ impl NativeHostedPeer {
     pub(in crate::native_account::hosted_world) fn approval(&self) -> &HostedApproval {
         &self.accepted.grant().approval
     }
+    /// Borrows the actual initialized peer's same actor without exposing raw sends publicly.
+    pub(in crate::native_account::hosted_world) fn turn_control(
+        &self,
+    ) -> &Arc<nethernet_tokio::SessionSender> {
+        &self.turn_control
+    }
     /// Takes only the actual typed initialization and both corresponding live IO owners.
     pub(super) fn new(
         wire: NativeAcceptingIo,
         backend: ActiveBackendPeer,
         accepted: AcceptedSession<HostedLoginApproval>,
+        turn_control: Arc<nethernet_tokio::SessionSender>,
     ) -> Self {
         Self {
             wire,
@@ -60,6 +68,7 @@ impl NativeHostedPeer {
             output: Output::Idle,
             phase: Phase::Receive,
             backend_deadline: None,
+            turn_control,
         }
     }
 

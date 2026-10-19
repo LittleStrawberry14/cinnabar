@@ -102,6 +102,7 @@ impl NativeHostedWorld {
     ) -> io::Result<NativeHostedPeer> {
         self.check_bridge(process, deadline).await?;
         let policy = self.login_policy(deadline).await?;
+        let turn_control = Arc::new(accepted.session.sender());
         let (mut wire, handshake) = self
             .peer_io(
                 Some(deadline),
@@ -146,7 +147,9 @@ impl NativeHostedWorld {
         }
         .await;
         match result {
-            Ok((backend, accepted)) => Ok(NativeHostedPeer::new(wire, backend, accepted)),
+            Ok((backend, accepted)) => {
+                Ok(NativeHostedPeer::new(wire, backend, accepted, turn_control))
+            }
             Err(error) => {
                 Self::retire_wire(&mut wire, deadline).await;
                 let mut retired = wire.begin_close();

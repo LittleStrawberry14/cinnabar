@@ -6,7 +6,11 @@ use super::super::{
     serve::play::{Step, cleanup_deadline},
 };
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
-use std::{io, sync::Arc, time::Instant};
+use std::{
+    io,
+    sync::{Arc, Weak},
+    time::Instant,
+};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -27,6 +31,7 @@ pub(in crate::native_account::hosted_world) struct Peers {
     wake: Arc<Notify>,
     stop: CancellationToken,
     deadline: Option<Instant>,
+    turn_controls: Vec<Weak<nethernet_tokio::SessionSender>>,
 }
 
 impl Peers {
@@ -61,9 +66,23 @@ impl Peers {
         if self.deadline.is_some() || self.occupied >= self.limit {
             return Err(unavailable());
         }
+        self.turn_controls
+            .retain(|control| control.strong_count() != 0);
+        self.turn_controls.push(Arc::downgrade(peer.turn_control()));
         self.occupied += 1;
         self.schedule(peer);
         Ok(())
+    }
+
+    /// Snapshots only actual initialized peers; entering close drops their original strong owner.
+    /// Weak metadata is bounded by admitted capacity and never keeps a retired association alive.
+    pub(super) fn turn_controls(&mut self) -> Vec<Arc<nethernet_tokio::SessionSender>> {
+        self.turn_controls
+            .retain(|control| control.strong_count() != 0);
+        self.turn_controls
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect()
     }
 
     /// Keeps the actual IO future, partial frames, granted permit and first timer across other wakes.

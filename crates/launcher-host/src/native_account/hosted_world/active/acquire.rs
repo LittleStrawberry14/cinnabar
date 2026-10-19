@@ -80,7 +80,7 @@ pub(super) async fn acceptor(
     let credentials = socket.credentials().ok_or_else(unavailable)?;
     let expires = identity.expires_at().min(credentials.expires_at());
     let servers = service_ice_servers(credentials);
-    // The current native default is an explicit IPv4 socket; mixed-family qualification remains separate.
+    // Keep the original UDP binding; each stream retains its independent numeric target and family.
     let bind_addr = bind_address();
     let resolving = nethernet_tokio::resolve_ice_targets(&servers, bind_addr, expires, deadline);
     tokio::pin!(resolving);
