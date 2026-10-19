@@ -138,7 +138,7 @@ impl Authorization {
     async fn confirm(&self, endpoint: &str, deadline: Instant) -> io::Result<bool> {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = NEXT
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
             .map_err(|_| unavailable())?;
         let (answer, receive) = oneshot::channel();
         {
