@@ -6,7 +6,7 @@ use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
 use crate::{
     AdmissionError, MAX_DECLARED_BYTES_PER_PACK, MAX_FILE_BYTES, MAX_MANIFEST_BYTES,
     library::{ImportReport, InstalledPack, LibraryError},
-    manifest::{Version, read_manifest},
+    manifest::{Purpose, Version, read_manifest},
     parser::{
         MANIFEST_NAMES, canonical_path, is_regular_file, prepare_zip_bytes, validate_archive_parts,
     },
@@ -285,6 +285,7 @@ fn read_candidate(
         bytes.clone(),
         None,
         None,
+        Purpose::Rendering,
     )
     .map_err(|error| file_error(&manifest_path, error.into()))?;
     if let Ok(Some(language)) =
@@ -329,7 +330,7 @@ fn read_metadata(bytes: &[u8]) -> Result<Option<InstalledPack>, LibraryError> {
         .ok_or(AdmissionError::InvalidVersion)?
         .0;
     let version_text = version.map(|part| part.to_string()).join(".");
-    let manifest = read_manifest(bytes, id, &version_text)?;
+    let manifest = read_manifest(bytes, id, &version_text, Purpose::Rendering)?;
     let min_engine_version = if header["min_engine_version"].is_null() {
         None
     } else {

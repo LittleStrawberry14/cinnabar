@@ -4,7 +4,7 @@ use uuid::Uuid;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use super::*;
-use crate::{crypto::ContentKey, parser::validate_archive_parts};
+use crate::{crypto::ContentKey, manifest::Purpose, parser::validate_archive_parts};
 
 const PACK_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_5a3e);
 const PACK_KEY: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";
@@ -29,9 +29,17 @@ fn zip_files(files: &[(&str, &[u8])]) -> Vec<u8> {
 
 /// Validates an archive fixture with the chosen subpack and decryption key.
 fn admit(archive: Vec<u8>, subpack: &str, key: Option<ContentKey>) -> ValidatedPack {
-    validate_archive_parts(PACK_ID, "1.0.0", subpack, archive, key, None)
-        .unwrap()
-        .0
+    validate_archive_parts(
+        PACK_ID,
+        "1.0.0",
+        subpack,
+        archive,
+        key,
+        None,
+        Purpose::Rendering,
+    )
+    .unwrap()
+    .0
 }
 
 /// Creates a validated stack with the chosen layers and rejection metadata.

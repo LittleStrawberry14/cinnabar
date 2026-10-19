@@ -1,7 +1,8 @@
 //! Installed global packs and an editable, highest-priority-first selection.
 
 use crate::{
-    AdmissionError, ValidatedPackStack, parser::validate_archive_parts, subpacks as tiers,
+    AdmissionError, ValidatedPackStack, manifest::Purpose, parser::validate_archive_parts,
+    subpacks as tiers,
 };
 use bedrock_packs::{MAX_ARCHIVE_BYTES, MAX_PACKS};
 use serde::{Deserialize, Serialize};
@@ -278,8 +279,15 @@ impl GlobalPackLibrary {
     /// Reads one installed pack's own icon without activating it or consulting overlays.
     pub fn pack_icon(&self, metadata: &InstalledPack) -> Result<Option<Box<[u8]>>, LibraryError> {
         let bytes = read_bounded(&self.root.join(metadata.filename()), MAX_ARCHIVE_BYTES)?;
-        let (pack, _, _) =
-            validate_archive_parts(metadata.id, &metadata.version_text(), "", bytes, None, None)?;
+        let (pack, _, _) = validate_archive_parts(
+            metadata.id,
+            &metadata.version_text(),
+            "",
+            bytes,
+            None,
+            None,
+            Purpose::Rendering,
+        )?;
         Ok(pack.read_file_with_limit("pack_icon.png", 4 * 1024 * 1024)?)
     }
 
@@ -407,6 +415,7 @@ impl GlobalPackLibrary {
                 bytes,
                 None,
                 None,
+                Purpose::Rendering,
             )?;
             let next = ValidatedPackStack {
                 packs: vec![pack].into_boxed_slice(),

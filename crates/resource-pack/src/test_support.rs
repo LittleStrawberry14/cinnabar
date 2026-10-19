@@ -30,8 +30,18 @@ pub fn layered_pack_view(layers: &[&[(String, Vec<u8>)]]) -> crate::LayeredPackV
 
 /// Builds a small original archive with a resource manifest and the supplied files.
 pub fn archive_bytes(id: uuid::Uuid, files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    archive_bytes_with_module(id, files, "resources")
+}
+
+/// Builds a fixture with one explicit module while retaining the same manifest and ZIP writer.
+pub fn archive_bytes_with_module(
+    id: uuid::Uuid,
+    files: &[(String, Vec<u8>)],
+    module: &str,
+) -> Vec<u8> {
+    let module = serde_json::to_string(module).expect("fixture module string");
     let manifest = format!(
-        r#"{{"format_version":2,"header":{{"uuid":"{id}","version":[1,0,0]}},"modules":[{{"type":"resources"}}]}}"#
+        r#"{{"format_version":2,"header":{{"uuid":"{id}","version":[1,0,0]}},"modules":[{{"type":{module}}}]}}"#
     );
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (path, bytes) in std::iter::once(("manifest.json", manifest.as_bytes())).chain(
