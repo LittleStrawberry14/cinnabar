@@ -1,6 +1,8 @@
 //! One verified guest's original local BDS upstream, without another runtime or world process.
 
 mod startup;
+#[cfg(test)]
+mod tests;
 pub use startup::{NativeHostedRelay, NativeHostedRelayClosing, NativeHostedRelayProgress};
 
 use super::{
