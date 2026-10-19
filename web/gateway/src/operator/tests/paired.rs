@@ -139,86 +139,105 @@ impl Drop for PairedFixture {
     }
 }
 
+/// Each fresh original operator remains within its unchanged per-IP admission burst.
+#[derive(Clone, Copy, Debug)]
+enum RejectedReplacement {
+    ForeignName,
+    MismatchedKey,
+    MalformedCertificate,
+}
+
 /// Reloads both actual protocols, then keeps accounts until pressured application close can finish.
 #[tokio::test]
 async fn paired_operator_reloads_both_tls_edges_and_retires_handlers_before_accounts() {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let first = Pair::new("localhost");
-        let second = Pair::new("localhost");
-        let mut fixture = PairedFixture::new(&first, &second).await;
-        let (secure, tcp_first) = fixture.secure().await;
-        let (mut tcp_control, tcp_capability) =
-            connect_control(secure, fixture.tcp, String::new()).await;
-        let (connection, quic_first) = fixture.quic().await;
-        let mut peer = PairedPeer::from_connection(connection, RELAY_TRANSPORT_PATH, None).await;
-        assert_eq!(peer.status().await, StatusCode::OK);
-        let (mut quic_control, quic_capability) = paired_control(&peer).await;
-        assert!(
-            tcp_capability.resume != quic_capability.resume,
-            "separate actual controllers must retain separate session capabilities"
-        );
-        assert_ne!(tcp_capability.generation, 0);
-        assert_ne!(quic_capability.generation, 0);
-        assert_eq!(fixture.registry.test_counts().1, 2);
+    for rejected in [
+        RejectedReplacement::ForeignName,
+        RejectedReplacement::MismatchedKey,
+        RejectedReplacement::MalformedCertificate,
+    ] {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let first = Pair::new("localhost");
+            let second = Pair::new("localhost");
+            let mut fixture = PairedFixture::new(&first, &second).await;
+            let (secure, tcp_first) = fixture.secure().await;
+            let (mut tcp_control, tcp_capability) =
+                connect_control(secure, fixture.tcp, String::new()).await;
+            let (connection, quic_first) = fixture.quic().await;
+            let mut peer =
+                PairedPeer::from_connection(connection, RELAY_TRANSPORT_PATH, None).await;
+            assert_eq!(peer.status().await, StatusCode::OK);
+            let (mut quic_control, quic_capability) = paired_control(&peer).await;
+            assert!(
+                tcp_capability.resume != quic_capability.resume,
+                "separate actual controllers must retain separate session capabilities"
+            );
+            assert_ne!(tcp_capability.generation, 0);
+            assert_ne!(quic_capability.generation, 0);
+            assert_eq!(fixture.registry.test_counts().1, 2);
 
-        fixture.files.write(&second);
-        fixture.reload().await.unwrap();
-        let replacement = fixture.observed().await;
+            fixture.files.write(&second);
+            fixture.reload().await.unwrap();
+            let replacement = fixture.observed().await;
 
-        let foreign = Pair::new("other.invalid");
-        fixture.files.write(&foreign);
-        let foreign_rejected = fixture.reload().await.is_err();
-        let after_foreign = fixture.observed().await;
+            match rejected {
+                RejectedReplacement::ForeignName => {
+                    fixture.files.write(&Pair::new("other.invalid"));
+                }
+                RejectedReplacement::MismatchedKey => {
+                    fixture.files.write(&second);
+                    std::fs::write(fixture.files.0.join("key.pem"), &first.key).unwrap();
+                }
+                RejectedReplacement::MalformedCertificate => {
+                    std::fs::write(
+                        fixture.files.0.join("certificate.pem"),
+                        b"not a certificate",
+                    )
+                    .unwrap();
+                }
+            }
+            let rejected_replacement = fixture.reload().await.is_err();
+            let after_rejected = fixture.observed().await;
 
-        fixture.files.write(&second);
-        std::fs::write(fixture.files.0.join("key.pem"), &first.key).unwrap();
-        let mismatch_rejected = fixture.reload().await.is_err();
-        let after_mismatch = fixture.observed().await;
+            let sign_out = Bytes::from(serde_json::to_vec(&Request::SignOut).unwrap());
+            tcp_control.send(sign_out.clone()).await.unwrap();
+            quic_control.send(sign_out).await.unwrap();
+            assert!(matches!(
+                event(&mut tcp_control).await,
+                Event::Account { .. }
+            ));
+            assert!(matches!(
+                paired_event(&mut quic_control).await,
+                Event::Account { .. }
+            ));
+            fixture.stop();
 
-        std::fs::write(
-            fixture.files.0.join("certificate.pem"),
-            b"not a certificate",
-        )
-        .unwrap();
-        let malformed_rejected = fixture.reload().await.is_err();
-        let after_malformed = fixture.observed().await;
+            // One-byte actual credit exposes local close pressure without assuming physical-close policy.
+            let prefix = peer.connect_chunk().await;
+            assert_eq!(prefix.len(), 1);
+            assert!(prefix.len() + 1 < size_of::<u32>());
+            assert_eq!(fixture.registry.test_counts().1, 2);
+            assert!(!fixture.task.as_ref().unwrap().is_finished());
+            let remainder = peer.connect_end().await;
+            assert!(prefix.len() + remainder >= size_of::<u32>());
+            let tcp_retired = !matches!(tcp_control.next().await, Some(Ok(_)));
+            let quic_retired = !matches!(quic_control.next().await, Some(Ok(_)));
+            peer.close();
+            fixture.finish().await;
+            drop((tcp_control, quic_control));
 
-        let sign_out = Bytes::from(serde_json::to_vec(&Request::SignOut).unwrap());
-        tcp_control.send(sign_out.clone()).await.unwrap();
-        quic_control.send(sign_out).await.unwrap();
-        assert!(matches!(
-            event(&mut tcp_control).await,
-            Event::Account { .. }
-        ));
-        assert!(matches!(
-            paired_event(&mut quic_control).await,
-            Event::Account { .. }
-        ));
-        fixture.stop();
-
-        // One-byte actual credit exposes local close pressure without assuming physical-close policy.
-        let prefix = peer.connect_chunk().await;
-        assert_eq!(prefix.len(), 1);
-        assert!(prefix.len() + 1 < size_of::<u32>());
-        assert_eq!(fixture.registry.test_counts().1, 2);
-        assert!(!fixture.task.as_ref().unwrap().is_finished());
-        let remainder = peer.connect_end().await;
-        assert!(prefix.len() + remainder >= size_of::<u32>());
-        let tcp_retired = !matches!(tcp_control.next().await, Some(Ok(_)));
-        let quic_retired = !matches!(quic_control.next().await, Some(Ok(_)));
-        peer.close();
-        fixture.finish().await;
-        drop((tcp_control, quic_control));
-
-        assert_eq!(tcp_first, first.certificate);
-        assert_eq!(quic_first, first.certificate);
-        assert!(foreign_rejected && mismatch_rejected && malformed_rejected);
-        for (tcp, quic) in [replacement, after_foreign, after_mismatch, after_malformed] {
-            assert_eq!(tcp, second.certificate);
-            assert_eq!(quic, second.certificate);
-        }
-        assert!(tcp_retired && quic_retired);
-    })
-    .await
-    .expect("actual paired operator reload/retirement stalled");
+            assert_eq!(tcp_first, first.certificate);
+            assert_eq!(quic_first, first.certificate);
+            assert!(
+                rejected_replacement,
+                "replacement was accepted: {rejected:?}"
+            );
+            for (tcp, quic) in [replacement, after_rejected] {
+                assert_eq!(tcp, second.certificate);
+                assert_eq!(quic, second.certificate);
+            }
+            assert!(tcp_retired && quic_retired);
+        })
+        .await
+        .expect("actual paired operator reload/retirement stalled");
+    }
 }
