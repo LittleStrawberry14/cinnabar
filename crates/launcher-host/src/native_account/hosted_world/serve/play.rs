@@ -1,11 +1,15 @@
 //! One concrete paired play lifetime, owned and polled by the existing application worker.
 
-use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld};
+mod output;
+use output::Output;
+
+use super::{HostedApproval, HostedLoginApproval, NativeHostedWorld, SendAuthority};
 use bedrock_client::server::session::AcceptedSession;
 use bridge::host_world::{ActiveBackendPeer, ClosingBackendPeer, contract::CLOSE_MILLIS};
-use protocol::{NativeAcceptingIo, NativeAcceptingRetired};
+use protocol::{NativeAcceptingIo, NativeAcceptingRetired, NativeAcceptingSendOutcome};
 use std::{
     io,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -16,6 +20,7 @@ pub struct NativeHostedPeer {
     wire: NativeAcceptingIo,
     backend: ActiveBackendPeer,
     accepted: AcceptedSession<HostedLoginApproval>,
+    output: Output,
 }
 
 /// New play admission ended; original backend output can finish before actual transport retirement.
@@ -23,10 +28,12 @@ pub struct NativeHostedPeer {
 pub struct ClosingHostedPeer {
     wire: Option<NativeAcceptingIo>,
     retired: Option<NativeAcceptingRetired>,
-    backend: ClosingBackendPeer,
-    _accepted: AcceptedSession<HostedLoginApproval>,
+    backend: Option<ClosingBackendPeer>,
+    accepted: AcceptedSession<HostedLoginApproval>,
+    output: Output,
     deadline: Instant,
-    backend_done: bool,
+    failure: Option<Arc<io::Error>>,
+    settled: bool,
     finished: bool,
 }
 
@@ -41,6 +48,7 @@ impl NativeHostedPeer {
             wire,
             backend,
             accepted,
+            output: Output::Idle,
         }
     }
 
@@ -53,7 +61,16 @@ impl NativeHostedPeer {
         host: &mut NativeHostedWorld,
     ) -> (ClosingHostedPeer, io::Result<()>) {
         let result = self.play(host).await;
-        (self.begin_close(cleanup_deadline()), result)
+        let mut closing = self.begin_close(cleanup_deadline());
+        let result = match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = Arc::new(error);
+                closing.failure = Some(Arc::clone(&error));
+                Err(repeat(&error))
+            }
+        };
+        (closing, result)
     }
 
     /// Relays one original raw packet at a time while retaining controls and opposite-direction output.
@@ -62,11 +79,20 @@ impl NativeHostedPeer {
             host.recheck_approval(&self.accepted.grant().approval)?;
             let wire = &mut self.wire;
             let backend = &mut self.backend;
+            let output = &mut self.output;
             let event = host
                 .peer_io(None, async {
-                    tokio::select! {
-                        packet = wire.receive_play() => packet.map(Event::External),
-                        packet = backend.recv() => packet.map(Event::World),
+                    // The losing receive future is dropped before staging touches the same wire.
+                    let packet = tokio::select! {
+                        packet = wire.receive_play() => return packet.map(Event::External),
+                        packet = backend.recv() => packet?,
+                    };
+                    match packet {
+                        Some(packet) => {
+                            output.stage(wire, packet, cleanup_deadline())?;
+                            Ok(Event::World)
+                        }
+                        None => Ok(Event::Ended),
                     }
                 })
                 .await?;
@@ -85,19 +111,8 @@ impl NativeHostedPeer {
                         host.recheck_approval(&self.accepted.grant().approval)?;
                     }
                 }
-                Event::World(Some(packet)) => {
-                    let deadline = cleanup_deadline();
-                    host.send_member_raw(
-                        &self.accepted.grant().approval,
-                        &mut self.wire,
-                        packet,
-                        deadline,
-                    )
-                    .await?;
-                    host.peer_io(Some(deadline), self.backend.received(deadline))
-                        .await?;
-                }
-                Event::World(None) => return Ok(()),
+                Event::World => self.complete_output(host).await?,
+                Event::Ended => return Ok(()),
             }
         }
     }
@@ -105,104 +120,174 @@ impl NativeHostedPeer {
     /// Dispatches the sole retained opposite-direction payload before resuming its pending receipt.
     async fn world_output(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
         host.recheck_approval(&self.accepted.grant().approval)?;
-        let packet = host
-            .peer_io(None, self.backend.recv())
-            .await?
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "native world ended during output",
-                )
-            })?;
-        host.recheck_approval(&self.accepted.grant().approval)?;
-        let deadline = cleanup_deadline();
-        host.send_member_raw(
-            &self.accepted.grant().approval,
-            &mut self.wire,
-            packet,
-            deadline,
-        )
+        let wire = &mut self.wire;
+        let backend = &mut self.backend;
+        let output = &mut self.output;
+        host.peer_io(None, async {
+            let packet = backend.recv().await?.ok_or_else(ended)?;
+            output.stage(wire, packet, cleanup_deadline())
+        })
         .await?;
-        host.peer_io(Some(deadline), self.backend.received(deadline))
-            .await
+        host.recheck_approval(&self.accepted.grant().approval)?;
+        self.complete_output(host).await
+    }
+
+    /// Keeps external completion and the original backend acknowledgment as one retained obligation.
+    async fn complete_output(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
+        self.output
+            .forward(host, &self.accepted.grant().approval, &mut self.wire)
+            .await?;
+        let deadline = self.output.deadline().expect("delivered output retained");
+        let backend = &mut self.backend;
+        let output = &mut self.output;
+        let wire = &mut self.wire;
+        host.peer_io(Some(deadline), async {
+            backend.received(deadline).await?;
+            output.acknowledged(wire)
+        })
+        .await
     }
 
     /// Captures one finite closing budget and prevents all new application sends.
     pub fn begin_close(self, deadline: Instant) -> ClosingHostedPeer {
+        let deadline = self
+            .output
+            .deadline()
+            .map_or(deadline, |first| first.min(deadline));
         ClosingHostedPeer {
             wire: Some(self.wire),
             retired: None,
-            backend: self.backend.begin_close(deadline),
-            _accepted: self.accepted,
+            backend: Some(self.backend.begin_close(deadline)),
+            accepted: self.accepted,
+            output: self.output,
             deadline,
-            backend_done: false,
+            failure: None,
+            settled: false,
             finished: false,
         }
     }
 }
 
-impl NativeHostedWorld {
-    /// Drives one original member write and rechecks its existing grant after completion.
-    pub(in crate::native_account::hosted_world) async fn send_member_raw(
-        &mut self,
-        approval: &HostedApproval,
-        wire: &mut NativeAcceptingIo,
-        packet: bytes::Bytes,
-        deadline: Instant,
-    ) -> io::Result<()> {
-        self.peer_io(Some(deadline), wire.send_raw(packet, deadline))
-            .await?;
-        self.recheck_approval(approval)
-    }
-}
-
 enum Event {
     External(bytes::Bytes),
-    World(Option<bytes::Bytes>),
+    World,
+    Ended,
 }
 
 impl ClosingHostedPeer {
-    /// Drains already accepted Go output, exchanges final receipts/Close, then retires the transport.
-    /// Cancellation retains partial framing and the same deadline. Repeating completed close is safe.
-    /// Expiry or physical abort may discard unread input; no peer-Minecraft processing is promised.
-    pub async fn finish_close(&mut self) -> io::Result<()> {
+    /// Drains accepted Go output with fresh original authority before each new external commit.
+    /// Cancellation retains partial framing, the delivered obligation and its first deadline.
+    /// Revocation permits only an already committed whole effect's receipt; partial output aborts
+    /// the backend without reporting Flushed. No peer-Minecraft processing is promised.
+    pub async fn finish_close(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
         if self.finished {
-            return Ok(());
+            return self.result();
         }
-        while !self.backend_done {
-            match self.backend.finish_close().await {
-                Ok(()) => self.backend_done = true,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    let packet = self.backend.recv().await?.ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "native world closed before final receipt",
-                        )
-                    })?;
-                    self.wire
-                        .as_mut()
-                        .expect("established until backend drain")
-                        .send_raw(packet, self.deadline)
-                        .await?;
-                    self.backend.received().await?;
-                }
-                Err(error) => return Err(error),
-            }
+        if self.failure.is_none()
+            && let Err(error) = self.drain_backend(host).await
+        {
+            self.failure = Some(Arc::new(error));
+        }
+        if self.failure.is_some() && !self.settled {
+            self.settle_output().await;
+            self.backend = None;
+            self.settled = true;
         }
         if self.retired.is_none() {
             self.retired = Some(self.wire.take().expect("one consuming close").begin_close());
         }
-        self.retired
+        let result = self
+            .retired
             .as_mut()
             .expect("retired transport")
             .finish_close(self.deadline)
-            .await?;
-        self.finished = true;
-        Ok(())
+            .await;
+        if result.is_ok() {
+            self.finished = true;
+        }
+        self.result().and(result)
+    }
+
+    /// Resumes an existing delivery before reading another packet from the original backend slot.
+    async fn drain_backend(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
+        loop {
+            if let Some(deadline) = self.output.deadline() {
+                let wire = self.wire.as_mut().expect("established until backend drain");
+                self.output
+                    .forward(host, &self.accepted.grant().approval, wire)
+                    .await?;
+                let backend = self.backend.as_mut().expect("live backend drain");
+                let output = &mut self.output;
+                host.peer_io(Some(deadline), async {
+                    backend.received().await?;
+                    output.acknowledged(wire)
+                })
+                .await?;
+            }
+            let Some(backend) = &mut self.backend else {
+                return Ok(());
+            };
+            match host
+                .peer_io(Some(self.deadline), backend.finish_close())
+                .await
+            {
+                Ok(()) => {
+                    self.backend = None;
+                    return Ok(());
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    let wire = self.wire.as_mut().expect("established until backend drain");
+                    let output = &mut self.output;
+                    let deadline = self.deadline;
+                    host.peer_io(Some(deadline), async {
+                        let packet = backend.recv().await?.ok_or_else(ended)?;
+                        output.stage(wire, packet, deadline)
+                    })
+                    .await?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Seals new admission and settles only the exact committed receipt without requiring new authority.
+    async fn settle_output(&mut self) {
+        let wire = self.wire.as_mut().expect("original wire until retirement");
+        let result = wire.begin_send_retirement(self.deadline).finish().await;
+        if matches!(result, Ok(NativeAcceptingSendOutcome::Complete))
+            && self.output.deadline().is_some()
+        {
+            self.output.externally_complete();
+            if let Some(backend) = &mut self.backend
+                && backend.received().await.is_ok()
+            {
+                let _ = self.output.acknowledged(wire);
+            }
+        }
+    }
+
+    /// Keeps the first failure primary through later transport retirement and repeated completion.
+    fn result(&self) -> io::Result<()> {
+        self.failure
+            .as_ref()
+            .map_or(Ok(()), |error| Err(repeat(error)))
     }
 }
 
 /// One finite edge operation budget; idle play never uses this deadline.
 fn cleanup_deadline() -> Instant {
     Instant::now() + Duration::from_millis(u64::from(CLOSE_MILLIS))
+}
+
+/// Ends a delivered-output path without exposing world identifiers.
+fn ended() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "native world ended during output",
+    )
+}
+
+/// Preserves the first failure's class and cause across explicit closing calls.
+fn repeat(error: &Arc<io::Error>) -> io::Error {
+    io::Error::new(error.kind(), Arc::clone(error))
 }
