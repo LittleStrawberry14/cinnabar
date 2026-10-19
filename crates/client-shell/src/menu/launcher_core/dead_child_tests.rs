@@ -82,6 +82,21 @@ fn worker_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+/// Retires the real fixture owners before observing their registered worker completion.
+fn finish_workers(
+    runtime: &tokio::runtime::Runtime,
+    tasks: tokio_util::task::TaskTracker,
+    slot: LauncherCoreSlot,
+    menu: MenuRuntime,
+    world: World,
+) {
+    drop(world);
+    drop(menu);
+    drop(slot);
+    tasks.close();
+    runtime.block_on(tasks.wait());
+}
+
 /// Past the first restart delay after a quick exit.
 const AFTER_FIRST_DELAY: Duration = Duration::from_secs(1);
 
@@ -147,6 +162,7 @@ fn dead_child_detaches_clients_during_play_and_retries_unchanged_auth_when_idle(
         Some(false),
         "idle must attempt the same auth mode again"
     );
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]
@@ -163,6 +179,7 @@ fn healthy_child_and_account_client_survive_idle_and_active_frames() {
         assert!(socket_dir.exists());
         assert!(slot.failed.is_none());
     }
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 /// Installs a core executable that exits as soon as it starts and offers no IPC.
@@ -216,6 +233,7 @@ fn dead_child_is_replaced_without_a_sign_in_change_and_waits_for_new_readiness()
     assert!(!bridge::bridge_endpoint_exists(&socket_dir));
     #[cfg(unix)]
     assert!(!bridge::control_endpoint_path(&socket_dir).exists());
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]
@@ -251,6 +269,7 @@ fn a_core_that_keeps_exiting_quickly_is_given_up_on_until_a_refresh() {
     menu.feeds.profile_refresh_requested = true;
     drive_at(&mut slot, &mut menu, &mut world, true, now + step * 10);
     assert!(slot.core.is_some(), "a refresh retries the core");
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]
@@ -284,6 +303,7 @@ fn a_new_account_retires_the_authenticated_core_even_when_sign_in_mode_is_unchan
         false
     });
     assert_eq!(slot.failed, Some(true));
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]
@@ -308,6 +328,7 @@ fn account_switch_waits_for_the_previous_profiles_credential_save() {
     drive(&mut slot, &mut menu, &mut world, true);
     assert!(slot.core.is_none());
     assert!(menu.accounts.work.is_some());
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]
@@ -328,6 +349,7 @@ fn realm_membership_core_exit_retires_the_pending_dialog() {
             menu.realm_membership.state.is_none(),
             "a detached account control cannot complete the dialog"
         );
+        finish_workers(&runtime, tasks, slot, menu, world);
     }
 }
 
@@ -363,6 +385,7 @@ fn presence_policy_change_retires_the_actual_core_before_replacement() {
         Some(TitlePresenceOwner::Native)
     );
     assert_ne!(slot.core.as_ref().unwrap()._guard.id(), original);
+    finish_workers(&runtime, tasks, slot, menu, world);
 }
 
 #[test]

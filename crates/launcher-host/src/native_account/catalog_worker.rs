@@ -26,6 +26,30 @@ impl CatalogWorker {
         runtime: tokio::runtime::Handle,
         tasks: tokio_util::task::TaskTracker,
     ) -> io::Result<Self> {
+        Self::start_read(move || account.list_catalog(), runtime, tasks)
+    }
+
+    /// Runs a controlled read through the actual thread, cancellation and completion owner.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn start_test_read(
+        read: impl std::future::Future<Output = io::Result<CatalogListing>> + Send + 'static,
+        runtime: tokio::runtime::Handle,
+        tasks: tokio_util::task::TaskTracker,
+    ) -> io::Result<Self> {
+        Self::start_read(move || read, runtime, tasks)
+    }
+
+    /// Creates the read on its original OS worker; the read itself need not be Send.
+    fn start_read<F, R>(
+        read: R,
+        runtime: tokio::runtime::Handle,
+        tasks: tokio_util::task::TaskTracker,
+    ) -> io::Result<Self>
+    where
+        F: std::future::Future<Output = io::Result<CatalogListing>>,
+        R: FnOnce() -> F + Send + 'static,
+    {
         let (sender, result) = bounded(1);
         let (cancel, mut cancelled) = oneshot::channel();
         let worker = std::thread::Builder::new()
@@ -35,7 +59,7 @@ impl CatalogWorker {
                     let result = runtime.block_on(async {
                         tokio::select! { biased;
                             _ = &mut cancelled => None,
-                            result = account.list_catalog() => Some(result),
+                            result = read() => Some(result),
                         }
                     });
                     if let Some(result) = result {
@@ -49,6 +73,13 @@ impl CatalogWorker {
             cancel: Some(cancel),
             worker,
         })
+    }
+
+    /// Observes an actual queued result without consuming the stale-publication fixture's item.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn test_has_result(&self) -> bool {
+        !self.result.is_empty()
     }
 
     /// Signals only this actual request; its Operation still owns protected persistence.
