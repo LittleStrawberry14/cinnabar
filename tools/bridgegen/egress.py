@@ -46,6 +46,13 @@ def admitted(address, denied):
     return not any(address.version == prefix.version and address in prefix for prefix in denied)
 
 
+def address_text(address):
+    """Render mapped IPv6 consistently across supported Python versions."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return f"::ffff:{address.ipv4_mapped}"
+    return str(address)
+
+
 def corpus(denied, examples):
     """Probe both sides of every boundary and the mapped form of every IPv4 probe."""
     addresses = set()
@@ -69,7 +76,7 @@ def corpus(denied, examples):
         raise ValueError("gateway boundary corpus exceeds its bound")
     return {
         "schema": 1,
-        "cases": [{"address": str(address), "public": admitted(address, denied)}
+        "cases": [{"address": address_text(address), "public": admitted(address, denied)}
                   for address in sorted(addresses, key=lambda ip: (ip.version, int(ip)))],
     }
 
