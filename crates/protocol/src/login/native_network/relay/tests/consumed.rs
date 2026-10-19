@@ -97,8 +97,8 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             ));
             // Distinct application batches give the consumed projection and unread sibling
             // independent actual received backing allocations.
-            send(&peer, &codec, &[start.clone()]).await;
-            send(&peer, &codec, &[after.clone()]).await;
+            send(&peer, &codec, std::slice::from_ref(&start)).await;
+            send(&peer, &codec, std::slice::from_ref(&after)).await;
             peer.session.closed().await;
         };
         let client = async {

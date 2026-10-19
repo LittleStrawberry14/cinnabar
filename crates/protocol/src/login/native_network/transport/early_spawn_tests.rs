@@ -176,7 +176,12 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
                 unreachable!();
             };
             skin.uuid = identity;
-            assert_eq!(outgoing, expected[..1], "skin UUID must match actual Login");
+            assert_eq!(outgoing.len(), 1);
+            let packets::Packet::PlayerSkin(actual) = &*outgoing[0].data else {
+                panic!("expected the original skin update");
+            };
+            assert_eq!(actual.uuid, identity, "skin UUID must match actual Login");
+            assert!(outgoing == expected[..1], "skin metadata, pixels and headers must survive");
             let outgoing = receive(&mut peer, &codec).await;
             let packets::Packet::Text(chat) = &mut *expected[1].data else {
                 unreachable!();

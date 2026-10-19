@@ -240,16 +240,14 @@ async fn failed_original_receipt_is_cached_without_repolling_its_completed_futur
             .begin_send_retirement(deadline)
             .finish()
             .await
-            .err()
-            .expect("failed receipt cannot prove complete")
+            .expect_err("failed receipt cannot prove complete")
             .kind();
         let retired_again = pair
             .wire
             .begin_send_retirement(deadline + TIMEOUT)
             .finish()
             .await
-            .err()
-            .expect("settlement failure is retained")
+            .expect_err("settlement failure is retained")
             .kind();
         let cleanup = pair.finish().await;
         assert!(
