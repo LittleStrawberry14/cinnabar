@@ -57,7 +57,7 @@ impl Provider {
     }
 
     /// Verifies each actual visitor's distinct identity against its own connection proof.
-    pub(super) fn authentication_for(
+    pub(in crate::native_account::hosted_world) fn authentication_for(
         &self,
         key: SigningKey,
         service_time: SystemTime,

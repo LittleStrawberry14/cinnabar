@@ -371,3 +371,6 @@ fn busy() -> io::Error {
         "native hosted visitor capacity is occupied",
     )
 }
+
+#[cfg(test)]
+mod tests;
