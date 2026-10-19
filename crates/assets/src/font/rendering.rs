@@ -2,7 +2,7 @@
 pub const FONT_STYLE_COVERAGE_GAMMA: u8 = 32;
 pub const FONT_STYLE_SDF: u8 = 64;
 /// Integrates a monochrome outline raster over each displayed pixel's footprint.
-pub const FONT_STYLE_OUTLINE_COVERAGE: u16 = 1 << 9;
+pub const FONT_STYLE_OUTLINE_COVERAGE: u16 = 1 << 11;
 
 /// Runtime text coverage interpretation; serialized carriers retain ordinary coverage.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
