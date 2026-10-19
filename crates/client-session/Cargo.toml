@@ -27,6 +27,7 @@ web-time.workspace = true
 world = { path = "../world" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-util = { workspace = true, features = ["rt"] }
 crash-report = { path = "../crash-report" }
 
 [dev-dependencies]
