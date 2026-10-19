@@ -84,6 +84,9 @@ pub(crate) fn read_manifest(
     if uuid != pack_id || manifest_version != selected_version {
         return Err(AdmissionError::ManifestIdentityMismatch);
     }
+    if purpose == Purpose::Identity {
+        validate_identity_modules(&root["modules"])?;
+    }
     let has_resources = root["modules"].as_array().is_some_and(|modules| {
         modules
             .iter()
@@ -118,6 +121,26 @@ pub(crate) fn read_manifest(
         subpacks,
         has_behaviors,
     })
+}
+
+/// Checks consumed module shapes while preserving null defaults and unknown type names.
+fn validate_identity_modules(modules: &Value) -> Result<(), AdmissionError> {
+    match modules {
+        Value::Null => Ok(()),
+        Value::Array(modules)
+            if modules.iter().all(|module| match module {
+                Value::Null => true,
+                Value::Object(module) => matches!(
+                    module.get("type"),
+                    None | Some(Value::Null | Value::String(_))
+                ),
+                _ => false,
+            }) =>
+        {
+            Ok(())
+        }
+        _ => Err(AdmissionError::InvalidModules),
+    }
 }
 
 #[cfg(test)]
