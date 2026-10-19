@@ -37,7 +37,7 @@ pub(crate) fn draw_stages(world: &mut World, draw: impl FnOnce(&mut World)) -> V
         true,
     )
     .unwrap();
-    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
     world.insert_resource(timestamps);
     draw(world);
     let timestamps = world.remove_resource::<GpuTimestamps>().unwrap();
@@ -89,7 +89,9 @@ fn completed_metal_samples_drain_when_every_readback_slot_is_occupied() {
             .store(WRITTEN, Ordering::Release);
         timestamps.ring.submit(index);
     }
-    timestamps.begin(|_| panic!("completed samples still need a readback copy"));
+    timestamps.begin(0, |_, _, _| {
+        panic!("completed samples still need a readback copy")
+    });
     assert!(timestamps.open_pass(RuntimeStage::GpuUi).is_none());
     let mut world = World::new();
     world.insert_resource(timestamps);
@@ -104,7 +106,7 @@ fn completed_metal_samples_drain_when_every_readback_slot_is_occupied() {
     timestamps.request_readback(&queue);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let mut frames = Vec::new();
-    timestamps.begin(|frame| frames.push(*frame));
+    timestamps.begin(0, |_, frame, _| frames.push(*frame));
     assert_eq!(frames.len(), SLOTS);
     assert!(timestamps.ring.oldest_in_flight().is_none());
     assert!(timestamps.open_pass(RuntimeStage::GpuUi).is_some());
@@ -131,7 +133,7 @@ fn readback_includes_queries_allocated_by_parallel_recording() {
     let (device, queue) = noop_device(features);
     for synchronous in [false, true] {
         let mut timestamps = GpuTimestamps::new(&device, &queue, true).unwrap();
-        timestamps.begin(|_| unreachable!("first frame has no readback"));
+        timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
         let mut world = World::new();
         world.insert_resource(timestamps);
         let (_, mut buffers) = record(&mut world, &device, |world, context| {
@@ -177,7 +179,7 @@ fn readback_includes_queries_allocated_by_parallel_recording() {
         assert_eq!(slot.stages[PASS_SPANS as usize], RuntimeStage::GpuActors);
         complete_readback(&mut timestamps, &device, &queue);
         let mut readbacks = 0;
-        timestamps.begin(|_| readbacks += 1);
+        timestamps.begin(0, |_, _, _| readbacks += 1);
         assert_eq!(readbacks, 1);
     }
 }
@@ -226,7 +228,7 @@ fn timed_frame_is_read_back_on_a_later_frame_without_waiting() {
     let mut timestamps = GpuTimestamps::new(&device, &queue, true).unwrap();
     assert!(!timestamps.draw_spans);
     let mut frames = Vec::new();
-    timestamps.begin(|frame| frames.push(*frame));
+    timestamps.begin(42, |_, frame, _| frames.push(*frame));
     world.insert_resource(timestamps);
 
     let mut buffers = run_opaque(&mut world, &device);
@@ -255,7 +257,14 @@ fn timed_frame_is_read_back_on_a_later_frame_without_waiting() {
     assert!(frames.is_empty());
 
     complete_readback(&mut timestamps, &device, &queue);
-    timestamps.begin(|frame| frames.push(*frame));
+    timestamps.begin(43, |id, frame, whole_frame| {
+        assert_eq!(id, 42, "readback retains the recording frame's identity");
+        assert!(
+            !whole_frame,
+            "a detailed pass is not complete coarse coverage"
+        );
+        frames.push(*frame);
+    });
     assert_eq!(runs.load(Ordering::Relaxed), 1);
     assert_eq!(frames.len(), 1);
     // The NOOP backend writes no ticks, so the frame decodes to no durations.
@@ -271,7 +280,7 @@ fn metal_wrappers_encode_no_synthetic_passes() {
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     let (mut world, runs) = timed_world();
     let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
-    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
     world.insert_resource(timestamps);
     assert!(run_opaque(&mut world, &device).is_empty());
     let (_, buffers) = record(&mut world, &device, |world, context| {
@@ -288,7 +297,7 @@ fn metal_wrappers_encode_no_synthetic_passes() {
 fn metal_owned_pass_queries_reuse_bounded_storage() {
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
-    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
     let mut world = World::new();
     world.insert_resource(timestamps);
     if !cfg!(target_os = "macos") {
@@ -321,7 +330,7 @@ fn frame_without_spans_releases_its_slot() {
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
     for _ in 0..SLOTS * 2 {
-        timestamps.begin(|_| unreachable!("no frame was submitted"));
+        timestamps.begin(0, |_, _, _| unreachable!("no frame was submitted"));
         finish_frame(&mut timestamps, &device, &queue);
         assert!(timestamps.ring.oldest_in_flight().is_none());
     }
@@ -334,7 +343,7 @@ fn ui_pass_categories_are_opt_in_and_do_not_duplicate_parent_spans() {
     for enabled in [false, true] {
         let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
         timestamps.ui_categories = enabled;
-        timestamps.begin(|_| unreachable!("first frame has no readback"));
+        timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
         let mut world = World::new();
         world.insert_resource(timestamps);
         let (_, buffers) = record(&mut world, &device, |world, context| {
@@ -393,7 +402,7 @@ fn unprofiled_frames_time_only_the_whole_frame() {
     for detail in [false, true] {
         let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
         timestamps.pass_detail = detail;
-        timestamps.begin(|_| unreachable!("first frame has no readback"));
+        timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
         let mut world = World::new();
         world.insert_resource(timestamps);
         let (_, buffers) = record(&mut world, &device, |world, context| {
@@ -443,7 +452,7 @@ fn spans_are_read_back_only_after_the_frame_graph_resolves_them() {
     bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
-    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
     let mut world = World::new();
     world.insert_resource(timestamps);
     let (_, buffers) = record(&mut world, &device, |world, context| {
@@ -457,7 +466,7 @@ fn spans_are_read_back_only_after_the_frame_graph_resolves_them() {
         "an unresolved frame maps nothing"
     );
 
-    timestamps.begin(|_| unreachable!("nothing was read back"));
+    timestamps.begin(0, |_, _, _| unreachable!("nothing was read back"));
     world.insert_resource(timestamps);
     let (_, mut buffers) = record(&mut world, &device, |world, context| {
         timed(world, context, RuntimeStage::GpuOpaque, |_| {})
@@ -502,7 +511,7 @@ fn readback_includes_every_camera_in_submission_order() {
     struct CameraStage(RuntimeStage);
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     let mut timestamps = GpuTimestamps::new(&device, &queue, true).unwrap();
-    timestamps.begin(|_| unreachable!("first frame"));
+    timestamps.begin(0, |_, _, _| unreachable!("first frame"));
     let mut world = World::new();
     world.insert_resource(device.clone());
     world.insert_resource(queue.clone());
@@ -568,7 +577,7 @@ fn draw_overflow_drops_categories_but_keeps_passes() {
         "per-draw spans stay off without aggregate profiling"
     );
     let mut timestamps = GpuTimestamps::new(&device, &queue, true).unwrap();
-    timestamps.begin(|_| {});
+    timestamps.begin(0, |_, _, _| {});
     assert!(timestamps.open_pass(RuntimeStage::GpuOpaque).is_some());
     let draws = (0..=DRAW_SPANS)
         .filter(|_| timestamps.open_draw(RuntimeStage::GpuActors).is_some())

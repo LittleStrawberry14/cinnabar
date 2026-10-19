@@ -332,6 +332,8 @@ struct ReadbackSlot {
     passes: u32,
     draws: u32,
     stages: [RuntimeStage; SLOT_SPANS as usize],
+    /// Render schedule that recorded these queries, retained across asynchronous mapping.
+    frame_id: u64,
 }
 
 #[derive(Resource)]
@@ -386,6 +388,7 @@ impl GpuTimestamps {
                 passes: 0,
                 draws: 0,
                 stages: [RuntimeStage::GpuFrame; SLOT_SPANS as usize],
+                frame_id: 0,
             }),
             ring: ReadbackRing::default(),
             period_ns: queue.get_timestamp_period(),
@@ -457,7 +460,7 @@ impl GpuTimestamps {
     }
 
     /// Hands mapped frames to `sink` oldest first, then claims a slot for this frame.
-    fn begin(&mut self, mut sink: impl FnMut(&GpuFrameTimes)) {
+    fn begin(&mut self, frame_id: u64, mut sink: impl FnMut(u64, &GpuFrameTimes, bool)) {
         #[cfg(feature = "tracy")]
         let _zone = bevy::log::info_span!("gpu.timestamps.readback").entered();
         while let Some(index) = self.ring.oldest_in_flight() {
@@ -499,7 +502,10 @@ impl GpuTimestamps {
                     slot.buffer.unmap();
                     #[cfg(feature = "tracy")]
                     tracy::record(&frame);
-                    sink(&frame);
+                    let whole_frame = slot.passes == 1
+                        && slot.draws == 0
+                        && slot.stages[0] == RuntimeStage::GpuFrame;
+                    sink(slot.frame_id, &frame, whole_frame);
                 }
                 _ => {
                     if let Some(health) = &mut self.health {
@@ -511,6 +517,9 @@ impl GpuTimestamps {
             self.ring.release(index);
         }
         let slot = self.ring.acquire().map_or(NO_SLOT, |slot| slot as u32);
+        if slot != NO_SLOT {
+            self.slots[slot as usize].frame_id = frame_id;
+        }
         if let Some(health) = &mut self.health {
             health.frame(slot == NO_SLOT);
         }
@@ -663,6 +672,10 @@ fn begin_gpu_frame(
     profiler: Res<RuntimeStageProfiler>,
     detail: Option<Res<DetailedGpuTiming>>,
     categories: Option<Res<categories::CategoryProfiling>>,
+    #[cfg(target_os = "windows")] mut adaptive: Option<
+        ResMut<crate::present_mode::AdaptiveFrameLatency>,
+    >,
+    #[cfg(target_os = "windows")] policy: Option<Res<crate::present_mode::PresentModePolicy>>,
 ) {
     let Some(mut timestamps) = timestamps else {
         return;
@@ -672,7 +685,26 @@ fn begin_gpu_frame(
         || categories.is_some()
         || detail.is_some_and(|detail| detail.0);
     // Reads slots mapped by the previous frame's device poll.
-    timestamps.begin(|frame| profiler.record_gpu_frame(frame));
+    #[cfg(target_os = "windows")]
+    let frame_id = adaptive.as_ref().map_or(0, |adaptive| adaptive.frame());
+    #[cfg(not(target_os = "windows"))]
+    let frame_id = profiler.frame_id();
+    timestamps.begin(frame_id, |id, frame, whole_frame| {
+        profiler.record_gpu_frame(frame);
+        #[cfg(target_os = "windows")]
+        if let (Some(adaptive), Some(policy)) = (adaptive.as_mut(), policy.as_ref()) {
+            adaptive.record_gpu(
+                id,
+                whole_frame
+                    .then(|| frame.get(RuntimeStage::GpuFrame))
+                    .flatten(),
+                std::time::Instant::now(),
+                policy,
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = (id, whole_frame);
+    });
 }
 
 fn request_gpu_frame_readback(timestamps: Option<ResMut<GpuTimestamps>>, queue: Res<RenderQueue>) {
