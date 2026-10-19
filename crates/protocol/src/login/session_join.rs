@@ -132,13 +132,15 @@ impl LoginSequence {
         let preparation = prepared_job.expect("spawn waits for StartGame and the item registry");
         tokio::pin!(preparation);
         // Keep reading while the packs prepare, so the server's backlog never stalls the core.
-        let prepared = {
-            let _pack_wait = pack_wait;
-            tokio::select! {
-                prepared = &mut preparation => prepared,
-                () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => preparation.await,
-            }
+        let prepared = tokio::select! {
+            prepared = &mut preparation => prepared,
+            () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => preparation.await,
         };
+        #[allow(
+            clippy::drop_non_drop,
+            reason = "inert builds omit Drop; retain the original guard order after preparation on cancellation"
+        )]
+        drop(pack_wait);
         profile.mark("session_ready");
         let session = PlaySession::new(transport, cache, initialization);
         Ok((session, prepared))
