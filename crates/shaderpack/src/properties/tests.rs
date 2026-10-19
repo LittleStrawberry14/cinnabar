@@ -187,6 +187,79 @@ fn program_rules_prefer_dimension_and_last_occurrence() {
 }
 
 #[test]
+fn custom_textures_file_resource_raw_noise_and_malformed() {
+    let properties = parse(
+        "texture.noise = /textures/grain.png\ntexture.composite.colortex5 = textures/dust.png\n\
+         texture.gbuffers.gaux1 = example:textures/sky/stars.png\n\
+         texture.deferred.colortex9.1 = data/lut.bin TEXTURE_3D RGBA8 16 16 16 RGBA UNSIGNED_BYTE\n\
+         texture.composite = textures/none.png\ntexture.deferred.colortex2 =\n\
+         texture.composite.colortex5 = textures/dust2.png\n",
+    );
+    assert_eq!(
+        properties.custom_textures,
+        [
+            CustomTexture {
+                stage: "noise".to_owned(),
+                sampler: "noisetex".to_owned(),
+                source: TextureSource::File("textures/grain.png".to_owned()),
+            },
+            CustomTexture {
+                stage: "composite".to_owned(),
+                sampler: "colortex5".to_owned(),
+                source: TextureSource::File("textures/dust2.png".to_owned()),
+            },
+            CustomTexture {
+                stage: "gbuffers".to_owned(),
+                sampler: "gaux1".to_owned(),
+                source: TextureSource::Resource("example:textures/sky/stars.png".to_owned()),
+            },
+            CustomTexture {
+                stage: "deferred".to_owned(),
+                sampler: "colortex9.1".to_owned(),
+                source: TextureSource::Raw {
+                    path: "data/lut.bin".to_owned(),
+                    spec: [
+                        "TEXTURE_3D",
+                        "RGBA8",
+                        "16",
+                        "16",
+                        "16",
+                        "RGBA",
+                        "UNSIGNED_BYTE"
+                    ]
+                    .map(str::to_owned)
+                    .to_vec(),
+                },
+            },
+        ]
+    );
+    assert_eq!(diagnostic_lines(&properties), [5, 6]);
+}
+
+#[test]
+fn custom_textures_bind_their_unit_uniform_in_their_stage_programs() {
+    let properties = parse(
+        "texture.noise = noise.png\ntexture.composite.colortex6.1 = lut.png\n\
+         texture.gbuffers.gaux2 = water.png\ntexture.setup.colortex7 = seed.png\n",
+    );
+    let [noise, composite, gbuffers, setup] = properties.custom_textures.as_slice() else {
+        panic!("{:?}", properties.custom_textures);
+    };
+    assert_eq!(noise.uniform(), "noisetex");
+    assert_eq!(composite.uniform(), "colortex6");
+    assert_eq!(gbuffers.uniform(), "gaux2");
+    assert!(noise.applies_to(ProgramGroup::Shadow) && noise.applies_to(ProgramGroup::Final));
+    assert!(composite.applies_to(ProgramGroup::Composite));
+    assert!(composite.applies_to(ProgramGroup::Final));
+    assert!(!composite.applies_to(ProgramGroup::Deferred));
+    assert!(gbuffers.applies_to(ProgramGroup::Gbuffers));
+    assert!(gbuffers.applies_to(ProgramGroup::Shadow));
+    assert!(!gbuffers.applies_to(ProgramGroup::ShadowComposite));
+    assert!(setup.applies_to(ProgramGroup::Setup));
+    assert!(!setup.applies_to(ProgramGroup::Begin));
+}
+
+#[test]
 fn custom_images_relative_absolute_and_malformed() {
     let properties = parse(
         "image.halfImg = halfSampler rgba rgba16f half_float true true 0.5 0.5\n\

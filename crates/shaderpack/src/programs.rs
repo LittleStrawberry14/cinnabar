@@ -68,6 +68,25 @@ pub enum ProgramGroup {
     Final,
 }
 
+impl ProgramGroup {
+    /// The `<stage>` of `texture.<stage>.<sampler>` bindings that apply to the group, as
+    /// Iris's `TextureStage` names it: shadow programs share the gbuffers bindings and
+    /// `final` shares the composite ones.
+    pub fn texture_stage(self) -> &'static str {
+        match self {
+            ProgramGroup::Setup => "setup",
+            ProgramGroup::Begin => "begin",
+            ProgramGroup::ShadowComposite => "shadowcomp",
+            ProgramGroup::Prepare => "prepare",
+            ProgramGroup::Shadow | ProgramGroup::Gbuffers | ProgramGroup::DistantHorizons => {
+                "gbuffers"
+            }
+            ProgramGroup::Deferred => "deferred",
+            ProgramGroup::Composite | ProgramGroup::Final => "composite",
+        }
+    }
+}
+
 /// Whether a program is a draw (vertex + fragment, optional geometry/tessellation) or a
 /// compute dispatch. A composite-style pass may have both: its `.csh` files run first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

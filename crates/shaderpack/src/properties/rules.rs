@@ -1,6 +1,9 @@
 //! Typed parsing of the recognised `shaders.properties` keys.
 
-use super::{CustomImage, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties};
+use super::{
+    CustomImage, CustomTexture, ImageSize, ProgramRule, PropertiesDiagnostic, ShaderProperties,
+    TextureSource,
+};
 use crate::expr::Expr;
 
 /// Records the typed rule for a recognised `key`; a malformed value adds a diagnostic
@@ -28,6 +31,17 @@ fn apply_rule(
         properties
             .program_rules
             .push(program_rule(target, value, line)?);
+    } else if let Some(target) = key.strip_prefix("texture.") {
+        let (stage, sampler) = if target == "noise" {
+            ("noise".to_owned(), "noisetex".to_owned())
+        } else {
+            split_target(target, "stage", "sampler")?
+        };
+        properties.custom_textures.push(CustomTexture {
+            stage,
+            sampler,
+            source: texture_source(value)?,
+        });
     } else if let Some(image) = key.strip_prefix("image.") {
         properties.images.push(custom_image(image, value)?);
     }
@@ -40,6 +54,14 @@ fn name(segment: &str, what: &str) -> Result<String, String> {
         return Err(format!("missing {what} name"));
     }
     Ok(segment.to_owned())
+}
+
+/// Splits `<first>.<rest>` at the first `.`; both parts must be non-empty.
+fn split_target(target: &str, first: &str, rest: &str) -> Result<(String, String), String> {
+    let Some((head, tail)) = target.split_once('.') else {
+        return Err(format!("expected `<{first}>.<{rest}>`"));
+    };
+    Ok((name(head, first)?, name(tail, rest)?))
 }
 
 /// Parses true or false without regard to case, rejecting other values.
@@ -93,6 +115,27 @@ fn program_rule(target: &str, value: &str, line: u32) -> Result<ProgramRule, Str
         expr,
         line,
     })
+}
+
+/// Classifies a texture value: extra tokens make a raw texture, a `:` a resource location,
+/// anything else a pack file. Leading `/` is stripped from pack paths.
+fn texture_source(value: &str) -> Result<TextureSource, String> {
+    let mut tokens = value.split_whitespace();
+    let Some(first) = tokens.next() else {
+        return Err("missing texture path".to_owned());
+    };
+    let spec: Vec<String> = tokens.map(str::to_owned).collect();
+    let path = first.trim_start_matches('/');
+    if !spec.is_empty() {
+        return Ok(TextureSource::Raw {
+            path: name(path, "texture path")?,
+            spec,
+        });
+    }
+    if first.contains(':') {
+        return Ok(TextureSource::Resource(first.to_owned()));
+    }
+    Ok(TextureSource::File(name(path, "texture path")?))
 }
 
 /// Parses an image declaration with positive absolute or relative dimensions.
