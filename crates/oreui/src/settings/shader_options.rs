@@ -267,7 +267,8 @@ fn control_row(canvas: &Canvas<'_>, inner: Bounds) -> Bounds {
     ]
 }
 
-/// The step-backwards and step-forwards buttons at either end of `row`.
+/// The step-backwards and step-forwards buttons at either end of `row`. The glyphs are
+/// centred over empty button faces, whose label padding is wider than these buttons.
 fn arrows(
     canvas: &mut Canvas<'_>,
     view: &MenuView,
@@ -276,20 +277,15 @@ fn arrows(
     next: MenuAction,
 ) -> Result<(), PaintError> {
     let width = canvas.r(ARROW_WIDTH);
-    button::action(
-        canvas,
-        view,
-        [row[0], row[1], row[0] + width, row[3]],
-        "<",
-        Some(previous),
-    )?;
-    button::action(
-        canvas,
-        view,
-        [row[2] - width, row[1], row[2], row[3]],
-        ">",
-        Some(next),
-    )
+    let color = canvas.role(theme::SECONDARY).text;
+    for (bounds, glyph, action) in [
+        ([row[0], row[1], row[0] + width, row[3]], "<", previous),
+        ([row[2] - width, row[1], row[2], row[3]], ">", next),
+    ] {
+        button::action(canvas, view, bounds, "", Some(action))?;
+        canvas.text_centred(glyph, bounds, BODY, color, false)?;
+    }
+    Ok(())
 }
 
 /// Height of the fixed footer under the grid.
