@@ -32,6 +32,9 @@ The gateway accepts TLS 1.3 HTTP/1.1 upgrades for the generated
 A control connection issues the capability and generation used by its separate play connection;
 play runs native RakNet login, resource-pack transfer and the shared web-session handoff.
 Upstream connections use the existing public-address admission policy.
+Advertised pack HTTP/HTTPS URLs use the same public numeric address policy at DNS resolution
+and before following redirects, with ambient proxies disabled. Verified archives enter the existing
+pack handoff; URL failures retain game-chunk fallback. This path uses no desktop filesystem cache.
 
 `Gateway::new` takes exact allowed origin strings. With an empty list, a nonempty Origin must
 have the request Host's authority; missing Origin is permitted. Origin checks do not replace

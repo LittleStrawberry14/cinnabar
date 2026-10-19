@@ -1,5 +1,9 @@
 //! Runtime-only HTTP and persistent archive I/O for native direct joins.
 
+mod http;
+
+pub(super) use http::{Client, http_client, public_http_client};
+
 use bedrock_protocol_1_26_51::types::PackInfoData;
 use resource_pack::cache::{ArchiveCache, ArchiveCacheKey, DEFAULT_CACHE_QUOTA};
 use std::{
@@ -10,7 +14,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 use tokio::{sync::Semaphore, task::JoinSet};
 
@@ -41,17 +44,6 @@ pub(super) async fn open_cache(root: Option<&Path>) -> Option<Arc<ArchiveCache>>
     }
 }
 
-/// Builds one async HTTP client at the I/O edge, with bounded redirect and request timeouts.
-pub(super) fn http_client() -> io::Result<reqwest::Client> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(45))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(|_| io::Error::other("pack HTTP client could not initialize"))
-}
-
 /// The result of caller-owned cache/CDN acquisition, before protocol admission.
 pub(super) struct Preload {
     pub(super) archive: Option<Vec<u8>>,
@@ -62,7 +54,7 @@ pub(super) struct Preload {
 pub(super) async fn preload(
     offer: &PackInfoData,
     cache: Option<Arc<ArchiveCache>>,
-    client: Option<reqwest::Client>,
+    client: Option<Client>,
     cancelled: Arc<AtomicBool>,
 ) -> Preload {
     let id = offer.pack_id_version.pack_uuid;
@@ -99,22 +91,14 @@ pub(super) async fn preload(
                 .cdn_url
                 .to_str()
                 .map_err(|_| invalid("invalid pack CDN URL"))?;
-            let url = reqwest::Url::parse(url).map_err(|_| invalid("invalid pack CDN URL"))?;
-            if !matches!(url.scheme(), "http" | "https")
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.fragment().is_some()
-            {
-                return Err(invalid("unsupported pack CDN URL"));
-            }
+            let request = client.get(url)?;
             #[cfg(test)]
             let _ = super::HTTP_ATTEMPTS.try_with(|attempts| {
                 attempts
                     .try_send(id)
                     .expect("fixture HTTP-attempt capacity");
             });
-            let mut response = client
-                .get(url)
+            let mut response = request
                 .send()
                 .await
                 .map_err(|_| invalid("pack CDN request failed"))?;
