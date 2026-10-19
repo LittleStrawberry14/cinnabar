@@ -29,6 +29,7 @@ use {
 
 use std::time::Instant;
 
+pub(crate) mod account_retirement;
 mod client_id;
 #[cfg(feature = "native-networking")]
 pub(crate) mod destination;
@@ -72,6 +73,7 @@ pub(crate) struct SessionController {
     /// Automatic transfer-follow hops remaining in the current chain.
     transfer_hops_remaining: u32,
     connecting: bool,
+    account_retirement_started: bool,
     parallel_resource_pack_urls: bool,
     #[cfg(feature = "native-networking")]
     native_transport: Option<protocol::NativeTransport>,
@@ -147,6 +149,7 @@ impl SessionController {
             local_world: false,
             transfer_hops_remaining: MAX_TRANSFER_CHAIN_HOPS,
             connecting: false,
+            account_retirement_started: false,
             parallel_resource_pack_urls: false,
             #[cfg(feature = "native-networking")]
             native_transport: None,

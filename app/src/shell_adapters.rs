@@ -11,7 +11,11 @@ use client_shell::{
 /// Supplies the account service edge at the original authority-chain position.
 pub(crate) fn menu_services()
 -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
-    drive_menu_services.into_configs()
+    (
+        crate::session::account_retirement::before_menu_services,
+        drive_menu_services,
+    )
+        .chain()
 }
 
 /// Drives the launcher's own services: catalog, saves, settings, the account core and local worlds.

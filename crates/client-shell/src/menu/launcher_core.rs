@@ -119,6 +119,9 @@ impl LauncherCoreSlot {
                 .as_ref()
                 .is_none_or(|p| p.cleanup_complete())
         {
+            if !menu.account_session_retired() {
+                return;
+            }
             if !self.retire_presence() {
                 return;
             }
