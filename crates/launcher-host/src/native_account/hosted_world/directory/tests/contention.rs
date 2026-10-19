@@ -9,7 +9,7 @@ use std::{
 /// Normal account work retains this host and its exact IO result; original proof replacement still rejects.
 #[tokio::test]
 async fn original_host_io_survives_unrelated_account_operation() {
-    tokio::time::timeout(super::super::super::ACQUISITION_TIMEOUT, async {
+    tokio::time::timeout(crate::native_account::ACQUISITION_TIMEOUT, async {
         let fixture = NativeHostFixture::new();
         let namespace = tempfile::tempdir().unwrap();
         let config = minecraft::Config::desktop(
@@ -50,7 +50,7 @@ async fn original_host_io_survives_unrelated_account_operation() {
             Some(identity.xuid().into()),
         ));
         install(&account, services, &identity);
-        let deadline = Instant::now() + super::super::super::ACQUISITION_TIMEOUT;
+        let deadline = Instant::now() + crate::native_account::ACQUISITION_TIMEOUT;
         let mut host = fixture
             .manager
             .native_hosted_world(Arc::clone(&account), deadline)
