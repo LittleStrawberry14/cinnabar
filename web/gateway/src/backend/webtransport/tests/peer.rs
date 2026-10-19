@@ -29,16 +29,25 @@ pub(super) struct Fixture {
 impl Fixture {
     /// Supplies one actual certificate, paired listeners, registry and original serving future.
     pub(super) async fn new(upstream: Option<SocketAddr>) -> Self {
-        Self::configured(upstream, false).await
+        Self::configured(upstream, false, None).await
     }
 
     /// Limits actual receive credit so a split-prefix test can prove the server consumed a byte.
     pub(super) async fn with_prefix_credit() -> Self {
-        Self::configured(None, true).await
+        Self::configured(None, true, None).await
     }
 
-    /// Retains the original paired service; only the causal prefix fixture changes stream credit.
-    async fn configured(upstream: Option<SocketAddr>, prefix_credit: bool) -> Self {
+    /// Bounds the actual peer's stream credit so an archive remains under physical pressure.
+    pub(super) async fn with_pack_credit(upstream: SocketAddr, credit: u32) -> Self {
+        Self::configured(Some(upstream), false, Some(credit.into())).await
+    }
+
+    /// Retains the original paired service and changes only the selected fixture's stream credit.
+    async fn configured(
+        upstream: Option<SocketAddr>,
+        prefix_credit: bool,
+        client_credit: Option<quinn::VarInt>,
+    ) -> Self {
         if let Some(upstream) = upstream {
             assert!(upstream.ip().is_loopback() && upstream.port() != 0);
         }
@@ -85,7 +94,13 @@ impl Fixture {
         tls.alpn_protocols = vec![b"h3".to_vec()];
         let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap();
         let mut client = quinn::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        client.set_default_client_config(quinn::ClientConfig::new(Arc::new(crypto)));
+        let mut config = quinn::ClientConfig::new(Arc::new(crypto));
+        if let Some(credit) = client_credit {
+            let mut transport = quinn::TransportConfig::default();
+            transport.stream_receive_window(credit);
+            config.transport_config(Arc::new(transport));
+        }
+        client.set_default_client_config(config);
         Self {
             registry,
             tcp,

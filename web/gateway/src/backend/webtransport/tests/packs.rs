@@ -128,3 +128,5 @@ async fn paired_play_reaches_owned_bds_with_its_original_pack_uni() {
     .await
     .expect("actual paired gateway BDS world/pack fixture stalled");
 }
+
+mod blocked;
