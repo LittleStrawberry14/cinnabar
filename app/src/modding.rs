@@ -6,6 +6,7 @@ use client_extensions::modding::{
     multi::{self, ModHosts},
 };
 
+use crate::semantic_controls::ReservedControls;
 use bevy::prelude::*;
 use {
     crate::{environment::VisualTimeOverride, runtime::network::resource_packs::PackApplication},
@@ -42,10 +43,6 @@ mod terrain;
 /// Every loaded mod's presentation cues committed this frame, in load order.
 #[derive(Resource, Default)]
 pub(crate) struct ModCueFeed(pub Vec<mod_host::ModCue>);
-
-/// Physical controls consumed by mods before gameplay samples this frame's ordered events.
-#[derive(Resource, Default)]
-pub(crate) struct ReservedControls(pub Vec<String>);
 
 #[derive(Resource)]
 pub(crate) struct ModRuntime {

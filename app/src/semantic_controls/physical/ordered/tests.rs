@@ -11,7 +11,7 @@ fn mod_reservations_remove_ordered_mouse_edges_and_preserve_other_controls() {
         .init_resource::<Touches>()
         .init_resource::<SemanticTouchTargets>()
         .init_resource::<PendingDeviceFrame>()
-        .insert_resource(crate::modding::ReservedControls(vec![
+        .insert_resource(crate::semantic_controls::ReservedControls(vec![
             "MouseRight".into(),
             "KeyW".into(),
         ]))
