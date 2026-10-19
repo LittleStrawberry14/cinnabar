@@ -21,6 +21,8 @@ impl ActiveHostedWorld {
                 }
             }
         };
+        #[cfg(test)]
+        let committed = result.is_ok();
         match result {
             Ok(Renewed {
                 identity,
@@ -37,6 +39,10 @@ impl ActiveHostedWorld {
             Err(error) => self.renewal_failure = Some(Arc::new(error)),
         }
         self.phase_started = false;
+        #[cfg(test)]
+        if committed && let Some(observed) = self.renewal_committed.take() {
+            let _ = observed.send(());
+        }
     }
 
     /// Repeats the first renewal failure after the final original peer retires, without another mint.
