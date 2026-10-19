@@ -87,11 +87,7 @@ impl NativeDeviceProfile {
         random_id: i64,
         gamertag: &str,
     ) -> io::Result<()> {
-        let platform_default = claims
-            .read::<Option<i64>>("PlatformType")?
-            .flatten()
-            .unwrap_or_default()
-            == 0;
+        let platform_default = claims.integer("PlatformType")?.unwrap_or_default() == 0;
         for (name, value) in self.overlays(random_id, gamertag, platform_default) {
             claims.insert(name, value)?;
         }

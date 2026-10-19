@@ -8,8 +8,12 @@ use serde::{
 use serde_json::{Value, value::RawValue};
 use std::{fmt, io};
 
+mod schema_generated;
+mod types;
+
 /// Untrusted relay metadata, retaining value spelling and entry order without granting an identity.
-/// Parsing checks object framing and size only. Full title metadata validation is a separate gate.
+/// Parsing bounds the object and checks every known field's generated Go JSON type.
+/// Full title metadata validation is a separate gate.
 #[derive(Clone, Default)]
 pub struct RawClientData {
     entries: Vec<(String, Box<RawValue>)>,
@@ -35,14 +39,18 @@ impl PartialEq for RawClientData {
 }
 
 impl RawClientData {
-    /// Preserves a bounded object; this does not validate skin, locale or account-owned identity.
+    /// Preserves a bounded object after checking every occurrence of each known JSON field type.
+    /// This does not validate skin, name, locale or account-owned identity.
+    ///
+    /// # Errors
+    /// Rejects oversized or malformed objects and any known-field JSON type mismatch.
     pub fn from_raw(raw: &RawValue) -> io::Result<Self> {
         if raw.get().len() > bedrock_net::BatchLimits::default().max_decoded_bytes {
             return Err(invalid());
         }
-        serde_json::from_str::<Entries>(raw.get())
-            .map(|entries| Self { entries: entries.0 })
-            .map_err(|_| invalid())
+        let entries = serde_json::from_str::<Entries>(raw.get()).map_err(|_| invalid())?;
+        types::check(&entries)?;
+        Ok(Self { entries: entries.0 })
     }
 
     /// Adopts locally constructed claims through the same raw object owner.
@@ -58,7 +66,7 @@ impl RawClientData {
 
     /// Retains the complete wire i64 domain, including explicit zero; absence remains distinct.
     pub fn random_id(&self) -> io::Result<Option<i64>> {
-        self.read("ClientRandomId")
+        self.integer("ClientRandomId")
     }
 
     /// Borrows no account authority from the downstream's requested display name.
@@ -81,14 +89,25 @@ impl RawClientData {
         Ok(())
     }
 
-    /// Reads only a specifically consumed field; opaque unused values never pass through Value/f64.
+    /// Reads a nonnullable scalar; a later null keeps the earlier folded value.
     pub(super) fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> io::Result<Option<T>> {
+        self.scalar(name)
+            .map(|value| serde_json::from_str(value.get()).map_err(|_| invalid()))
+            .transpose()
+    }
+
+    /// Projects a signed integer token without losing Go's accepted negative-zero spelling.
+    pub(super) fn integer(&self, name: &str) -> io::Result<Option<i64>> {
+        self.scalar(name).map(types::integer).transpose()
+    }
+
+    /// Selects only the scalar view; retained raw entries and nullable/record values are untouched.
+    fn scalar(&self, name: &str) -> Option<&RawValue> {
         self.entries
             .iter()
             .rev()
-            .find(|(key, _)| same_field(key, name))
-            .map(|(_, value)| serde_json::from_str(value.get()).map_err(|_| invalid()))
-            .transpose()
+            .find(|(key, value)| same_field(key, name) && value.get() != "null")
+            .map(|(_, value)| &**value)
     }
 }
 

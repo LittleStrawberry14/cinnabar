@@ -239,6 +239,7 @@ jobs:
           cargo test -p protocol --features native-networking --lib --locked -- session_transport
           cargo test -p protocol --features native-networking --lib --locked -- login::outbound
           cargo test -p protocol --features native-networking --lib --locked -- login::native_network
+          cargo test -p protocol --features native-networking --lib --locked -- login::client_data
           cargo test -p launcher-host --features native-networking --lib --locked -- native
           cargo test -p client-shell --features native-networking --lib --locked -- native
       - name: Test developer control adapters
