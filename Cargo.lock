@@ -2313,6 +2313,7 @@ dependencies = [
  "serde_json",
  "server-experience",
  "sha2",
+ "shaderpack",
  "sim",
  "simulation-clock",
  "tempfile",

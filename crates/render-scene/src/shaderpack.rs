@@ -3,7 +3,7 @@
 //! their standard uniforms. The renderer behind it compiles only with the `shaderpacks`
 //! feature; without it these types stay unused.
 
-use std::{fmt, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc};
 
 use bevy::{
     prelude::{Component, Resource},
@@ -171,7 +171,7 @@ pub type ShaderPackIdLookup = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
 
 /// The loaded pack's `entity.properties` and `item.properties` ids by Bedrock identifier,
 /// through the pinned Java mapping. Published by the render host when a pack loads (empty
-/// without one).
+/// without one); the app reads it to fill [`ShaderPackActorIds`] and the held-item ids.
 #[derive(Resource, Clone, Default)]
 pub struct ShaderPackIdMaps {
     entity: Option<ShaderPackIdLookup>,
@@ -215,5 +215,21 @@ impl fmt::Debug for ShaderPackIdMaps {
             .field("loaded", &self.is_loaded())
             .field("revision", &self.revision)
             .finish()
+    }
+}
+
+/// The pack's `entityId` of every actor the rig renders, by runtime id; actors absent read
+/// Iris's -1. Published each frame by the app while a pack is loaded.
+#[derive(Resource, ExtractResource, Clone, Debug, Default, PartialEq, Eq)]
+#[extract_app(bevy::render::RenderApp)]
+pub struct ShaderPackActorIds {
+    pub by_runtime_id: HashMap<u64, i32>,
+}
+
+impl ShaderPackActorIds {
+    /// The `entityId` of the actor with `runtime_id`.
+    #[must_use]
+    pub fn entity_id(&self, runtime_id: u64) -> i32 {
+        self.by_runtime_id.get(&runtime_id).copied().unwrap_or(-1)
     }
 }
