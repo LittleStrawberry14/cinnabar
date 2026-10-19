@@ -21,7 +21,7 @@ var updateNativeClientDataSemantics = flag.Bool(
 )
 
 // TestNativeClientDataSemanticData ties the finite Rust data to the actual selected Go owners.
-// Ordinary tests only compare; an explicit developer update writes both generated artifacts.
+// Ordinary tests only compare; an explicit developer update writes the generated artifacts.
 func TestNativeClientDataSemanticData(t *testing.T) {
 	client := nativeClientDataSchemaSource(t, reflect.TypeFor[login.ClientData]().PkgPath())
 	locale := nativeClientDataLocaleSource(t)
@@ -31,6 +31,7 @@ func TestNativeClientDataSemanticData(t *testing.T) {
 	}{
 		{"unicode_generated.rs", nativeClientDataUnicode(client, locale)},
 		{"locale_generated.rs", nativeClientDataLocale(t, client, locale)},
+		{"json_generated.rs", nativeClientDataJSON(t)},
 	}
 	for _, output := range outputs {
 		path := filepath.Join("../../crates/protocol/src/login/client_data/raw/semantic", output.name)
