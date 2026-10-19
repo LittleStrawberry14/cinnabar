@@ -1,13 +1,13 @@
 //! The Shader Pack Settings screen over Video settings: its commands and the immutable view
-//! the app publishes while it is open. With the `shaderpacks` feature, [`Editor`] runs a
-//! pack's [`shaderpack::OptionSession`] behind them.
+//! the app publishes while it is open. With the `shader-pack-options` feature, [`Editor`]
+//! runs a pack's [`shaderpack::OptionSession`] behind them.
 
-#[cfg(feature = "shaderpacks")]
+#[cfg(feature = "shader-pack-options")]
 mod editor;
-#[cfg(all(test, feature = "shaderpacks"))]
+#[cfg(all(test, feature = "shader-pack-options"))]
 mod tests;
 
-#[cfg(feature = "shaderpacks")]
+#[cfg(feature = "shader-pack-options")]
 pub use editor::{Editor, Outcome};
 
 /// What a press on an element does.

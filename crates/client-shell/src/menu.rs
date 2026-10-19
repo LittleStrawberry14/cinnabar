@@ -134,6 +134,8 @@ pub struct MenuRuntime {
     /// The applied pack name, retaining a pending menu choice until taken.
     shader_pack: Option<String>,
     shader_pack_request: Option<String>,
+    /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
+    shader_pack_reload: bool,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,

@@ -3,15 +3,19 @@
 
 use super::super::widgets;
 use super::Content;
-use launcher::menu::{MenuAction, MenuView, RendererChoice};
+use launcher::menu::{
+    MenuAction, MenuView, RendererChoice,
+    settings_storage::{StorageAction, StorageFolder},
+};
 use launcher::shader_options::Action;
 use ui_engine::engine::screen::PaintError;
 
 #[cfg(test)]
 mod tests;
 
-/// Draws nothing unless this build compiles an optional renderer. With a shader pack
-/// selected, a row under the picker opens the pack's options.
+/// Draws nothing unless this build compiles an optional renderer. Shader-pack builds add a
+/// row opening the selected pack's options, and the shader-pack folder's Open folder button
+/// when the host can open folders.
 pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     if !render_model::ENHANCED_RENDERING_ENABLED && !render_model::SHADER_PACKS_ENABLED {
         return Ok(());
@@ -22,10 +26,21 @@ pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     {
         super::services::action_row(
             content,
-            "Shader pack settings",
-            "Change the selected pack's own options. Applying reloads the pack.",
-            "Shader options…",
+            "options.cinnabar.shaderOptions",
+            "options.cinnabar.shaderOptions.description",
+            "options.cinnabar.shaderOptions.buttonLabel",
             Some(MenuAction::ShaderOptions(Action::Open)),
+        )?;
+    }
+    if render_model::SHADER_PACKS_ENABLED && content.view.storage.opens_folders {
+        super::services::action_row(
+            content,
+            "options.cinnabar.shaderPacksFolder",
+            "options.cinnabar.shaderPacksFolder.description",
+            "options.cinnabar.openFolder.buttonLabel",
+            Some(MenuAction::SettingsStorage(StorageAction::OpenFolder(
+                StorageFolder::ShaderPacks,
+            ))),
         )?;
     }
     Ok(())
