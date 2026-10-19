@@ -35,14 +35,14 @@ impl MessagingTarget {
     ) -> crate::NativeConnectionTarget {
         match self {
             Self::Joined(target) => target.connection_target(),
-            Self::Service(Recipient::Messaging(peer)) => crate::NativeConnectionTarget {
-                address: peer.to_string(),
-                transport: crate::NativeTransport::NetherNetMessaging,
-            },
-            Self::Service(Recipient::Legacy(peer)) => crate::NativeConnectionTarget {
-                address: peer.clone(),
-                transport: crate::NativeTransport::NetherNetLegacy,
-            },
+            Self::Service(Recipient::Messaging(peer)) => crate::NativeConnectionTarget::new(
+                peer.to_string(),
+                crate::NativeTransport::NetherNetMessaging,
+            ),
+            Self::Service(Recipient::Legacy(peer)) => crate::NativeConnectionTarget::new(
+                peer.clone(),
+                crate::NativeTransport::NetherNetLegacy,
+            ),
         }
     }
 
