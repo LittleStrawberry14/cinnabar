@@ -169,8 +169,8 @@ impl Connection {
         }
     }
 
-    /// Encrypts once and synchronously commits the retained permit; its receipt stays owned here.
-    pub(in crate::login::native_network) fn commit_send_capacity(&mut self) -> io::Result<()> {
+    /// Reborrows only a retained granted permit, preserving its original deadline and failure.
+    pub(in crate::login::native_network) fn reserved_send_capacity(&mut self) -> io::Result<()> {
         if self.send_sealed {
             return Err(closed());
         }
@@ -187,6 +187,13 @@ impl Connection {
         if !matches!(pending.phase, Phase::Reserved(_)) {
             return Err(invalid("native accepting send has no capacity"));
         }
+        Ok(())
+    }
+
+    /// Encrypts once and synchronously commits the retained permit; its receipt stays owned here.
+    pub(in crate::login::native_network) fn commit_send_capacity(&mut self) -> io::Result<()> {
+        self.reserved_send_capacity()?;
+        let pending = self.pending_send.as_mut().expect("checked retained effect");
         let Phase::Reserved(permit) = std::mem::replace(&mut pending.phase, Phase::Stopped) else {
             unreachable!("checked retained permit")
         };

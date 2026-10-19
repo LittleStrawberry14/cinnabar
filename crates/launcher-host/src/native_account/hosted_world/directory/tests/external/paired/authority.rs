@@ -21,6 +21,27 @@ impl Authority {
         jwks: &[u8],
         deadline: Instant,
     ) -> Self {
+        Self::open_with_visitors(manager, directory, jwks, deadline, false).await
+    }
+
+    /// Reuses the same account install, signed binding and acknowledged document for two real members.
+    pub(super) async fn open_two_visitors(
+        manager: &crate::local_worlds::Manager,
+        directory: &Path,
+        jwks: &[u8],
+        deadline: Instant,
+    ) -> Self {
+        Self::open_with_visitors(manager, directory, jwks, deadline, true).await
+    }
+
+    /// Keeps the finite SDK scenario choice outside every original account and approval operation.
+    async fn open_with_visitors(
+        manager: &crate::local_worlds::Manager,
+        directory: &Path,
+        jwks: &[u8],
+        deadline: Instant,
+        two_visitors: bool,
+    ) -> Self {
         let config = minecraft::Config::desktop(
             protocol::GAME_VERSION,
             u32::try_from(protocol::PROTOCOL_VERSION).unwrap(),
@@ -30,7 +51,11 @@ impl Authority {
             account: services,
             identity,
             mut peer,
-        } = HostedAuthority::acquire_world(authentication_policy(), config).await;
+        } = if two_visitors {
+            HostedAuthority::acquire_world_two_visitors(authentication_policy(), config).await
+        } else {
+            HostedAuthority::acquire_world(authentication_policy(), config).await
+        };
         let store = AccountStore::new(directory.join("synthetic-oauth.json"));
         let checkpoint = services.checkpoint().unwrap();
         let credentials = services.credentials();

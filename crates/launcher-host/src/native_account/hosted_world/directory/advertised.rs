@@ -13,7 +13,7 @@ pub(super) struct Advertisement {
     network_id: u64,
     messaging_id: Uuid,
     max_players: u32,
-    occupied: bool,
+    occupied: usize,
     activity: Activity,
 }
 
@@ -27,7 +27,7 @@ enum Activity {
 impl Advertisement {
     /// Adds the version-matched JSON-RPC world route to the same complete nonce document.
     pub(super) fn extend(&self, properties: &mut Value) {
-        properties["MemberCount"] = json!(1 + u32::from(self.occupied));
+        properties["MemberCount"] = json!(1 + self.occupied);
         properties["Joinability"] = json!(FRIENDS_JOINABILITY);
         properties["BroadcastSetting"] = json!(FRIENDS_OF_FRIENDS_BROADCAST);
         properties["TransportLayer"] = json!(NETHERNET_TRANSPORT);
@@ -48,6 +48,15 @@ impl Advertisement {
 }
 
 impl HostDirectory {
+    /// Reserves the local player in the actual captured process capacity.
+    pub(in crate::native_account::hosted_world) fn visitor_limit(&self) -> io::Result<usize> {
+        self.active()?;
+        let visitors = self.opening.max_players().saturating_sub(1);
+        usize::try_from(visitors)
+            .ok()
+            .filter(|limit| *limit != 0)
+            .ok_or_else(|| invalid("native world has no visitor capacity"))
+    }
     /// Rejects replacement publication before account or transport acquisition and retains the first cutoff.
     pub(in crate::native_account::hosted_world) fn activation_deadline(
         &mut self,
@@ -68,7 +77,7 @@ impl HostDirectory {
     /// Changes only actual initialized visitor occupancy, retaining the same nonce membership epoch.
     pub(in crate::native_account::hosted_world) async fn visitor(
         &mut self,
-        occupied: bool,
+        occupied: usize,
         deadline: Instant,
     ) -> io::Result<()> {
         self.service_barrier(Some(deadline)).await?;
@@ -79,6 +88,11 @@ impl HostDirectory {
             .advertisement
             .as_mut()
             .ok_or_else(|| invalid("native accepting route is unavailable"))?;
+        if occupied >= route.max_players as usize {
+            return Err(invalid(
+                "native hosted occupancy exceeds the original capacity",
+            ));
+        }
         if route.occupied != occupied {
             route.occupied = occupied;
             self.approvals
@@ -120,7 +134,7 @@ impl HostDirectory {
             network_id: server.local_network_id(),
             messaging_id,
             max_players,
-            occupied: false,
+            occupied: 0,
             activity: Activity::Unpublished,
         });
         Ok(())

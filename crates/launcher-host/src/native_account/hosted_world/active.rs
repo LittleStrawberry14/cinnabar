@@ -1,14 +1,15 @@
 //! One advertised host incarnation, driven by the application's existing reactor.
 
 mod acquire;
+pub(super) mod peers;
 
-use super::{NativeHostedProcess, NativeHostedWorld};
+use super::{ClosingHostedPeer, NativeHostedProcess, NativeHostedWorld};
 use bedrock_net::messaging::server::{ClosingMessagingServer, MessagingServer};
 use std::{future::Future, io, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
-/// The existing peer driver borrows the host for its lifetime, so it admits one visitor.
-pub(super) const VISITOR_LIMIT: usize = 1;
+/// The generated world bridge cap reserves one original local player.
+pub(super) const VISITOR_LIMIT: usize = bridge::contract::HOSTED_WORLD_MAX_PLAYERS as usize - 1;
 
 /// An invitation command cannot be retargeted to a replacement host incarnation.
 #[derive(Clone)]
@@ -30,6 +31,8 @@ pub struct ActiveHostedWorld {
     identity: protocol::NativeHostingIdentity,
     expires: Instant,
     peer_started: bool,
+    retiring: Option<ClosingHostedPeer>,
+    visitor_limit: usize,
     invitations: mpsc::Receiver<Invite>,
     invitation: HostedInvitation,
 }
@@ -41,6 +44,7 @@ pub struct ClosingHostedWorld {
     server: ClosingMessagingServer,
     process: NativeHostedProcess,
     deadline: Instant,
+    peers: peers::Peers,
 }
 
 impl NativeHostedWorld {
@@ -49,14 +53,15 @@ impl NativeHostedWorld {
     /// Cancellation drops local IO and returns any dispatched remote obligation to its manager slot.
     pub async fn activate(mut self, deadline: Instant) -> io::Result<ActiveHostedWorld> {
         let deadline = self.directory_mut()?.activation_deadline(deadline)?;
+        let visitor_limit = self.directory_ref()?.visitor_limit()?.min(VISITOR_LIMIT);
         let acquire::Acquired {
             mut server,
             identity,
             messaging_id,
             expires,
-        } = acquire::acceptor(&mut self, deadline).await?;
+        } = acquire::acceptor(&mut self, deadline, visitor_limit).await?;
         self.directory_mut()?
-            .configure_acceptor(&server, messaging_id, VISITOR_LIMIT)?;
+            .configure_acceptor(&server, messaging_id, visitor_limit)?;
         driving(&mut server, self.advance()).await?;
         driving(&mut server, self.publish_approvals(deadline)).await?;
         let process = driving(&mut server, self.prepare_dragonfly_bridge(deadline)).await?;
@@ -69,6 +74,7 @@ impl NativeHostedWorld {
             return Err(expired());
         }
         let (send, invitations) = mpsc::channel(1);
+        self.peers = peers::Peers::new(visitor_limit);
         Ok(ActiveHostedWorld {
             world: self,
             server,
@@ -76,9 +82,23 @@ impl NativeHostedWorld {
             identity,
             expires,
             peer_started: false,
+            retiring: None,
+            visitor_limit,
             invitations,
             invitation: HostedInvitation(send),
         })
+    }
+}
+
+impl NativeHostedWorld {
+    /// Coalesces peer retirement and acknowledged service changes while the same directory drives IO.
+    async fn drive_active(&mut self) -> io::Result<()> {
+        let wake = self.peers.wake();
+        self.peer_io(None, async {
+            wake.notified().await;
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -88,36 +108,53 @@ impl ActiveHostedWorld {
         self.invitation.clone()
     }
 
-    /// Services original RTA/nonce changes, protected signaling and one serialized visitor.
-    /// Token/TURN expiry gates new admission; a started handshake or Ready peer retains its lifetime.
+    /// Services original RTA and independent live peers beside one finite accepting setup.
+    /// Token/TURN expiry gates new admission while existing Ready peers keep their original lifetime.
     /// Cancellation during a peer phase ends further admission; consume this owner with `begin_close`.
     /// Dropping the whole owner returns unresolved membership through the sole manager slot.
     pub async fn run(&mut self) -> io::Result<()> {
-        if self.peer_started {
+        if self.peer_started || self.retiring.is_some() {
             return Err(unavailable());
         }
         loop {
-            if Instant::now() >= self.expires {
+            let current = Instant::now() < self.expires;
+            if !current && self.world.peers.occupied() == 0 {
                 return Err(expired());
             }
+            let accepting = current && self.world.peers.occupied() < self.visitor_limit;
             enum Event {
+                Lease,
                 Service,
                 Peer(nethernet_tokio::AcceptedSession),
                 Invite(Option<Invite>),
             }
             let event = tokio::select! { biased;
-                _ = tokio::time::sleep_until(self.expires.into()) => return Err(expired()),
-                result = self.world.drive() => { result?; Event::Service },
+                _ = tokio::time::sleep_until(self.expires.into()), if current => Event::Lease,
+                result = self.world.drive_active() => { result?; Event::Service },
                 invite = self.invitations.recv() => Event::Invite(invite),
-                accepted = self.server.accept() => Event::Peer(accepted.map_err(|_| unavailable())?),
+                accepted = async {
+                    if accepting {
+                        self.server.accept().await.map(Some)
+                    } else {
+                        self.server.maintain().await.map(|()| None)
+                    }
+                } => match accepted.map_err(|_| unavailable())? {
+                    Some(accepted) => Event::Peer(accepted),
+                    None => return Err(unavailable()),
+                },
             };
             match event {
+                Event::Lease => continue,
                 Event::Service => {
+                    self.retire_ready().await?;
+                    let deadline = operation_deadline();
+                    let occupied = self.world.peers.occupied();
                     driving(
                         &mut self.server,
-                        self.world.publish_approvals(operation_deadline()),
+                        self.world.directory_mut()?.visitor(occupied, deadline),
                     )
                     .await?;
+                    driving(&mut self.server, self.world.publish_approvals(deadline)).await?;
                 }
                 Event::Invite(Some(invite)) => {
                     if invite.result.is_closed() {
@@ -167,22 +204,52 @@ impl ActiveHostedWorld {
         }
     }
 
+    /// Finishes each checked-out original close while the other owned peers continue through peer_io.
+    async fn retire_ready(&mut self) -> io::Result<()> {
+        loop {
+            if self.retiring.is_none() {
+                self.retiring = self.world.peers.take_closing();
+            }
+            let Some(closing) = &mut self.retiring else {
+                return Ok(());
+            };
+            let closed = driving(&mut self.server, async {
+                Ok(closing.finish_close(&mut self.world).await)
+            })
+            .await?;
+            if !closing.is_finished() {
+                return closed.and(Err(unavailable()));
+            }
+            if let Err(error) = closed {
+                tracing::debug!(kind = ?error.kind(), "native hosted peer retired");
+            }
+            self.retiring = None;
+            self.world.peers.retired();
+        }
+    }
+
     /// Withdraws invite/accept capability synchronously and captures one original finite cleanup cutoff.
     pub fn begin_close(mut self, deadline: Instant) -> ClosingHostedWorld {
         self.invitations.close();
         while let Ok(invite) = self.invitations.try_recv() {
             let _ = invite.result.send(Err(unavailable()));
         }
+        if let Some(retiring) = self.retiring.take() {
+            self.world.peers.retain_closing(retiring);
+        }
+        let mut peers = std::mem::take(&mut self.world.peers);
+        peers.begin_close(deadline);
         ClosingHostedWorld {
             world: self.world,
             server: self.server.begin_close(),
             process: self.process,
             deadline,
+            peers,
         }
     }
 }
 
-/// Retains the exact handshake/play/close continuation beside the same Messaging driver.
+/// Completes one finite typed setup while the original directory services existing peer continuations.
 async fn serve(
     world: &mut NativeHostedWorld,
     server: &mut MessagingServer,
@@ -203,19 +270,9 @@ async fn serve(
         ),
     )
     .await?;
-    driving(server, world.directory_mut()?.visitor(true, deadline)).await?;
-    driving(server, world.publish_approvals(deadline)).await?;
-    let (mut closing, outcome) = driving(server, async { Ok(peer.run(world).await) }).await?;
-    let closed = driving(server, async { Ok(closing.finish_close(world).await) }).await?;
-    if !closing.is_finished() {
-        return closed.and(Err(unavailable()));
-    }
-    if let Err(error) = outcome.and(closed) {
-        tracing::debug!(kind = ?error.kind(), "native hosted peer ended");
-    }
-    drop(closing);
-    let deadline = operation_deadline();
-    driving(server, world.directory_mut()?.visitor(false, deadline)).await?;
+    world.peers.admit(peer)?;
+    let occupied = world.peers.occupied();
+    driving(server, world.directory_mut()?.visitor(occupied, deadline)).await?;
     driving(server, world.publish_approvals(deadline)).await
 }
 
@@ -223,12 +280,13 @@ impl ClosingHostedWorld {
     /// Attempts every original owner, retaining failed/ambiguous membership for explicit retry or Drop.
     /// Repeated calls use the same first cutoff; no success is inferred from physical socket destruction.
     pub async fn finish_close(&mut self) -> io::Result<()> {
+        let peers = self.peers.finish_close(&mut self.world).await;
         let listener = bounded(self.deadline, self.server.finish_close())
             .await
             .and_then(|r| r.map_err(|_| unavailable()));
         let process = self.process.close(self.deadline).await;
         let directory = self.world.close(self.deadline).await;
-        listener.and(process).and(directory)
+        peers.and(listener).and(process).and(directory)
     }
 }
 
