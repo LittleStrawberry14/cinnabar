@@ -53,8 +53,14 @@ pub const MAX_SELECTED_PACK_BYTES: usize = 134217728;
 /// Resource-pack wire type for an admitted addon archive.
 pub const RESOURCE_PACK_TYPE_ADDON: u8 = 1;
 
+/// Resource-pack wire type for an opaque behavior archive.
+pub const RESOURCE_PACK_TYPE_BEHAVIOR: u8 = 4;
+
 /// Resource-pack wire type for an admitted resource archive.
 pub const RESOURCE_PACK_TYPE_RESOURCES: u8 = 6;
+
+/// Resource-pack wire type for an opaque skin-fallback archive.
+pub const RESOURCE_PACK_TYPE_SKINS: u8 = 7;
 
 /// Resource-pack wire type for an admitted world-template archive.
 pub const RESOURCE_PACK_TYPE_WORLD_TEMPLATE: u8 = 8;
