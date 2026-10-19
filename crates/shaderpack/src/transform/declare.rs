@@ -831,9 +831,9 @@ void main() {}";
         let vertex = collect(items(VERTEX), StageKind::Vertex, &mut iface, &names).unwrap();
         let fragment = collect(items(FRAGMENT), StageKind::Fragment, &mut iface, &names).unwrap();
 
-        let texture = (TEXTURE_GROUP, FIRST_TEXTURE_BINDING, "colortex0".to_owned());
-        assert_eq!(vertex.resource_names, [texture.clone()]);
-        assert_eq!(fragment.resource_names, [texture]);
+        let textures = [(TEXTURE_GROUP, FIRST_TEXTURE_BINDING, "colortex0".to_owned())];
+        assert_eq!(vertex.resource_names, textures);
+        assert_eq!(fragment.resource_names, textures);
         assert_eq!(
             fragment.samplers["colortex0"],
             ("sampler2D".to_owned(), false, SamplerClass::ClampLinear)
