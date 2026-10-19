@@ -80,7 +80,6 @@ async fn original_upstream_with_cdn(route: Route, cdn: Option<std::net::SocketAd
             ..Default::default()
         },
         resource_packs: vec![offer],
-        ..Default::default()
     };
     let stack = packets::ResourcePackStack {
         texture_pack_required: true,
