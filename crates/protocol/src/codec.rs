@@ -209,7 +209,27 @@ pub(crate) fn decode_body(
     id: PacketId,
     body: &Bytes,
 ) -> Result<packets::Packet, wire::DecodeError> {
-    let mut reader = wire::Reader::from_shared(body).with_limits(server_limits());
+    decode_with_limits(id, body, server_limits())
+}
+
+/// Decodes actual accepting-edge input using the generated client field limits.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(crate) fn decode_client_body(
+    id: PacketId,
+    body: &Bytes,
+) -> Result<packets::Packet, wire::DecodeError> {
+    static LIMITS: LazyLock<wire::Limits> =
+        LazyLock::new(|| wire::Limits::receiving_from(wire::Peer::Client));
+    decode_with_limits(id, body, &LIMITS)
+}
+
+/// Shares complete-body consumption without mixing the two wire directions' field limits.
+fn decode_with_limits(
+    id: PacketId,
+    body: &Bytes,
+    limits: &wire::Limits,
+) -> Result<packets::Packet, wire::DecodeError> {
+    let mut reader = wire::Reader::from_shared(body).with_limits(limits);
     let packet = packets::Packet::decode_body(id, &mut reader)?;
     reader.expect_consumed()?;
     Ok(packet)

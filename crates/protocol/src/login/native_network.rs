@@ -1,8 +1,12 @@
 //! Native direct joins using the shared Rust spawn and play sequence.
 
+mod accepting;
 mod authentication;
+pub use accepting::{
+    NativeAcceptingIo, NativeAcceptingRetired, NativeHostWorld, native_host_packs,
+};
 pub use authentication::{
-    NativeAuthentication, NativeCredential, NativeProvider, NativeTokenVerifier,
+    NativeAuthentication, NativeCredential, NativeProvider, NativeServiceClock, NativeTokenVerifier,
 };
 mod connection;
 mod negotiated;

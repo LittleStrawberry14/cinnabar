@@ -47,6 +47,167 @@ pub(super) struct HostDirectory {
 }
 
 impl HostDirectory {
+    /// Borrows only this current original running-world identity; no latest-world lookup is performed.
+    pub(super) fn opening(&self) -> io::Result<HostOpening> {
+        self.current()?;
+        Ok(self.opening.clone())
+    }
+
+    /// Applies ready RTA changes and complete refreshes before the caller's next admission check.
+    pub(super) async fn service_barrier(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        self.peer_io(deadline, std::future::ready(Ok(()))).await
+    }
+
+    /// Keeps one actual peer future pinned while the sole RTA owner refreshes complete snapshots.
+    /// A refresh is completed under its first deadline before another application result is exposed.
+    pub(super) async fn peer_io<T>(
+        &mut self,
+        deadline: Option<Instant>,
+        future: impl std::future::Future<Output = io::Result<T>>,
+    ) -> io::Result<T> {
+        tokio::pin!(future);
+        loop {
+            self.active()?;
+            if let Some(deadline) = deadline {
+                check_deadline(deadline)?;
+            }
+            self.changed |= self.session.as_ref().is_some_and(mpsd::Session::needs_sync);
+            if self.changed {
+                let refresh_deadline = *self
+                    .refresh_deadline
+                    .get_or_insert_with(|| Instant::now() + super::super::ACQUISITION_TIMEOUT);
+                let refresh_deadline =
+                    deadline.map_or(refresh_deadline, |d| d.min(refresh_deadline));
+                while self.changed {
+                    self.refresh(refresh_deadline).await?;
+                }
+                self.refresh_deadline = None;
+            }
+            self.validate_session()?;
+            let socket = self
+                .socket
+                .as_mut()
+                .ok_or_else(|| invalid("host RTA is unavailable"))?;
+            tokio::select! { biased;
+                _ = async { match deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+                    None => std::future::pending::<()>().await,
+                }} => return Err(super::super::directory::timed_out()),
+                event = socket.drive() => {
+                    event_changed(event.map_err(socket_error)?, self.subscription
+                        .ok_or_else(|| invalid("host subscription is unavailable"))?,
+                        &self.reference, &mut self.changed)?;
+                }
+                result = &mut future => {
+                    self.current()?;
+                    if let Some(deadline) = deadline { check_deadline(deadline)?; }
+                    return result;
+                }
+            }
+        }
+    }
+
+    /// Keeps pipe authority on this actual current account/directory/opening owner.
+    pub(super) fn request_bridge(
+        &self,
+        bootstrap: &bridge::host_world::contract::Bootstrap,
+    ) -> io::Result<()> {
+        self.current()?;
+        self.opening.request_bridge(bootstrap)
+    }
+    /// Acquires only public provider metadata under the original account lease and live RTA lifetime.
+    pub(super) async fn login_policy(
+        &mut self,
+        deadline: Instant,
+    ) -> io::Result<super::NativeHostedLoginPolicy> {
+        self.current()?;
+        check_deadline(deadline)?;
+        let mut operation = self.operation(deadline).await?;
+        let acquire = async {
+            operation
+                .minecraft()?
+                .discover()
+                .await
+                .map_err(super::super::service_error)?;
+            let (issuer, clock) = {
+                let services = operation.minecraft()?;
+                let observed = Instant::now();
+                (
+                    services
+                        .authorization_issuer()
+                        .map_err(super::super::service_error)?
+                        .to_owned(),
+                    protocol::NativeServiceClock::new(services.service_time(), observed),
+                )
+            };
+            let cached = operation
+                .cached
+                .as_mut()
+                .ok_or_else(|| invalid("host account owner is unavailable"))?;
+            let same_provider = cached
+                .provider
+                .as_ref()
+                .map(|provider| provider.matches(&issuer))
+                .transpose()?
+                .unwrap_or(false);
+            if !same_provider {
+                cached.provider = Some(protocol::NativeProvider::new(
+                    &issuer,
+                    bedrock_services::minecraft::USER_AGENT,
+                )?);
+            }
+            let verifier = cached
+                .provider
+                .as_mut()
+                .ok_or_else(|| invalid("host provider is unavailable"))?
+                .peer_verifier()
+                .await?;
+            Ok::<_, io::Error>((verifier, clock))
+        };
+        let (verifier, clock) = service(
+            self.socket
+                .as_mut()
+                .ok_or_else(|| invalid("host RTA is unavailable"))?,
+            self.subscription
+                .ok_or_else(|| invalid("host subscription is unavailable"))?,
+            &self.reference,
+            &mut self.changed,
+            deadline,
+            acquire,
+        )
+        .await??;
+        operation.persist()?;
+        drop(operation);
+        check_deadline(deadline)?;
+        self.current()?;
+        Ok(super::NativeHostedLoginPolicy::new(
+            verifier,
+            clock,
+            deadline,
+            self.opening.clone(),
+            self.scope
+                .as_ref()
+                .ok_or_else(|| invalid("host account scope is unavailable"))?
+                .clone(),
+            self.reference.clone(),
+        ))
+    }
+
+    /// Reuses actual current directory/world/account checks before matching one prepared Login policy.
+    pub(super) fn check_login_policy(
+        &self,
+        policy: &super::NativeHostedLoginPolicy,
+    ) -> io::Result<()> {
+        self.current()?;
+        policy.check(
+            &self.opening,
+            self.scope
+                .as_ref()
+                .ok_or_else(|| invalid("host account scope is unavailable"))?,
+            &self.reference,
+        )
+    }
+
     /// Captures one actual opening and one stable locator without starting service traffic.
     pub(super) fn new(
         account: Arc<NativeAccount>,

@@ -120,6 +120,17 @@ impl NativeProvider {
             Some(verifier) => !verifier.recognizes(credential.token())?,
             None => true,
         };
+        self.refresh_if_needed(unknown).await
+    }
+
+    /// Acquires the same bounded public peer-verifier snapshot without minting a player credential.
+    pub async fn peer_verifier(&mut self) -> io::Result<NativeTokenVerifier> {
+        self.refresh_if_needed(true).await?;
+        self.verifier.clone().ok_or_else(failed)
+    }
+
+    /// Shares the original unknown-key refresh interval across both actual consumers.
+    async fn refresh_if_needed(&mut self, unknown: bool) -> io::Result<()> {
         let now = Instant::now();
         if self.verifier.is_none()
             || (unknown

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 
 import egress
+import host_world
 
 ROOT = Path(__file__).resolve().parents[2]
 STRUCT_TYPES = {"string": ("String", "string"), "u64": ("u64", "uint64"), "u32": ("u32", "uint32"), "strings": ("Vec<String>", "[]string")}
@@ -161,6 +162,7 @@ def main():
     outputs = declarations(manifest)
     policy = json.loads((ROOT / "crates/bridge/data/gateway-egress.json").read_text(encoding="utf-8"))
     outputs.update(egress.declarations(policy, ROOT))
+    outputs.update(host_world.declarations(ROOT))
     for path, content in outputs.items():
         if args.check:
             if not path.exists() or path.read_text(encoding="utf-8") != content:

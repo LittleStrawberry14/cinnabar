@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 /// No clock is read, and no token lifetime is restarted by this owner.
 pub struct NativeCredential {
     token: Zeroizing<String>,
-    clock: ServiceClock,
+    clock: NativeServiceClock,
     hard_expiry: SystemTime,
 }
 
@@ -43,7 +43,7 @@ impl NativeCredential {
         verifier::parsed(&token)?;
         Ok(Self {
             token,
-            clock: ServiceClock {
+            clock: NativeServiceClock {
                 service_time,
                 observed,
             },
@@ -82,7 +82,7 @@ pub struct NativeAuthentication {
     pub(super) claims: NativeClaims,
     pub(super) expires: Instant,
     pub(super) identity: crate::session_wire::SessionIdentity,
-    clock: ServiceClock,
+    clock: NativeServiceClock,
     verifier: Arc<NativeTokenVerifier>,
     messaging: Option<(
         bedrock_net::messaging::PreparedMessaging,
@@ -264,14 +264,21 @@ pub(super) struct AuthenticationHandoff {
 
 /// The mint's original calibrated service observation, shared by local SDP and peer verification.
 #[derive(Clone, Copy)]
-struct ServiceClock {
+pub struct NativeServiceClock {
     service_time: SystemTime,
     observed: Instant,
 }
 
-impl ServiceClock {
+impl NativeServiceClock {
+    /// Captures the existing SDK service-time observation without creating another credential lifetime.
+    pub fn new(service_time: SystemTime, observed: Instant) -> Self {
+        Self {
+            service_time,
+            observed,
+        }
+    }
     /// Advances service UTC with explicit monotonic time; rollback or overflow fails closed.
-    fn now(self, now: Instant) -> io::Result<SystemTime> {
+    pub fn now(self, now: Instant) -> io::Result<SystemTime> {
         self.service_time
             .checked_add(
                 now.checked_duration_since(self.observed)

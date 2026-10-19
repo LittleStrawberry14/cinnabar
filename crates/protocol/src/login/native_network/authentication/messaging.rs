@@ -1,6 +1,6 @@
 //! Signed transport handoff, retaining account qualification separately from peer trust.
 
-use super::{NativeTokenVerifier, ServiceClock, ensure_current};
+use super::{NativeServiceClock, NativeTokenVerifier, ensure_current};
 use bedrock_net::messaging::PreparedMessaging;
 use nethernet::identity::{
     SdpIdentity, TokenIdentity, TokenTrust, TokenVerifier,
@@ -29,7 +29,7 @@ impl MessagingAdmission {
         target: crate::NativeMessagingTarget,
         key: Arc<SigningKey>,
         token: &str,
-        clock: ServiceClock,
+        clock: NativeServiceClock,
         verifier: Arc<NativeTokenVerifier>,
         expires: Instant,
     ) -> io::Result<Self> {
@@ -52,7 +52,7 @@ impl MessagingAdmission {
 
 struct ServiceIdentity {
     identity: TokenIdentity,
-    clock: ServiceClock,
+    clock: NativeServiceClock,
     expires: Instant,
 }
 
@@ -68,7 +68,7 @@ impl SdpIdentity for ServiceIdentity {
 
 struct PeerVerifier {
     verifier: Arc<NativeTokenVerifier>,
-    clock: ServiceClock,
+    clock: NativeServiceClock,
 }
 
 impl TokenVerifier for PeerVerifier {
@@ -109,7 +109,7 @@ mod tests {
         .unwrap();
         let identity = ServiceIdentity {
             identity: TokenIdentity::new(Arc::clone(&key), token.clone(), service_time).unwrap(),
-            clock: ServiceClock {
+            clock: NativeServiceClock {
                 service_time,
                 observed,
             },

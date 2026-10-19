@@ -195,7 +195,7 @@ impl Connection {
     }
 
     /// Preserves received terminal input on transport failure, but reports expiry as authentication failure.
-    async fn send_packets_until(
+    pub(super) async fn send_packets_until(
         &mut self,
         packets: &[Packet],
         deadline: Option<std::time::Instant>,
@@ -215,7 +215,7 @@ impl Connection {
     }
 
     /// Encodes without restarting a finite Login credential deadline.
-    async fn send_body_until(
+    pub(super) async fn send_body_until(
         &mut self,
         body: Bytes,
         deadline: Option<std::time::Instant>,
