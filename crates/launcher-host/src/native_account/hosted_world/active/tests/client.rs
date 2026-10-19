@@ -54,6 +54,7 @@ impl Client {
                 skin: None,
                 settings,
                 tap: None,
+                relay: None,
                 target: None,
             },
             self.authentication,

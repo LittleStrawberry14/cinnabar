@@ -80,6 +80,7 @@ async fn local_player_native_session_reaches_the_actual_dragonfly_world_without_
                 skin: None,
                 settings: &settings,
                 tap: None,
+                relay: None,
                 target: None,
             },
             |packs, game| (packs.into_archives(), game),
