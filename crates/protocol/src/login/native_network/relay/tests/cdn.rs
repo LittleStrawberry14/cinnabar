@@ -182,7 +182,7 @@ async fn relay_acquires_cdn_only_archive_without_requesting_any_game_chunks() {
             let (connected, handoff) = joining
                 .try_finish()
                 .unwrap_or_else(|_| panic!("actual StartGame completes original relay"));
-            assert_eq!(handoff.archives, [archive.clone()]);
+            assert_eq!(handoff.archives.as_slice(), std::slice::from_ref(&archive));
             assert_eq!(handoff.handoff.packs.len(), 1);
             assert_eq!(handoff.handoff.packs[0].uuid, id.to_string());
             assert_eq!(
