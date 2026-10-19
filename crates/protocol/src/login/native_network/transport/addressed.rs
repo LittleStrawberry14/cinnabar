@@ -42,7 +42,11 @@ pub(in crate::login::native_network) async fn connect(
     let choice = match cached {
         Some(choice) => choice,
         None => {
-            let choice = probe(&client, &route.host, route.port, cutoff).await;
+            let choice = if route.ipv6 {
+                None
+            } else {
+                probe(&client, &route.host, route.port, cutoff).await
+            };
             check(cutoff, identity.expires)?;
             let now = Instant::now();
             let mut cache = probes().lock().unwrap_or_else(|error| error.into_inner());
