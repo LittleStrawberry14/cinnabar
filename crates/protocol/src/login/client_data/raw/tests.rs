@@ -91,7 +91,9 @@ fn raw_owned_overlays_replace_all_aliases_and_preserve_opaque_claims() {
     let raw = RawValue::from_string(r#"{"Unknown":1e99999,"ClientRandomId":0,"ThirdPartyName":"old","thirdpartyname":"stale","ſelfSignedId":"stale","selfsignedid":"also stale","ſerverAddreſſ":"stale","SERVERADDRESS":"stale","nonce":"stale","NONCE":"stale","PlatformType":0}"#.into()).unwrap();
     let mut data = RawClientData::from_raw(&raw).unwrap();
     let profile = NativeDeviceProfile::fresh();
-    profile.apply_relay(&mut data, 0, "Offline").unwrap();
+    profile.apply_relay_device(&mut data).unwrap();
+    NativeDeviceProfile::apply_relay_identity(&mut data, "Offline", profile.relay_identity(0))
+        .unwrap();
     let mut claims = NativeClaims::Relay(data);
     claims.set_display_name("Verified").unwrap();
     claims

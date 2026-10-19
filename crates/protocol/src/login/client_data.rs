@@ -8,11 +8,16 @@ pub use native_profile::NativeDeviceProfile;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 mod raw;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-pub use raw::RawClientData;
+pub use raw::{ClientDataRefusal, RawClientData, ValidatedClientData};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 mod claims;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) use claims::NativeClaims;
+
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub(super) mod relay_url;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use relay_url::relay_url_host;
 
 /// Canonical identity field owned by the actual profile/provider overlay, not a downstream alias.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]

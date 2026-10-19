@@ -9,7 +9,9 @@ use serde_json::{Value, value::RawValue};
 use std::{fmt, io};
 
 mod schema_generated;
+mod semantic;
 mod types;
+pub use semantic::{ClientDataRefusal, ValidatedClientData};
 
 /// Untrusted relay metadata, retaining value spelling and entry order without granting an identity.
 /// Parsing bounds the object and checks every known field's generated Go JSON type.
@@ -57,6 +59,15 @@ impl RawClientData {
     #[cfg(test)]
     pub(crate) fn from_value(value: &Value) -> io::Result<Self> {
         Self::from_raw(&serde_json::value::to_raw_value(value).map_err(|_| invalid())?)
+    }
+
+    /// Consumes the typed raw owner at the title metadata boundary; no unchecked success exists.
+    pub(super) fn validate_relay(
+        self,
+        profile: &super::NativeDeviceProfile,
+        protocol: i32,
+    ) -> Result<ValidatedClientData, ClientDataRefusal> {
+        semantic::validate(self, profile, protocol)
     }
 
     /// Reads the actual version claim without discarding an opaque value elsewhere in the object.
