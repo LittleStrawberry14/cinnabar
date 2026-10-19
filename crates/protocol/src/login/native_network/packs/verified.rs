@@ -55,9 +55,9 @@ impl ArchiveFacts {
             return Err(invalid());
         }
         let kind = match self.kind {
-            ArchiveKind::Resources => 6,
-            ArchiveKind::Addon => 1,
-            ArchiveKind::WorldTemplate => 8,
+            ArchiveKind::Resources => bridge::contract::RESOURCE_PACK_TYPE_RESOURCES,
+            ArchiveKind::Addon => bridge::contract::RESOURCE_PACK_TYPE_ADDON,
+            ArchiveKind::WorldTemplate => bridge::contract::RESOURCE_PACK_TYPE_WORLD_TEMPLATE,
         };
         // The selected Go delivery owner reoriginates these kinds and leaves Premium false.
         // Neither this value nor the computed hash claims absent upstream wire provenance.
