@@ -76,7 +76,8 @@ impl NativeHostedPeer {
     /// Relays one original raw packet at a time while retaining controls and opposite-direction output.
     async fn play(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
         loop {
-            host.recheck_approval(&self.accepted.grant().approval)?;
+            host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+                .await?;
             let wire = &mut self.wire;
             let backend = &mut self.backend;
             let output = &mut self.output;
@@ -96,7 +97,8 @@ impl NativeHostedPeer {
                     }
                 })
                 .await?;
-            host.recheck_approval(&self.accepted.grant().approval)?;
+            host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+                .await?;
             match event {
                 Event::External(packet) => {
                     self.backend.queue_send(&packet, cleanup_deadline())?;
@@ -108,7 +110,8 @@ impl NativeHostedPeer {
                             }
                             Err(error) => return Err(error),
                         }
-                        host.recheck_approval(&self.accepted.grant().approval)?;
+                        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+                            .await?;
                     }
                 }
                 Event::World => self.complete_output(host).await?,
@@ -119,7 +122,8 @@ impl NativeHostedPeer {
 
     /// Dispatches the sole retained opposite-direction payload before resuming its pending receipt.
     async fn world_output(&mut self, host: &mut NativeHostedWorld) -> io::Result<()> {
-        host.recheck_approval(&self.accepted.grant().approval)?;
+        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+            .await?;
         let wire = &mut self.wire;
         let backend = &mut self.backend;
         let output = &mut self.output;
@@ -128,7 +132,8 @@ impl NativeHostedPeer {
             output.stage(wire, packet, cleanup_deadline())
         })
         .await?;
-        host.recheck_approval(&self.accepted.grant().approval)?;
+        host.wait_approval(&self.accepted.grant().approval, self.output.deadline())
+            .await?;
         self.complete_output(host).await
     }
 
@@ -175,6 +180,11 @@ enum Event {
 }
 
 impl ClosingHostedPeer {
+    /// Reports actual transport retirement independently of the retained original play failure.
+    pub(in crate::native_account::hosted_world) fn is_finished(&self) -> bool {
+        self.finished
+    }
+
     /// Drains accepted Go output with fresh original authority before each new external commit.
     /// Cancellation retains partial framing, the delivered obligation and its first deadline.
     /// Revocation permits only an already committed whole effect's receipt; partial output aborts

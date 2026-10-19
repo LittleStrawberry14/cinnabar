@@ -27,6 +27,19 @@ impl SendAuthority<'_> {
             Self::Member(approval) => host.recheck_approval(approval),
         }
     }
+
+    /// Retains this original concrete predicate while the actual account owner is checked out.
+    async fn wait(&self, host: &mut NativeHostedWorld, deadline: Instant) -> io::Result<()> {
+        loop {
+            host.directory_mut()?
+                .service_barrier(Some(deadline))
+                .await?;
+            match self.check(host) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                result => return result,
+            }
+        }
+    }
 }
 
 impl NativeHostedWorld {
@@ -40,12 +53,9 @@ impl NativeHostedWorld {
         loop {
             let capacity = self.peer_io(Some(deadline), send.next()).await?;
             let Some(capacity) = capacity else {
-                return authority.check(self);
+                return authority.wait(self, deadline).await;
             };
-            self.directory_mut()?
-                .service_barrier(Some(deadline))
-                .await?;
-            authority.check(self)?;
+            authority.wait(self, deadline).await?;
             capacity.commit()?;
         }
     }

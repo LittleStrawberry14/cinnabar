@@ -23,7 +23,15 @@ impl NativeHostedWorld {
         &mut self,
         deadline: Instant,
     ) -> io::Result<NativeHostedProcess> {
-        let opening = self.directory_ref()?.opening()?;
+        let opening = loop {
+            self.directory_mut()?
+                .service_barrier(Some(deadline))
+                .await?;
+            match self.directory_ref()?.opening() {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                result => break result?,
+            }
+        };
         let mut capability = Zeroizing::new([0; CAPABILITY_BYTES as usize]);
         let mut identifier = Zeroizing::new([0; OPENING_BYTES as usize]);
         getrandom::fill(&mut *capability).map_err(|_| rejected())?;
@@ -34,11 +42,12 @@ impl NativeHostedWorld {
                 PendingHostProcess::bind(&capability, &identifier),
             )
             .await?;
-        self.directory_ref()?.request_bridge(pending.bootstrap())?;
+        self.wait_process(&opening, deadline).await?;
+        opening.request_bridge(pending.bootstrap())?;
         let process = self
             .peer_io(Some(deadline), pending.establish(deadline))
             .await?;
-        self.check_process(&opening)?;
+        self.wait_process(&opening, deadline).await?;
         Ok(NativeHostedProcess { process, opening })
     }
 
@@ -51,8 +60,25 @@ impl NativeHostedWorld {
     }
 
     /// Rechecks the concrete prepared bridge before any peer is routed into its selected world.
-    pub(super) fn check_bridge(&self, process: &NativeHostedProcess) -> io::Result<()> {
-        self.check_process(&process.opening)
+    pub(super) async fn check_bridge(
+        &mut self,
+        process: &NativeHostedProcess,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.wait_process(&process.opening, deadline).await
+    }
+
+    /// Retains the original process/opening while unrelated account work temporarily owns its proof.
+    async fn wait_process(&mut self, opening: &HostOpening, deadline: Instant) -> io::Result<()> {
+        loop {
+            self.directory_mut()?
+                .service_barrier(Some(deadline))
+                .await?;
+            match self.check_process(opening) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                result => return result,
+            }
+        }
     }
 }
 

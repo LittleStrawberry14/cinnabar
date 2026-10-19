@@ -1,5 +1,7 @@
 //! Provider-qualified Login bound to the original acknowledged hosted-world approval.
 
+mod wait;
+
 use super::*;
 use bedrock_net::login::{AuthenticatedLogin, LoginError, LoginVerifier, TrustedIdentity};
 use p384::ecdsa::VerifyingKey;
@@ -130,6 +132,7 @@ impl NativeHostedWorld {
     ///
     /// # Errors
     /// Rejects stale policy/world/account, expired or changed credentials and an unapproved original nonce.
+    /// WouldBlock requires retaining the original verified Login while another account operation finishes.
     pub fn approve_login(
         &self,
         login: &AuthenticatedLogin,
@@ -154,6 +157,7 @@ impl NativeHostedWorld {
     /// # Errors
     /// Rejects any changed Login proof/identity/nonce, expired original budget,
     /// revoked membership/approval or retired/replaced world/account binding.
+    /// WouldBlock denies new admission during temporary account checkout; retain the same typed owner.
     pub fn recheck_login(
         &self,
         login: &AuthenticatedLogin,

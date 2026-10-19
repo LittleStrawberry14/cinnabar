@@ -166,9 +166,9 @@ async fn run(
             tracing::warn!("native hosted membership cleanup is unconfirmed");
         }
         // Cancellation uses the replacement intent immediately; a failed unchanged intent is not retried.
-        if matches!(&*changed.borrow(), Desired::Host(current) if intent.same(current))
-            && changed.changed().await.is_err()
-        {
+        let unchanged =
+            matches!(&*changed.borrow(), Desired::Host(current) if intent.same(current));
+        if unchanged && changed.changed().await.is_err() {
             return;
         }
     }

@@ -65,11 +65,12 @@ impl HostDirectory {
     }
 
     /// Changes only actual initialized visitor occupancy, retaining the same nonce membership epoch.
-    pub(in crate::native_account::hosted_world) fn visitor(
+    pub(in crate::native_account::hosted_world) async fn visitor(
         &mut self,
         occupied: bool,
+        deadline: Instant,
     ) -> io::Result<()> {
-        self.current()?;
+        self.service_barrier(Some(deadline)).await?;
         if self.pending.is_some() {
             return Err(invalid("native host properties are unsettled"));
         }
@@ -199,7 +200,6 @@ impl HostDirectory {
         deadline: Instant,
     ) -> io::Result<()> {
         self.service_barrier(Some(deadline)).await?;
-        self.current()?;
         let document = self.properties()?;
         let actual = self
             .session
@@ -255,7 +255,7 @@ impl HostDirectory {
         .map_err(directory_error)?;
         operation.persist()?;
         drop(operation);
-        self.current()?;
+        self.service_barrier(Some(deadline)).await?;
         self.advertisement
             .as_mut()
             .expect("actual accepting route")
@@ -270,7 +270,6 @@ impl HostDirectory {
         deadline: Instant,
     ) -> io::Result<()> {
         self.service_barrier(Some(deadline)).await?;
-        self.current()?;
         if !self
             .advertisement
             .as_ref()
@@ -299,6 +298,6 @@ impl HostDirectory {
         .map_err(directory_error)?;
         operation.persist()?;
         drop(operation);
-        self.current()
+        self.service_barrier(Some(deadline)).await
     }
 }

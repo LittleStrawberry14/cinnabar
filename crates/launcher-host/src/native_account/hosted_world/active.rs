@@ -29,6 +29,7 @@ pub struct ActiveHostedWorld {
     process: NativeHostedProcess,
     identity: protocol::NativeHostingIdentity,
     expires: Instant,
+    peer_started: bool,
     invitations: mpsc::Receiver<Invite>,
     invitation: HostedInvitation,
 }
@@ -74,6 +75,7 @@ impl NativeHostedWorld {
             process,
             identity,
             expires,
+            peer_started: false,
             invitations,
             invitation: HostedInvitation(send),
         })
@@ -88,8 +90,12 @@ impl ActiveHostedWorld {
 
     /// Services original RTA/nonce changes, protected signaling and one serialized visitor.
     /// Token/TURN expiry gates new admission; a started handshake or Ready peer retains its lifetime.
-    /// Cancellation drops the physical peer and returns unresolved membership through the sole slot.
+    /// Cancellation during a peer phase ends further admission; consume this owner with `begin_close`.
+    /// Dropping the whole owner returns unresolved membership through the sole manager slot.
     pub async fn run(&mut self) -> io::Result<()> {
+        if self.peer_started {
+            return Err(unavailable());
+        }
         loop {
             if Instant::now() >= self.expires {
                 return Err(expired());
@@ -135,23 +141,27 @@ impl ActiveHostedWorld {
                     if Instant::now() >= self.expires {
                         return Err(expired());
                     }
-                    // Capacity is occupied until the actual accepted receiver and close owner retire.
-                    let peer = serve(
-                        &mut self.world,
-                        &mut self.server,
-                        &mut self.process,
-                        &self.identity,
-                        accepted,
-                    );
-                    tokio::pin!(peer);
-                    loop {
-                        tokio::select! { biased;
-                            invite = self.invitations.recv() => {
-                                if let Some(invite) = invite { let _ = invite.result.send(Err(busy())); }
+                    // A canceled peer phase requires closing this host, not admitting another peer.
+                    self.peer_started = true;
+                    {
+                        let peer = serve(
+                            &mut self.world,
+                            &mut self.server,
+                            &mut self.process,
+                            &self.identity,
+                            accepted,
+                        );
+                        tokio::pin!(peer);
+                        loop {
+                            tokio::select! { biased;
+                                invite = self.invitations.recv() => {
+                                    if let Some(invite) = invite { let _ = invite.result.send(Err(busy())); }
+                                }
+                                result = &mut peer => { result?; break; }
                             }
-                            result = &mut peer => { result?; break; }
                         }
                     }
+                    self.peer_started = false;
                 }
             }
         }
@@ -193,16 +203,20 @@ async fn serve(
         ),
     )
     .await?;
-    world.directory_mut()?.visitor(true)?;
+    driving(server, world.directory_mut()?.visitor(true, deadline)).await?;
     driving(server, world.publish_approvals(deadline)).await?;
     let (mut closing, outcome) = driving(server, async { Ok(peer.run(world).await) }).await?;
-    let closed = driving(server, closing.finish_close(world)).await;
-    if let Err(error) = outcome {
+    let closed = driving(server, async { Ok(closing.finish_close(world).await) }).await?;
+    if !closing.is_finished() {
+        return closed.and(Err(unavailable()));
+    }
+    if let Err(error) = outcome.and(closed) {
         tracing::debug!(kind = ?error.kind(), "native hosted peer ended");
     }
-    closed?;
-    world.directory_mut()?.visitor(false)?;
-    driving(server, world.publish_approvals(operation_deadline())).await
+    drop(closing);
+    let deadline = operation_deadline();
+    driving(server, world.directory_mut()?.visitor(false, deadline)).await?;
+    driving(server, world.publish_approvals(deadline)).await
 }
 
 impl ClosingHostedWorld {
