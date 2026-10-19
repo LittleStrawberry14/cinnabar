@@ -58,6 +58,37 @@ fn validate_fixture(bytes: Vec<u8>, selected: &str) -> Result<ValidatedPack, Adm
     validate_archive_parts(PACK_ID, "1.2.3", selected, bytes, None, None).map(|(pack, _, _)| pack)
 }
 
+/// Acquisition may retain opaque archives that the original rendering owner still refuses.
+fn verify_opaque_identity(module: &str) {
+    let manifest =
+        manifest("").replace(r#""type": "resources""#, &format!(r#""type": "{module}""#));
+    let archive = zip_files(&[("manifest.json", manifest.as_bytes())]);
+    assert_eq!(
+        validate_fixture(archive.clone(), "").err(),
+        Some(AdmissionError::InvalidModules),
+        "opaque {module} content must remain unavailable as a rendering layer"
+    );
+    assert!(
+        verify_archive_identity(&archive, PACK_ID, "1.2.3").is_ok(),
+        "valid opaque {module} archive must complete acquisition without rendering admission"
+    );
+}
+
+#[test]
+fn opaque_identity_keeps_behavior_archives_separate_from_rendering() {
+    verify_opaque_identity("data");
+}
+
+#[test]
+fn opaque_identity_keeps_client_data_archives_separate_from_rendering() {
+    verify_opaque_identity("client_data");
+}
+
+#[test]
+fn opaque_identity_keeps_skin_archives_separate_from_rendering() {
+    verify_opaque_identity("skin_pack");
+}
+
 #[test]
 fn archive_delivery_kind_uses_the_same_admitted_manifest_and_member_priority() {
     for (module, member, expected) in [
