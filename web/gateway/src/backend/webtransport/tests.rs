@@ -51,14 +51,13 @@ async fn control(peer: &Peer) -> (Client, Capability) {
 }
 
 /// A completed play cannot discard a taken replacement stream's partial WT prefix.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn paired_control_survives_sequential_plays_and_a_retained_partial_prefix() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let mut fixture = Fixture::new(None).await;
+        let mut fixture = Fixture::with_prefix_credit().await;
         let mut peer = fixture.peer(RELAY_TRANSPORT_PATH, None).await;
         assert_eq!(peer.status().await, StatusCode::OK);
         let (mut control, capability) = control(&peer).await;
-        fixture.prefixes.recv().await.unwrap();
         let mut first = Framed::new(
             peer.stream().await,
             bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN),
@@ -67,13 +66,22 @@ async fn paired_control_survives_sequential_plays_and_a_retained_partial_prefix(
             .send(hello(RELAY_CHANNEL_PLAY, capability.generation, 1))
             .await
             .unwrap();
-        fixture.prefixes.recv().await.unwrap();
-        // The actual next stream is taken by h3, but its original protocol prefix is incomplete.
+        // One-byte receive credit cannot advance until the original h3 reader consumes it.
         let (mut next_write, next_read) = peer.connection.open_bi().await.unwrap();
         let prefix = peer.prefix();
-        assert!(prefix.len() > 1);
-        next_write.write_all(&prefix[..1]).await.unwrap();
-        fixture.prefixes.recv().await.unwrap();
+        assert!(prefix.len() > 2);
+        let incomplete = prefix.len() - 1;
+        assert_eq!(next_write.write(&prefix[..incomplete]).await.unwrap(), 1);
+        {
+            let credit = next_write.write_all(&prefix[1..incomplete]);
+            tokio::pin!(credit);
+            assert!(
+                futures::poll!(&mut credit).is_pending(),
+                "the actual second prefix byte must wait for server receive credit"
+            );
+            credit.await.unwrap();
+        }
+        // h3 has consumed the first byte, but the final session-ID byte stays withheld.
         first.send(newer_connect()).await.unwrap();
         let expected =
             session_wire::encode_core_message(&CoreMessage::Disconnect(SessionDisconnect {
@@ -88,7 +96,7 @@ async fn paired_control_survives_sequential_plays_and_a_retained_partial_prefix(
             first.next().await.is_none(),
             "actual refused play sends FIN after its complete terminal"
         );
-        next_write.write_all(&prefix[1..]).await.unwrap();
+        next_write.write_all(&prefix[incomplete..]).await.unwrap();
         let mut second = Framed::new(
             tokio::io::join(next_read, next_write),
             bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN),
@@ -138,7 +146,7 @@ async fn one_session_refuses_extra_connect_and_client_uni() {
         let (mut control, _) = control(&peer).await;
         let mut extra = peer.request(RELAY_TRANSPORT_PATH, None).await;
         assert_eq!(
-            peer::response(&mut extra).await,
+            peer.response(&mut extra).await,
             StatusCode::TOO_MANY_REQUESTS
         );
         let mut uni = peer.connection.open_uni().await.unwrap();

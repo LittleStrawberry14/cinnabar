@@ -95,6 +95,18 @@ async fn paired_play_reaches_owned_bds_with_its_original_pack_uni() {
                 () = &mut writer => panic!("actual play writer ended before startup/terrain/close"),
             }
             writer.await;
+            let attachment = fixture
+                .registry
+                .open_play(&capability.resume, capability.generation, Instant::now())
+                .unwrap();
+            let next = attachment
+                .session
+                .begin_play(attachment.generation, join + 1)
+                .await
+                .expect("original play retired before the next join owns its account");
+            next.current().unwrap();
+            drop(next);
+            drop(attachment);
             control
                 .send(Bytes::from(
                     serde_json::to_vec(&ControlRequest::SignOut).unwrap(),
