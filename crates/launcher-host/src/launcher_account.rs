@@ -154,6 +154,27 @@ struct Snapshot {
 }
 
 impl Snapshot {
+    /// The concrete native account-service source shared by its original constructor and owner.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    fn native(account: Option<Arc<crate::native_account::NativeAccount>>, language: &str) -> Self {
+        Snapshot {
+            title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
+            profile_source: profile_worker::Source::Native(account.clone()),
+            people_source: invites::Source::Native(account.clone()),
+            realm_source: realm_membership::Source::Native(account.clone()),
+            home_source: home_feed::Source::Native(account.clone()),
+            featured_source: featured_feed::Source::Native(account.clone()),
+            native_product_api: Some(crate::product_api::Client::default()),
+            home_language: if language.is_empty() {
+                bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
+            } else {
+                language.replace('_', "-")
+            },
+            native_presence_account: account,
+            ..Default::default()
+        }
+    }
+
     /// Retires values tied to the old account before accepting responses for another identity.
     fn retire_account_data(&mut self) {
         self.shared_players = shared_players::Exchange::default();
@@ -287,22 +308,7 @@ impl LauncherAccount {
         Self::start(
             socket_dir,
             artwork,
-            Snapshot {
-                title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
-                profile_source: profile_worker::Source::Native(account.clone()),
-                people_source: invites::Source::Native(account.clone()),
-                realm_source: realm_membership::Source::Native(account.clone()),
-                home_source: home_feed::Source::Native(account.clone()),
-                featured_source: featured_feed::Source::Native(account.clone()),
-                native_product_api: Some(crate::product_api::Client::default()),
-                home_language: if language.is_empty() {
-                    bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
-                } else {
-                    language.replace('_', "-")
-                },
-                native_presence_account: account,
-                ..Default::default()
-            },
+            Snapshot::native(account, language),
             runtime,
             tasks,
         )

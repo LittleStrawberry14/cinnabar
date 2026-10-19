@@ -93,7 +93,6 @@ use {
         session::{
             SessionController, drive_session, follow_server_transfer, recover_session_failure,
         },
-        shell_adapters::drive_menu_services,
         ui_runtime::{
             drain_inventory_authority, drive_chat_keyboard_input, drive_chat_ui_actions,
             drive_inventory_ui_actions, drive_server_form_input, drive_sign_editor,

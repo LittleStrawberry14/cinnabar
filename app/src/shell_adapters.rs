@@ -7,6 +7,13 @@ use client_shell::{
     menu::{LauncherCoreSlot, MenuRuntime, launcher_account},
     player_skin::LocalPlayerSkin,
 };
+
+/// Supplies the account service edge at the original authority-chain position.
+pub(crate) fn menu_services()
+-> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    drive_menu_services.into_configs()
+}
+
 /// Drives the launcher's own services: catalog, saves, settings, the account core and local worlds.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_menu_services(
