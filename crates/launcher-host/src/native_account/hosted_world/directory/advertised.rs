@@ -6,7 +6,7 @@ use crate::native_account::world_metadata::{
 };
 use bedrock_net::messaging::server::MessagingServer;
 use bedrock_services::signaling::ConnectionRequest;
-use p384::elliptic_curve::Generate;
+use p384::{ecdsa::SigningKey, elliptic_curve::Generate};
 
 /// The route is derived from an actual bound owner, not caller-provided title JSON.
 pub(super) struct Advertisement {
@@ -158,44 +158,52 @@ impl HostDirectory {
             p384::ecdsa::SigningKey::try_generate_from_rng(&mut rand::rngs::SysRng)
                 .map_err(|_| io::Error::other("native hosting key generation failed"))?,
         );
-        let (credential, issuer) = {
-            let services = operation.minecraft()?;
-            let token = bounded(deadline, services.multiplayer_token(key.verifying_key()))
-                .await?
-                .map_err(super::super::super::service_error)?;
-            let observed = Instant::now();
-            (
-                protocol::NativeCredential::new(
-                    token.as_str().to_owned(),
-                    services.service_time(),
-                    token.expires_at(),
-                    observed,
-                )?,
-                services
-                    .authorization_issuer()
-                    .map_err(super::super::super::service_error)?
-                    .to_owned(),
-            )
-        };
         let xuid = self
             .scope
             .as_ref()
             .ok_or_else(|| invalid("host account scope is unavailable"))?
             .xuid
             .clone();
-        let identity = bounded(
-            deadline,
-            operation
-                .provider(&issuer)?
-                .hosting_identity(key, credential, &xuid),
-        )
-        .await??;
+        let identity = mint_hosting_identity(&mut operation, key, &xuid, deadline).await?;
         let request = bounded(deadline, operation.minecraft()?.messaging_connection())
             .await?
             .map_err(|_| invalid("native host messaging acquisition failed"))?;
         operation.persist()?;
         self.active()?;
         Ok((identity, request))
+    }
+
+    /// Requalifies this host's original key under the same account, membership and live RTA proof.
+    /// The caller keeps this finite future pinned while existing peer IO is staged separately.
+    pub(in crate::native_account::hosted_world) async fn renew_hosting_identity(
+        &mut self,
+        original: &protocol::NativeHostingIdentity,
+        deadline: Instant,
+    ) -> io::Result<protocol::NativeHostingIdentity> {
+        self.service_barrier(Some(deadline)).await?;
+        let mut operation = self.operation(deadline).await?;
+        let xuid = self
+            .scope
+            .as_ref()
+            .ok_or_else(|| invalid("host account scope is unavailable"))?
+            .xuid
+            .clone();
+        let identity = service(
+            self.socket
+                .as_mut()
+                .ok_or_else(|| invalid("host RTA is unavailable"))?,
+            self.subscription
+                .ok_or_else(|| invalid("host subscription is unavailable"))?,
+            &self.reference,
+            &mut self.changed,
+            deadline,
+            mint_hosting_identity(&mut operation, original.signing_key(), &xuid, deadline),
+        )
+        .await??;
+        operation.persist()?;
+        drop(operation);
+        self.service_barrier(Some(deadline)).await?;
+        Ok(identity)
     }
 
     /// Invalidates only this exact rejected issuance under the original selected account generation.
@@ -315,4 +323,39 @@ impl HostDirectory {
         drop(operation);
         self.service_barrier(Some(deadline)).await
     }
+}
+
+/// Mints and qualifies one provider proof without acquiring another account or generating a key.
+async fn mint_hosting_identity(
+    operation: &mut Operation,
+    key: Arc<SigningKey>,
+    xuid: &str,
+    deadline: Instant,
+) -> io::Result<protocol::NativeHostingIdentity> {
+    let (credential, issuer) = {
+        let services = operation.minecraft()?;
+        let token = bounded(deadline, services.multiplayer_token(key.verifying_key()))
+            .await?
+            .map_err(super::super::super::service_error)?;
+        let observed = Instant::now();
+        (
+            protocol::NativeCredential::new(
+                token.as_str().to_owned(),
+                services.service_time(),
+                token.expires_at(),
+                observed,
+            )?,
+            services
+                .authorization_issuer()
+                .map_err(super::super::super::service_error)?
+                .to_owned(),
+        )
+    };
+    bounded(
+        deadline,
+        operation
+            .provider(&issuer)?
+            .hosting_identity(key, credential, xuid),
+    )
+    .await?
 }

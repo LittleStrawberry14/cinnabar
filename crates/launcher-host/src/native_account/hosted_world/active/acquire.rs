@@ -1,5 +1,7 @@
 //! Original account mint, protected socket and bounded accepting ICE handoff.
 
+pub(super) mod renewal;
+
 use super::*;
 use bedrock_net::messaging::server::PreparedMessagingServer;
 use bedrock_services::signaling::{
@@ -77,17 +79,9 @@ pub(super) async fn acceptor(
     }
     let credentials = socket.credentials().ok_or_else(unavailable)?;
     let expires = identity.expires_at().min(credentials.expires_at());
-    let servers: Vec<_> = credentials
-        .servers()
-        .iter()
-        .map(|server| IceServer {
-            username: server.username().to_owned(),
-            password: server.password().to_owned(),
-            urls: server.urls().to_vec(),
-        })
-        .collect();
+    let servers = service_ice_servers(credentials);
     // The current native default is an explicit IPv4 socket; mixed-family qualification remains separate.
-    let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+    let bind_addr = bind_address();
     let resolving = nethernet_tokio::resolve_ice_servers(&servers, bind_addr, expires, deadline);
     tokio::pin!(resolving);
     let resolved = loop {
@@ -128,4 +122,24 @@ pub(super) async fn acceptor(
         messaging_id,
         expires,
     })
+}
+
+/// Retains the accepting transport's selected UDP family for initial and later offers.
+fn bind_address() -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))
+}
+
+/// Transfers fresh service endpoint values into the existing resolver's owned input format.
+fn service_ice_servers(
+    credentials: &bedrock_services::signaling::TurnCredentials,
+) -> Vec<IceServer> {
+    credentials
+        .servers()
+        .iter()
+        .map(|server| IceServer {
+            username: server.username().to_owned(),
+            password: server.password().to_owned(),
+            urls: server.urls().to_vec(),
+        })
+        .collect()
 }
