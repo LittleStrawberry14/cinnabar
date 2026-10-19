@@ -144,6 +144,59 @@ mod tests {
         time::Duration,
     };
 
+    /// Positional arrays cannot supply trust or replace an unreadable original document.
+    #[tokio::test]
+    async fn array_root_trust_files_never_grant_known_keys_or_replace_original_bytes() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use p384::{ecdsa::SigningKey, elliptic_curve::Generate, pkcs8::EncodePublicKey};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trusted.json");
+        let key = SigningKey::generate();
+        let key = STANDARD.encode(key.verifying_key().to_public_key_der().unwrap().as_bytes());
+        let originals = [
+            b"[]".to_vec(),
+            serde_json::to_vec(&serde_json::json!([[key]])).unwrap(),
+        ];
+        let mut observations = Vec::new();
+        for original in originals {
+            tokio::fs::write(&path, &original).await.unwrap();
+            let known = known(&path, &key).await;
+            let after_read = tokio::fs::read(&path).await.unwrap();
+            remember(&path, "independently-approved-new-key".into()).await;
+            let after_write = tokio::fs::read(&path).await.unwrap();
+            observations.push((original, known, after_read, after_write));
+        }
+        // Every actual blocking transaction has completed before either behavioral assertion.
+        assert!(
+            observations
+                .iter()
+                .all(|(original, _, read, written)| original == read && original == written),
+            "an array-root trust document replaced unreadable original history"
+        );
+        assert!(
+            observations.iter().all(|(_, known, _, _)| !known),
+            "an array-root trust document granted silent known-key authority"
+        );
+    }
+
+    /// Original object/null and missing/null-key defaults remain ordinary readable empty history.
+    #[tokio::test]
+    async fn object_and_null_trust_files_keep_the_original_empty_history_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trusted.json");
+        for original in ["null", "{}", "{\"keys\":null}"] {
+            tokio::fs::write(&path, original).await.unwrap();
+            remember(&path, "independently-approved-key".into()).await;
+            assert!(known(&path, "independently-approved-key").await);
+            let actual: serde_json::Value =
+                serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+            assert_eq!(
+                actual,
+                serde_json::json!({"keys":["independently-approved-key"]})
+            );
+        }
+    }
+
     /// Canceling the waiter retains the original admitted transaction and its exact temp guard.
     #[tokio::test]
     async fn approved_transaction_finishes_atomically_after_its_waiter_is_canceled() {

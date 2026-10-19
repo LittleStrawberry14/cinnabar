@@ -97,6 +97,18 @@ impl NativeConnectionTarget {
     }
 }
 
+impl AddressedRoute {
+    /// Builds the original explicit RakNet fallback without resolving or changing the route.
+    pub(crate) fn raknet_target(&self) -> NativeConnectionTarget {
+        let port = self.port.unwrap_or(bridge::contract::DEFAULT_BEDROCK_PORT);
+        let address = match self.host.parse::<std::net::Ipv6Addr>() {
+            Ok(host) => format!("[{host}]:{port}"),
+            Err(_) => format!("{}:{port}", self.host),
+        };
+        NativeConnectionTarget::new(address, NativeTransport::RakNet)
+    }
+}
+
 /// Keeps endpoint and policy values out of diagnostics.
 fn invalid() -> io::Error {
     io::Error::new(

@@ -91,6 +91,26 @@ mod tests {
         }
     }
 
+    /// A valid scoped native socket must survive addressed selection into the actual RakNet fallback.
+    #[test]
+    fn addressed_scoped_ipv6_retains_its_original_family_and_scope_for_raknet() {
+        use std::{net::SocketAddr, sync::Arc};
+        for address in ["[::1%3]:19132", "[fe80::1%7]:19133"] {
+            let original: SocketAddr = address.parse().unwrap();
+            let target = NativeConnectionTarget::addressed(address.into(), Arc::new(RefuseTrust))
+                .expect("a valid scoped native endpoint was rejected as an HTTP URL");
+            target.validate().unwrap();
+            assert_eq!(target.address, address);
+            let fallback = target.addressed_route().unwrap().raknet_target();
+            assert_eq!(fallback.transport, NativeTransport::RakNet);
+            assert_eq!(
+                fallback.address.parse::<SocketAddr>().unwrap(),
+                original,
+                "addressed RakNet fallback lost the original IPv6 scope"
+            );
+        }
+    }
+
     /// Only a validated exact endpoint can carry the original join's trust capability.
     #[test]
     fn addressed_selection_validates_its_host_and_rejects_changed_public_projections() {

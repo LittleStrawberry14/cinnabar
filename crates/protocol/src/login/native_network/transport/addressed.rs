@@ -1,7 +1,7 @@
 //! Address discovery and first-use authorization on the original native join lifetime.
 
 use super::{Transport, endpoint, http};
-use crate::{NativeConnectionTarget, NativeTransport};
+use crate::NativeConnectionTarget;
 mod cache;
 #[cfg(test)]
 mod tests;
@@ -53,12 +53,8 @@ pub(in crate::login::native_network) async fn connect(
     let result = match choice {
         Some(url) => connect_http(&url, &identity, &client, route.trust.as_ref(), cutoff).await,
         None => {
-            let port = route.port.unwrap_or(bridge::contract::DEFAULT_BEDROCK_PORT);
-            let address = match route.host.parse::<std::net::Ipv6Addr>() {
-                Ok(host) => format!("[{host}]:{port}"),
-                Err(_) => format!("{}:{port}", route.host),
-            };
-            let target = NativeConnectionTarget::new(address.clone(), NativeTransport::RakNet);
+            let target = route.raknet_target();
+            let address = target.address.clone();
             endpoint::connect(&target, cutoff)
                 .await
                 .map(|transport| (transport, address))
