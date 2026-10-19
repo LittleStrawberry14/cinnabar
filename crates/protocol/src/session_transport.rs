@@ -63,7 +63,7 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     frames: PacketSender,
     startup: VecDeque<Bytes>, // startup batch bodies, read before any core frame
     received: VecDeque<RawPacket>, // packets split from a batch but not yet read
-    ahead: VecDeque<Option<Result<ReadItem, SessionError>>>, // reader items `read_ahead` took
+    ahead: VecDeque<ReadAhead>, // original reader items and their immutable admission metadata
     ahead_bytes: usize,       // frame bytes held in `ahead`
     ended: bool,              // a terminal message was delivered
     sending: VecDeque<InFlightSend>,
@@ -71,6 +71,13 @@ pub(crate) struct SessionTransport<R = FramedReader> {
     current: Option<CurrentPacket>, // the tapped packet the session is processing
     split_frames: u64,              // batch frames split so far; startup batches count as 0
     delivered: (u64, u32),          // frame and index of the packet `recv` returned last
+}
+
+/// One original read-ahead FIFO entry, with native delay metadata on the SAME body/terminal.
+struct ReadAhead {
+    item: Option<Result<ReadItem, SessionError>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    delay: Option<native::delay::Deadline>,
 }
 
 /// The last delivered packet, kept until the session asks for the next one so an outcome
@@ -100,6 +107,15 @@ impl InFlightSend {
 }
 
 impl<R: bridge::FrameRead> SessionTransport<R> {
+    /// Borrows policy for only this original native connection, without extending transport lifetime.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub(crate) fn packet_delay(&self) -> Option<native::delay::NativePacketDelay> {
+        match &self.frames {
+            PacketSender::Core(_) => None,
+            PacketSender::Native(sender) => Some(sender.delay.clone()),
+        }
+    }
+
     /// Closes the native connection while its runtime is alive; core I/O belongs to its host.
     pub(crate) async fn close(&mut self) -> Result<(), ProtocolError> {
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -189,15 +205,7 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
             if self.ended {
                 return Err(SessionFailure::ConnectionClosed.into());
             }
-            let next = match self.ahead.pop_front() {
-                Some(next) => {
-                    if let Some(Ok(frame)) = &next {
-                        self.ahead_bytes -= frame.len();
-                    }
-                    next
-                }
-                None => poll_fn(|cx| self.reader.poll_next(cx)).await,
-            };
+            let next = self.next_reader_item().await;
             let frame = match next {
                 Some(Ok(frame)) => frame,
                 Some(Err(error)) => return Err(error),
@@ -241,6 +249,65 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         }
     }
 
+    /// Takes only an eligible original reader item; cancellation retains its front and deadline.
+    async fn next_reader_item(&mut self) -> Option<Result<ReadItem, SessionError>> {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Some(delay) = self.packet_delay() {
+            loop {
+                if let Some(front) = self.ahead.front() {
+                    let deadline = front.delay;
+                    if deadline.is_some_and(|deadline| {
+                        delay.remaining(deadline, native::delay::now()).is_some()
+                    }) {
+                        let due = delay.wait(deadline);
+                        tokio::pin!(due);
+                        let mut reading = true;
+                        loop {
+                            tokio::select! {
+                                _ = &mut due => break,
+                                more = poll_fn(|cx| self.poll_read_ahead_one(MAX_READ_AHEAD_BYTES, cx)), if reading => { reading = more; }
+                            }
+                        }
+                    }
+                    return self
+                        .pop_read_ahead()
+                        .expect("retained original reader front")
+                        .item;
+                }
+                let next = poll_fn(|cx| self.reader.poll_next(cx)).await;
+                let deadline = delay.capture(native::delay::now());
+                if deadline.is_none() {
+                    return next;
+                }
+                self.retain_read_ahead(ReadAhead {
+                    item: next,
+                    delay: deadline,
+                });
+            }
+        }
+        match self.pop_read_ahead() {
+            Some(entry) => entry.item,
+            None => poll_fn(|cx| self.reader.poll_next(cx)).await,
+        }
+    }
+
+    /// Removes the same eligible FIFO entry and releases exactly its original byte charge.
+    fn pop_read_ahead(&mut self) -> Option<ReadAhead> {
+        let entry = self.ahead.pop_front()?;
+        if let Some(Ok(frame)) = &entry.item {
+            self.ahead_bytes -= frame.len();
+        }
+        Some(entry)
+    }
+
+    /// Retains one original body or terminal with its own admission metadata and byte charge.
+    fn retain_read_ahead(&mut self, entry: ReadAhead) {
+        if let Some(Ok(frame)) = &entry.item {
+            self.ahead_bytes += frame.len();
+        }
+        self.ahead.push_back(entry);
+    }
+
     /// Reads core frames ahead of [`Self::recv`], unparsed, until `max_bytes` are held or the core
     /// ends the session, so short preparation or world-admission pauses do not block the core.
     /// Cancelling the wait loses nothing.
@@ -256,16 +323,24 @@ impl<R: bridge::FrameRead> SessionTransport<R> {
         max_bytes: usize,
         cx: &mut Context<'_>,
     ) -> Poll<bool> {
-        if self.ahead_bytes >= max_bytes || self.ahead.back().is_some_and(ends_session) {
+        if self.ahead_bytes >= max_bytes
+            || self
+                .ahead
+                .back()
+                .is_some_and(|entry| ends_session(&entry.item))
+        {
             return Poll::Ready(false);
         }
         let next = ready!(self.reader.poll_next(cx));
-        if let Some(Ok(frame)) = &next {
-            self.ahead_bytes += frame.len();
-        }
-        let more = self.ahead_bytes < max_bytes && !ends_session(&next);
-        self.ahead.push_back(next);
-        Poll::Ready(more)
+        let ends = ends_session(&next);
+        self.retain_read_ahead(ReadAhead {
+            item: next,
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            delay: self
+                .packet_delay()
+                .and_then(|delay| delay.capture(native::delay::now())),
+        });
+        Poll::Ready(self.ahead_bytes < max_bytes && !ends)
     }
 
     /// Adopts previously unobserved startup packets ahead of unread input, preserving their bodies.

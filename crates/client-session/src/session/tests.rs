@@ -946,6 +946,8 @@ fn saturated_command_queue_preserves_packet_and_shutdown_does_not_join_on_ui_thr
         readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
         experience_gate: Arc::default(),
         unflushed: Default::default(),
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        packet_delay: Default::default(),
     };
 
     let packet = test_packet();

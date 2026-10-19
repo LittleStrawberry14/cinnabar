@@ -17,6 +17,12 @@ pub const PING_WORKERS: usize = 8;
 /// Original whole-attempt server-row ping deadline.
 pub const PING_TIMEOUT_MILLIS: u32 = 2000;
 
+/// Maximum opt-in delay of post-login application packets in either direction.
+pub const MAX_PACKET_DELAY_MS: u32 = 1000;
+
+/// Lifetime of one explicit packet-delay heartbeat.
+pub const PACKET_DELAY_LEASE_MILLIS: u32 = 3000;
+
 /// Client session setup carrying JSON login data.
 pub const KIND_CONNECT: u8 = 1;
 

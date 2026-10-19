@@ -44,6 +44,8 @@ pub use skin_change::{
     set_skin_packet_engine_version, set_skin_packet_uuid,
 };
 mod session_transport;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use session_transport::native::delay::NativePacketDelay;
 pub mod session_wire;
 mod transfer;
 mod translation_parameter;

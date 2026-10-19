@@ -379,6 +379,8 @@ pub struct NetworkHandle<P = ()> {
     readiness_ingress: Arc<ReadinessIngressCounter>,
     experience_gate: Arc<experience::ExperienceGate>,
     unflushed: Mutex<frame_flush::FrameFlush>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    packet_delay: packet_delay::Control,
 }
 
 impl<P> NetworkHandle<P> {
@@ -618,6 +620,8 @@ impl<P> NetworkHandle<P> {
             .pending_latency_reply
             .lock()
             .expect("latency reply lock") = None;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        self.packet_delay.clear();
         self.shutdown.send_replace(true);
         self.release_thread();
     }
@@ -663,6 +667,8 @@ fn empty_network_channels<P>() -> (
             readiness_ingress: Arc::new(ReadinessIngressCounter::default()),
             experience_gate: Arc::default(),
             unflushed: Default::default(),
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            packet_delay: Default::default(),
         },
         physics_reanchor_rx,
     )
@@ -670,6 +676,8 @@ fn empty_network_channels<P>() -> (
 
 impl<P> Drop for NetworkHandle<P> {
     fn drop(&mut self) {
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        self.packet_delay.clear();
         self.shutdown.send_replace(true);
         self.release_thread();
     }
@@ -953,6 +961,8 @@ mod frame_flush;
 pub(crate) mod handle_state;
 mod latency_reply;
 mod outbound;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod packet_delay;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod packet_log;
 use bootstrap::{send_startup_failure, start_game_inventory_authority, start_game_item_registry};
