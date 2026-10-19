@@ -19,7 +19,7 @@ impl NativeAccount {
         let mut operation = Arc::clone(self)
             .acquire_verified_for(Some(generation))
             .await?;
-        operation.profile_identity().await?;
+        operation.authorize_identity().await?;
         if operation
             .cached
             .as_ref()

@@ -82,6 +82,8 @@
     {"rust_name": "METHOD_REALMS_LIST", "go_name": "MethodRealmsList", "value": "realms_list.v1", "rust_type": "str", "doc": "Control method for realms list."},
     {"rust_name": "METHOD_FRIENDS_LIST", "go_name": "MethodFriendsList", "value": "friends_list.v1", "rust_type": "str", "doc": "Control method for friends list."},
     {"rust_name": "METHOD_FRIENDS_PEOPLE", "go_name": "MethodFriendsPeople", "value": "friends_people.v1", "rust_type": "str", "doc": "Control method for friends people."},
+    {"rust_name": "INVITE_MAX_PEOPLE", "go_name": "InviteMaxPeople", "value": 100, "rust_type": "usize", "doc": "Most friends shown by the invite picker, with online friends retained first."},
+    {"rust_name": "INVITE_GAMERPIC_SIDE", "go_name": "InviteGamerpicSide", "value": 128, "rust_type": "usize", "doc": "Requested square gamerpic size for an invite picker row."},
     {"rust_name": "METHOD_CONNECT", "go_name": "MethodConnect", "value": "connect.v1", "rust_type": "str", "doc": "Control method for connect."},
     {"rust_name": "METHOD_ACCOUNT_STATUS", "go_name": "MethodAccountStatus", "value": "account_status.v1", "rust_type": "str", "doc": "Control method for account status."},
     {"rust_name": "METHOD_SIGN_OUT", "go_name": "MethodSignOut", "value": "sign_out.v1", "rust_type": "str", "doc": "Control method for sign out."},

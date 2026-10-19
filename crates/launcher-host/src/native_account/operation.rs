@@ -156,3 +156,29 @@ impl Drop for Operation {
         }
     }
 }
+
+impl Operation {
+    /// Revalidates the actual Xbox identity before a borrowed social read.
+    pub(super) async fn social(
+        &mut self,
+    ) -> io::Result<bedrock_services::xbox::social::Social<'_>> {
+        self.authorize_identity().await?;
+        match &mut self.cached.as_mut().expect("account owner").owner {
+            Owner::Xbox(account) => Ok(account.social()),
+            Owner::Minecraft(services) => Ok(services.social()),
+        }
+    }
+
+    /// Reuses the same proof's current default authorization before dispatching a borrowed service read.
+    pub(super) async fn authorize_identity(&mut self) -> io::Result<()> {
+        self.rearm()?;
+        let authorization = self
+            .cached
+            .as_mut()
+            .expect("account owner")
+            .owner
+            .xbox_authorization()
+            .await?;
+        self.verify_identity(authorization.xuid(), authorization.gamertag())
+    }
+}

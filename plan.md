@@ -118,6 +118,16 @@ conformance fixtures. The shared SDK APIs and optional image dependency resolve 
 compile; final source review and owning execution remain pending. Live profile acceptance
 remains open; the Go profile remains the default.
 
+The invite picker in native mode reads decorated friends through that same selected
+account, retains generation and verified identity through artwork, and rejects a
+retired result before publication. Its existing worker cancels actual pending I/O
+on account changes or shutdown; unrelated wakes retain the original request.
+The default picker and outgoing invitations keep the Go host owner. Shared display
+bounds and Go/Rust projection controls are authored; owning execution remains
+pending. Uncommon Unicode-version ordering and live picker acceptance remain open.
+Native invitation sending and inbox adoption need their concrete account/session
+consumers; a people row does not provide membership or invitation authority.
+
 Incomplete: native hosting transport and application adoption, remaining profile and
 invitation services, end-to-end signed Realm NetherNet acceptance, browser transport
 adoption, remote provider-key refresh, end-to-end service/transport cancellation, compiled

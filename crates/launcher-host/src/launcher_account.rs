@@ -81,6 +81,9 @@ struct Snapshot {
     profile_wake: Option<tokio::sync::watch::Sender<profile_worker::Wake>>,
     /// Selects one presentation source for this account's existing profile worker.
     profile_source: profile_worker::Source,
+    /// The invite picker uses the same selected account as native profile/presence.
+    people_source: invites::Source,
+    people_wake: Option<tokio::sync::watch::Sender<invites::Wake>>,
     xbox_presence: bridge::XboxPresenceState,
     title_presence_owner: crate::launcher_core::TitlePresenceOwner,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -131,6 +134,9 @@ impl Snapshot {
         self.people = None;
         self.realm_membership = None;
         self.home = None;
+        if let Some(wake) = &self.people_wake {
+            invites::retire(wake);
+        }
         if let Some(wake) = &self.catalog_wake {
             // A queued wake already covers the newest snapshot; never block a frame.
             let _ = wake.try_send(());
@@ -165,7 +171,7 @@ pub struct LauncherAccount {
     sign_out: Sender<()>,
     profile_refresh: tokio::sync::watch::Sender<profile_worker::Wake>,
     message_reports: Sender<MessageEvent>,
-    invites: Sender<invites::Request>,
+    invites: invites::Requests,
     realm_membership: tokio::sync::mpsc::UnboundedSender<realm_membership::Request>,
     cinnabar_rosters: Sender<cinnabar_players::Roster>,
     /// Dropping it stops the catalog and feed workers.
@@ -205,6 +211,7 @@ impl LauncherAccount {
             Snapshot {
                 title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
                 profile_source: profile_worker::Source::Native(account.clone()),
+                people_source: invites::Source::Native(account.clone()),
                 native_presence_account: account,
                 ..Default::default()
             },
@@ -820,7 +827,7 @@ impl AccountControl for LauncherAccount {
     }
 
     fn request_people(&mut self) {
-        let _ = self.invites.send(invites::Request::People);
+        self.invites.people(&self.snapshot);
     }
 
     fn people(&mut self) -> Option<Result<Vec<launcher::menu::invite::Friend>, ()>> {
@@ -829,7 +836,7 @@ impl AccountControl for LauncherAccount {
     }
 
     fn send_invites(&mut self, xuids: Vec<String>) {
-        let _ = self.invites.send(invites::Request::Send(xuids));
+        self.invites.send(&self.snapshot, xuids);
     }
 }
 

@@ -1,7 +1,7 @@
 //! Profile presentation from the selected account's existing leased social owner.
 
 use super::*;
-use bedrock_services::xbox::social::{PeopleList, ProfileDetail, Social, User};
+use bedrock_services::xbox::social::{PeopleList, ProfileDetail, User};
 
 mod achievements;
 mod facets;
@@ -67,7 +67,7 @@ impl NativeAccount {
         let identity = cached.identity.as_ref().expect("verified identity");
         let generation = cached.generation.clone();
         let xuid = identity.xuid.clone();
-        let user = operation.profile_social().await?.profile(&xuid).await;
+        let user = operation.social().await?.profile(&xuid).await;
         operation.persist()?;
         let identity = operation
             .cached
@@ -137,37 +137,13 @@ impl NativeAccount {
             ));
         }
         let people = operation
-            .profile_social()
+            .social()
             .await?
             .people(list, ProfileDetail::Basic)
             .await
             .map(|users| users.len());
         operation.persist()?;
         count(people)
-    }
-}
-
-impl Operation {
-    /// Revalidates the actual Xbox identity before each independent borrowed profile facet.
-    async fn profile_social(&mut self) -> io::Result<Social<'_>> {
-        self.profile_identity().await?;
-        match &mut self.cached.as_mut().expect("account owner").owner {
-            Owner::Xbox(account) => Ok(account.social()),
-            Owner::Minecraft(services) => Ok(services.social()),
-        }
-    }
-
-    /// Reuses the same proof's current default authorization before dispatching any profile facet.
-    async fn profile_identity(&mut self) -> io::Result<()> {
-        self.rearm()?;
-        let authorization = self
-            .cached
-            .as_mut()
-            .expect("account owner")
-            .owner
-            .xbox_authorization()
-            .await?;
-        self.verify_identity(authorization.xuid(), authorization.gamertag())
     }
 }
 
@@ -220,4 +196,4 @@ fn apply_user(profile: &mut bridge::Profile, user: User) -> io::Result<()> {
 #[cfg(test)]
 mod conformance;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

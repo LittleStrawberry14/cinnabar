@@ -46,7 +46,7 @@ fn profile_projection_keeps_verified_identity_privacy_absence_and_precise_counts
 }
 
 /// Writes only synthetic protected credentials through the fixture's real bounded file boundary.
-fn seed(path: &std::path::Path, generation: &str) {
+pub(in crate::native_account) fn seed(path: &std::path::Path, generation: &str) {
     let mut options = std::fs::OpenOptions::new();
     options.create(true).write(true).truncate(true);
     #[cfg(unix)]
@@ -66,7 +66,7 @@ fn seed(path: &std::path::Path, generation: &str) {
 }
 
 /// Supplies an actual protected lease and SDK checkpoint without sending any credential.
-fn account() -> (tempfile::TempDir, Arc<NativeAccount>) {
+pub(in crate::native_account) fn account() -> (tempfile::TempDir, Arc<NativeAccount>) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("oauth.json");
     seed(&path, "original");
