@@ -1,7 +1,8 @@
 //! Bevy wiring: the main-world load worker, extraction, the geometry adapter's settings and
-//! block ids, the pack's id maps, the Vanilla hand-off, per-view preparation and the
+//! block ids, the actor adapter's id maps and Vanilla hand-off, per-view preparation and the
 //! render-graph system.
 
+use super::actors::{self, ActorSkinPipelines, ActorSources, RigSource};
 use super::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
 use super::draws::DrawKind;
 use super::effects::textures::{ShaderpackEffectTextures, prepare_effect_textures};
@@ -17,8 +18,9 @@ use super::pipelines::GpuContext;
 use super::resources::vanilla::VanillaTextures;
 use super::sky::SkyInputs;
 use super::targets::AtlasViews;
-use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
+use super::uniforms::{FAR_PLANE_SCALE, FrameClock, FrameUniforms, ViewCamera};
 use bevy::render::render_phase::TrackedRenderPass;
+use bevy::render::render_resource::PipelineCache;
 use bevy::{
     core_pipeline::{Core3d, Core3dSystems},
     prelude::*,
@@ -32,8 +34,8 @@ use bevy::{
 };
 use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
-    ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs, ShaderPackIdMaps,
-    ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
+    ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -50,6 +52,8 @@ pub(crate) const JAVA_DIMENSIONS: [&str; 3] = [
     "minecraft:the_end",
 ];
 
+/// Java's first-person field of view, for the hand projection while no hand rig draws.
+const DEFAULT_HAND_FOV_DEGREES: f32 = 70.0;
 /// The least `far` a pack sees: Java's smallest render distance, two chunks.
 const MIN_PACK_FAR: f32 = 32.0;
 
@@ -177,8 +181,9 @@ type PreparedView = (Entity, &'static ExtractedView);
 
 /// Enables the geometry adapter while a pack with terrain programs is shown on some camera,
 /// with the pack's `separateAo`/`oldLighting` and a vertex budget sized to the device,
-/// publishes its block ids, tells the Vanilla terrain passes whether the pack draws terrain
-/// itself, and publishes the effects it draws in place of Vanilla's.
+/// publishes its block ids, tells the Vanilla terrain, actor, block-entity and hand passes
+/// which of them the pack draws itself, and publishes the effects it draws in place of
+/// Vanilla's.
 #[allow(clippy::too_many_arguments, reason = "a render-world system's inputs")]
 fn configure_geometry(
     mut commands: Commands,
@@ -221,6 +226,9 @@ fn configure_geometry(
     drawn.set_if_neq(ShaderPackDrawnCategories {
         terrain: expands_terrain
             && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
+        actors: draws(DrawKind::Entities),
+        block_entities: draws(DrawKind::Block),
+        hand: draws(DrawKind::Hand),
     });
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
@@ -278,11 +286,18 @@ fn prepare_views(
     mut geometry: Option<ResMut<ShaderpackGeometry>>,
     atlas: Option<Res<ShaderpackAtlas>>,
     effect_textures: Option<Res<ShaderpackEffectTextures>>,
+    hand: Option<Res<render_scene::HandRigScene>>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::ShaderpackUniforms));
+    let hand_fov = hand
+        .as_ref()
+        .and_then(|hand| hand.frame.as_ref())
+        .map_or(DEFAULT_HAND_FOV_DEGREES.to_radians(), |frame| {
+            frame.fov_radians
+        });
     let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
         states.clear();
@@ -327,12 +342,14 @@ fn prepare_views(
         let atlas_size = atlas.as_ref().map_or([0; 2], |atlas| {
             atlas.size.to_array().map(|side| side as i32)
         });
+        let far = inputs.render_distance.max(16.0) * FAR_PLANE_SCALE;
         let context = DrawContext {
             chunk_offset,
             atlas_size,
             particle_atlas_size: effect_textures
                 .as_ref()
                 .map_or([0; 2], |t| t.particle_atlas_size()),
+            hand_projection: actors::hand_projection(hand_fov, screen, far),
         };
         state.write_uniforms(&queue, &frame, clock.delta_seconds, &context);
         if let Some(geometry) = geometry.as_deref_mut()
@@ -493,6 +510,24 @@ fn shaderpack_post(
             .get_resource::<Time>()
             .map_or(0.0, |time| time.elapsed_secs()),
     };
+    let actor_rig = crate::actor_render::shaderpack_source::shaderpack_actors(world);
+    let hand_rig = crate::hand_rig_render::shaderpack_source::shaderpack_hand(world);
+    let kernels = world
+        .get_resource::<ActorSkinPipelines>()
+        .zip(world.get_resource::<PipelineCache>())
+        .and_then(|(pipelines, cache)| pipelines.kernels(cache));
+    let actors = ActorSources {
+        kernels,
+        actors: actor_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        hand: hand_rig.as_ref().map(|rig| rig as &dyn RigSource),
+        block_entities: crate::block_entity::shaderpack_block_entities(world),
+        entity_ids: world.get_resource::<ShaderPackActorIds>(),
+        held_items: [inputs.held_item_id, inputs.held_item_id2],
+        camera: view.world_from_view.translation(),
+        seconds: world
+            .get_resource::<Time>()
+            .map_or(0.0, |time| time.elapsed_secs()),
+    };
     let geometry = terrain.as_ref().map(|terrain| FrameGeometry {
         device: render_device,
         terrain,
@@ -508,6 +543,7 @@ fn shaderpack_post(
         },
         effects,
         overlay_radius: terrain.geometry.complete_radius().unwrap_or(f32::MAX),
+        actors,
     });
     let post = target.post_process_write();
     let io = FrameIo {
@@ -578,16 +614,19 @@ fn publish_id_maps(loaded: Res<LoadedShaderPack>, mut maps: ResMut<ShaderPackIdM
 }
 
 pub(super) fn build(app: &mut App) {
+    actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
         .init_resource::<ShaderPackFrameInputs>()
         .init_resource::<ShaderPackIdMaps>()
+        .init_resource::<ShaderPackActorIds>()
         .init_resource::<LoadedShaderPack>()
         .init_resource::<Loader>()
         .add_plugins((
             ExtractComponentPlugin::<ShaderPackRendering>::default(),
             ExtractResourcePlugin::<LoadedShaderPack>::default(),
             ExtractResourcePlugin::<ShaderPackFrameInputs>::default(),
+            ExtractResourcePlugin::<ShaderPackActorIds>::default(),
             ExtractResourcePlugin::<DedicatedGraphicsMemory>::default(),
             ShaderpackGeometryPlugin,
             ShaderpackAtlasPlugin,
@@ -604,6 +643,7 @@ pub(super) fn finish(app: &mut App) {
         .init_resource::<ShaderPackEffects>()
         .init_resource::<ShaderpackEffectTextures>()
         .init_resource::<ShaderPackDrawnCategories>()
+        .init_resource::<ActorSkinPipelines>()
         .add_systems(
             Render,
             (

@@ -16,7 +16,7 @@ use super::uniforms::{
     DrawUniforms, FAR_PLANE_SCALE, FrameUniforms, GL_NEAR, HostValue, pack_block,
 };
 use crate::gpu_timing::{GpuTimestamps, within_stage};
-use bevy::math::Vec3;
+use bevy::math::{Mat4, Vec3};
 use render_scene::RuntimeStage;
 use shaderpack::{CustomUniforms, ProgramGroup};
 use std::collections::BTreeSet;
@@ -32,6 +32,8 @@ pub(crate) struct DrawContext {
     pub atlas_size: [i32; 2],
     /// The particle atlas's texel size (particle draws' `atlasSize`).
     pub particle_atlas_size: [i32; 2],
+    /// The first-person hand's projection, its depth scaled by `MC_HAND_DEPTH`.
+    pub hand_projection: Mat4,
 }
 
 /// One view's resources and per-frame state for a loaded pack.
@@ -40,6 +42,8 @@ pub(crate) struct ViewState {
     pub targets: ViewTargets,
     pub bindings: ViewBindings,
     pub history: super::uniforms::UniformHistory,
+    /// Actor, block-entity and hand geometry skinned for the pack, with its draw bindings.
+    pub actors: super::actors::ViewActors,
     custom: CustomUniforms,
     scratch: Vec<u8>,
     unknown: BTreeSet<String>,
@@ -74,6 +78,7 @@ impl ViewState {
             targets,
             bindings,
             history: Default::default(),
+            actors: Default::default(),
             custom,
             scratch: vec![],
             unknown: BTreeSet::new(),
@@ -106,7 +111,7 @@ impl ViewState {
     }
 
     /// Evaluates custom uniforms and writes every program's and geometry draw's uniform
-    /// block.
+    /// block; each draw also keeps its packed bytes, which actor draws patch per actor.
     pub(crate) fn write_uniforms(
         &mut self,
         queue: &Queue,
@@ -163,7 +168,7 @@ impl ViewState {
                 audit.block(&format!("program {}", program.name), block, &lookup);
             }
         }
-        for (draw, binding) in self.pack.draws.iter().zip(&self.bindings.draws) {
+        for (draw, binding) in self.pack.draws.iter().zip(&mut self.bindings.draws) {
             let program = &self.pack.programs[draw.program];
             let (Some(block), Some(buffer)) = (&program.reflection.uniforms, &binding.uniforms)
             else {
@@ -171,6 +176,9 @@ impl ViewState {
             };
             let (model_view, projection) = if draw.kind.shadow() {
                 (frame.shadow_model_view(), frame.shadow_projection())
+            } else if draw.kind.hand() {
+                // Hand vertices are in view space already, as Iris draws them.
+                (Mat4::IDENTITY, context.hand_projection)
             } else {
                 (frame.model_view(), frame.projection())
             };
@@ -203,6 +211,7 @@ impl ViewState {
             let lookup = |name: &str| values.value(name).or_else(|| lookup(name));
             pack_block(block, &lookup, &mut self.scratch, &mut self.unknown);
             queue.write_buffer(buffer, 0, &self.scratch);
+            binding.base.clone_from(&self.scratch);
             if let Some(audit) = &mut self.audit {
                 audit.block(
                     &format!("draw {:?} with {}", draw.kind, program.name),
@@ -330,6 +339,7 @@ pub(crate) fn record_frame(
     let timestamps = io.timestamps;
     if let Some(geometry) = geometry {
         bind_geometry(device, state, geometry);
+        super::actors::prepare(device, queue, encoder, state, &geometry.actors);
         within_stage(
             timestamps,
             RuntimeStage::GpuShaderpackShadow,

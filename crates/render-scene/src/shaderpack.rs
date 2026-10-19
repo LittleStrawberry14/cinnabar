@@ -53,14 +53,17 @@ pub struct ShaderPackRendering;
 /// lighter biomes beyond these are dropped.
 pub const SKY_BIOME_SLOTS: usize = 4;
 /// The Vanilla categories the loaded pack draws itself on [`ShaderPackRendering`] cameras.
-/// Written in the render world by the shader-pack host each frame; the Vanilla terrain and
-/// far-terrain passes skip those cameras for what is set, so the pack's Vanilla overlay never
-/// carries a second, Vanilla-lit copy.
+/// Written in the render world by the shader-pack host each frame; the Vanilla terrain,
+/// far-terrain, actor, block-entity and hand passes skip those cameras for what is set, so
+/// the pack's Vanilla overlay never carries a second, Vanilla-lit copy.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShaderPackDrawnCategories {
     /// Terrain: a section the pack has not expanded yet shows nothing, as Iris draws no
     /// unbuilt section, rather than Vanilla-lit terrain or far-terrain tiles.
     pub terrain: bool,
+    pub actors: bool,
+    pub block_entities: bool,
+    pub hand: bool,
 }
 
 /// Which render-world views the pack draws a Vanilla category for, for the Vanilla

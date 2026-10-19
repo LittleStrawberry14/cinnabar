@@ -151,6 +151,8 @@ use vertices::VertexList;
 #[cfg(feature = "shaderpacks")]
 #[path = "gpu/shaderpack_source.rs"]
 mod shaderpack_source;
+#[cfg(feature = "shaderpacks")]
+pub(crate) use shaderpack_source::shaderpack_block_entities;
 
 /// The vertex lists last passed to each [`VertexList::upload`], shared rather than copied.
 #[derive(Default)]
@@ -509,23 +511,36 @@ fn prepare_bind_groups(
     }
 }
 
+/// A camera block entities queue for, and whether it runs a shader pack.
+type BlockEntityView = (
+    Entity,
+    &'static MainEntity,
+    &'static ExtractedView,
+    &'static bevy::render::camera::ExtractedCamera,
+    &'static Msaa,
+    bevy::ecs::query::Has<render_scene::shaderpack::ShaderPackRendering>,
+);
+
+/// Whether the loaded shader pack draws block entities itself on its cameras.
+fn pack_draws_block_entities(
+    drawn: Option<&render_scene::shaderpack::ShaderPackDrawnCategories>,
+) -> bool {
+    drawn.is_some_and(|drawn| drawn.block_entities)
+}
+
 fn queue_solid(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<BlockEntityPipeline>,
     gpu: Res<BlockEntityGpu>,
     mut phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
+    views: Query<BlockEntityView>,
+    drawn: Option<Res<render_scene::shaderpack::ShaderPackDrawnCategories>>,
 ) {
     if gpu.solid.count == 0 && gpu.portal.count == 0 {
         return;
     }
+    let skip_pack_views = pack_draws_block_entities(drawn.as_deref());
     let functions = draw_functions.read();
     for (list, mode, draw_function) in [
         (
@@ -542,7 +557,11 @@ fn queue_solid(
         if list.count == 0 || list.bind_group.is_none() {
             continue;
         }
-        for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
+        for (view_entity, main_entity, view, extracted_camera, msaa, pack_view) in &views {
+            // Portals stay Vanilla: the pack does not draw their encoded planes.
+            if pack_view && skip_pack_views && mode == PipelineMode::Solid {
+                continue;
+            }
             let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
                 continue;
             };
@@ -582,13 +601,8 @@ fn queue_overlay(
     gpu: Res<BlockEntityGpu>,
     phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
+    views: Query<BlockEntityView>,
+    drawn: Option<Res<render_scene::shaderpack::ShaderPackDrawnCategories>>,
 ) {
     let draw_function = draw_functions.read().id::<DrawOverlayCommands>();
     queue_blended(
@@ -599,7 +613,7 @@ fn queue_overlay(
         pipeline,
         phases,
         &views,
-        |_| false,
+        |_, pack_view| pack_view && pack_draws_block_entities(drawn.as_deref()),
     );
 }
 
@@ -613,13 +627,7 @@ fn queue_outline(
     gpu: Res<BlockEntityGpu>,
     phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
+    views: Query<BlockEntityView>,
     pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawOutlineCommands>();
@@ -631,7 +639,7 @@ fn queue_outline(
         pipeline,
         phases,
         &views,
-        |view| pack.replaces(view, |drawn| drawn.selection),
+        |view, _| pack.replaces(view, |drawn| drawn.selection),
     );
 }
 
@@ -645,13 +653,7 @@ fn queue_crack(
     gpu: Res<BlockEntityGpu>,
     phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
+    views: Query<BlockEntityView>,
     pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     let draw_function = draw_functions.read().id::<DrawCrackCommands>();
@@ -663,7 +665,7 @@ fn queue_crack(
         pipeline,
         phases,
         &views,
-        |view| pack.replaces(view, |drawn| drawn.cracks),
+        |view, _| pack.replaces(view, |drawn| drawn.cracks),
     );
 }
 
@@ -673,13 +675,8 @@ fn queue_additive(
     gpu: Res<BlockEntityGpu>,
     phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     draw_functions: Res<DrawFunctions<Transparent3d>>,
-    views: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
+    views: Query<BlockEntityView>,
+    drawn: Option<Res<render_scene::shaderpack::ShaderPackDrawnCategories>>,
 ) {
     let draw_function = draw_functions.read().id::<DrawAdditiveCommands>();
     queue_blended(
@@ -690,12 +687,12 @@ fn queue_additive(
         pipeline,
         phases,
         &views,
-        |_| false,
+        |_, pack_view| pack_view && pack_draws_block_entities(drawn.as_deref()),
     );
 }
 
-/// Queues `list` on every camera `skip` does not reject (views whose pack draws the list
-/// itself).
+/// Queues `list` on every camera `skip` does not reject, given the view and whether it runs
+/// a shader pack (views whose pack draws the list itself).
 #[allow(
     clippy::too_many_arguments,
     reason = "one blended list's queue inputs and its view filter"
@@ -707,20 +704,14 @@ fn queue_blended(
     pipeline_cache: &PipelineCache,
     mut pipeline: ResMut<BlockEntityPipeline>,
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
-    views: &Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedView,
-        &bevy::render::camera::ExtractedCamera,
-        &Msaa,
-    )>,
-    skip: impl Fn(Entity) -> bool,
+    views: &Query<BlockEntityView>,
+    skip: impl Fn(Entity, bool) -> bool,
 ) {
     if list.count == 0 || list.bind_group.is_none() {
         return;
     }
-    for (view_entity, main_entity, view, extracted_camera, msaa) in views {
-        if skip(view_entity) {
+    for (view_entity, main_entity, view, extracted_camera, msaa, pack_view) in views {
+        if skip(view_entity, pack_view) {
             continue;
         }
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {

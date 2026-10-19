@@ -73,7 +73,12 @@ pub use gpu::{FRAME_EXPANSION_FACES, ShaderpackGeometry, ShaderpackGeometrySetti
 pub use jobs::GeometryCategory;
 pub use residency::{DEFAULT_GEOMETRY_BUDGET_BYTES, device_geometry_budget};
 pub(crate) use shadow_cull::{ShadowCullSettings, ShadowCulling, ShadowFrustum};
-pub(crate) use vertex::{CONSTANT_STREAM_WORDS, f32_to_half, host_vertex, textured_host_vertex};
+#[cfg(test)]
+pub(crate) use vertex::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};
+pub(crate) use vertex::{
+    CONSTANT_STREAM_WORDS, f32_to_half, host_vertex, substitute_layout_constants,
+    textured_host_vertex,
+};
 pub use vertex::{
     CONSTANT_VERTEX_BUFFER, DRAW_ORIGIN_VERTEX_BUFFER, GEOMETRY_VERTEX_BUFFER, IRIS_VERTEX_STRIDE,
     TerrainLayout, VertexLayoutError, vertex_buffer_layouts,

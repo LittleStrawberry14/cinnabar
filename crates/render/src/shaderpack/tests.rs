@@ -222,6 +222,7 @@ fn render_frames(
         chunk_offset: Vec3::ZERO,
         atlas_size: [0; 2],
         particle_atlas_size: [0; 2],
+        hand_projection: bevy::math::Mat4::IDENTITY,
     };
     state.write_uniforms(&gpu.queue, &frame, 0.016, &context);
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -661,6 +662,55 @@ fn programs_without_colour_outputs_load_and_keep_their_stores() {
         ],
     );
     assert_pixels(&bytes, |_| [255, 0, 255]);
+}
+
+#[test]
+fn a_draw_pipeline_the_device_rejects_drops_only_that_draw() {
+    let Some(gpu) = gpu() else {
+        eprintln!("missing fixture: native GPU adapter for the shader pack frame");
+        return;
+    };
+    // The entities stages disagree on `tint`'s type: both translate, the pipeline fails
+    // validation. Iris falls back per program; the pack still loads with its terrain draw.
+    let pack = pack(&[
+        ("gbuffers_terrain.vsh", PASS_VERTEX),
+        ("gbuffers_terrain.fsh", FILL),
+        (
+            "gbuffers_entities.vsh",
+            "#version 120\nvarying vec2 tint;\nvoid main() { tint = vec2(1.0); gl_Position = ftransform(); }\n",
+        ),
+        (
+            "gbuffers_entities.fsh",
+            "#version 120\nvarying vec3 tint;\nvoid main() { gl_FragData[0] = vec4(tint, 1.0); }\n",
+        ),
+    ]);
+    let pack = build(
+        &pack,
+        "fixture",
+        JAVA_DIMENSIONS[0],
+        None,
+        &gpu,
+        &Default::default(),
+    )
+    .expect("one rejected draw does not reject the pack");
+    let entities = pack
+        .programs
+        .iter()
+        .position(|p| p.name == "gbuffers_entities")
+        .expect("gbuffers_entities translated");
+    assert!(
+        pack.draws
+            .iter()
+            .any(|d| d.kind == super::draws::DrawKind::TerrainSolid),
+        "the terrain draw survives"
+    );
+    let kept: Vec<_> = pack
+        .draws
+        .iter()
+        .filter(|d| d.program == entities)
+        .map(|d| d.kind)
+        .collect();
+    assert!(kept.is_empty(), "rejected entities draws kept: {kept:?}");
 }
 
 /// BSL's hash argument `dot(p, vec2(12.9898, 4.1414))` at large `p`, scaled so the red

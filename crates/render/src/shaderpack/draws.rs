@@ -28,12 +28,15 @@ pub(super) mod render_stage {
     pub(crate) const TERRAIN_SOLID: i32 = 8;
     pub(crate) const TERRAIN_CUTOUT: i32 = 10;
     pub(crate) const ENTITIES: i32 = 11;
+    pub(crate) const BLOCK_ENTITIES: i32 = 12;
     pub(crate) const DESTROY: i32 = 13;
     pub(crate) const OUTLINE: i32 = 14;
+    pub(crate) const HAND_SOLID: i32 = 16;
     pub(crate) const TERRAIN_TRANSLUCENT: i32 = 17;
     pub(crate) const PARTICLES: i32 = 19;
     pub(crate) const CLOUDS: i32 = 20;
     pub(crate) const RAIN_SNOW: i32 = 21;
+    pub(crate) const HAND_TRANSLUCENT: i32 = 23;
 }
 
 /// One geometry draw of the frame, in recording order within its pass.
@@ -47,8 +50,30 @@ pub(crate) enum DrawKind {
     TerrainCutout,
     /// Translucent terrain (`gbuffers_water`), drawn after the deferred passes.
     Translucent,
+    /// Opaque and cutout actors (`gbuffers_entities`), after opaque terrain.
+    Entities,
+    /// Blended actors (`gbuffers_entities_translucent`), after the deferred passes.
+    EntitiesTranslucent,
+    /// Additive emissive actor layers (`gbuffers_spidereyes`).
+    SpiderEyes,
+    /// The enchantment foil over glinted actors (`gbuffers_armor_glint`).
+    ArmorGlint,
+    /// Block entities (`gbuffers_block`).
+    Block,
+    /// Blended block-entity layers (`gbuffers_block_translucent`), after the deferred passes.
+    BlockTranslucent,
+    /// The beacon beam (`gbuffers_beaconbeam`), after the deferred passes.
+    BeaconBeam,
+    /// The first-person hand (`gbuffers_hand`), after the `depthtex2` copy.
+    Hand,
+    /// Blended first-person geometry (`gbuffers_hand_water`), last before composite.
+    HandWater,
     ShadowSolid,
     ShadowCutout,
+    /// Actors casting shadows (`shadow_entities`).
+    ShadowEntities,
+    /// Block entities casting shadows (`shadow_block`).
+    ShadowBlock,
     ShadowTranslucent,
     /// Particles, weather, clouds, the sun and moon and the other effects.
     Effect(Effect),
@@ -62,8 +87,24 @@ pub(crate) const TRANSLUCENT_BLEND: BlendMode = BlendMode::Factors {
     dst_alpha: BlendFactor::OneMinusSrcAlpha,
 };
 
+/// Vanilla's `ADDITIVE_TRANSPARENCY` (`ONE ONE`), which the eyes layers draw with.
+pub(crate) const ADDITIVE_BLEND: BlendMode = BlendMode::Factors {
+    src_color: BlendFactor::One,
+    dst_color: BlendFactor::One,
+    src_alpha: BlendFactor::One,
+    dst_alpha: BlendFactor::One,
+};
+
+/// Vanilla's `GLINT_TRANSPARENCY`: `SRC_COLOR ONE ZERO ONE`.
+pub(crate) const GLINT_BLEND: BlendMode = BlendMode::Factors {
+    src_color: BlendFactor::SrcColor,
+    dst_color: BlendFactor::One,
+    src_alpha: BlendFactor::Zero,
+    dst_alpha: BlendFactor::One,
+};
+
 impl DrawKind {
-    pub(crate) const ALL: [DrawKind; 19] = [
+    pub(crate) const ALL: [DrawKind; 30] = [
         DrawKind::Sky,
         DrawKind::Sunset,
         DrawKind::Effect(Effect::Sun),
@@ -80,8 +121,19 @@ impl DrawKind {
         DrawKind::Effect(Effect::ParticlesAdditive),
         DrawKind::Effect(Effect::Clouds),
         DrawKind::Effect(Effect::Weather),
+        DrawKind::Entities,
+        DrawKind::EntitiesTranslucent,
+        DrawKind::SpiderEyes,
+        DrawKind::ArmorGlint,
+        DrawKind::Block,
+        DrawKind::BlockTranslucent,
+        DrawKind::BeaconBeam,
+        DrawKind::Hand,
+        DrawKind::HandWater,
         DrawKind::ShadowSolid,
         DrawKind::ShadowCutout,
+        DrawKind::ShadowEntities,
+        DrawKind::ShadowBlock,
         DrawKind::ShadowTranslucent,
     ];
 
@@ -92,8 +144,19 @@ impl DrawKind {
             DrawKind::TerrainSolid => "gbuffers_terrain_solid",
             DrawKind::TerrainCutout => "gbuffers_terrain_cutout",
             DrawKind::Translucent => "gbuffers_water",
+            DrawKind::Entities => "gbuffers_entities",
+            DrawKind::EntitiesTranslucent => "gbuffers_entities_translucent",
+            DrawKind::SpiderEyes => "gbuffers_spidereyes",
+            DrawKind::ArmorGlint => "gbuffers_armor_glint",
+            DrawKind::Block => "gbuffers_block",
+            DrawKind::BlockTranslucent => "gbuffers_block_translucent",
+            DrawKind::BeaconBeam => "gbuffers_beaconbeam",
+            DrawKind::Hand => "gbuffers_hand",
+            DrawKind::HandWater => "gbuffers_hand_water",
             DrawKind::ShadowSolid => "shadow_solid",
             DrawKind::ShadowCutout => "shadow_cutout",
+            DrawKind::ShadowEntities => "shadow_entities",
+            DrawKind::ShadowBlock => "shadow_block",
             DrawKind::ShadowTranslucent => "shadow_water",
             DrawKind::Effect(effect) => effect.program(),
         }
@@ -107,7 +170,7 @@ impl DrawKind {
         }
     }
 
-    /// The terrain category it draws; `None` for the sky and effects.
+    /// The terrain category it draws; `None` for the sky, effects and actors.
     pub(crate) fn category(self) -> Option<GeometryCategory> {
         match self {
             DrawKind::TerrainSolid | DrawKind::ShadowSolid => Some(GeometryCategory::Solid),
@@ -119,17 +182,39 @@ impl DrawKind {
         }
     }
 
+    /// Draws actors, block entities or the hand through [`super::actors`].
+    pub(crate) fn actor(self) -> bool {
+        !matches!(self, DrawKind::Sky | DrawKind::Sunset | DrawKind::Effect(_))
+            && self.category().is_none()
+    }
+
     /// Drawn in the shadow pass from the light's view.
     pub(crate) fn shadow(self) -> bool {
         matches!(
             self,
-            DrawKind::ShadowSolid | DrawKind::ShadowCutout | DrawKind::ShadowTranslucent
+            DrawKind::ShadowSolid
+                | DrawKind::ShadowCutout
+                | DrawKind::ShadowEntities
+                | DrawKind::ShadowBlock
+                | DrawKind::ShadowTranslucent
         )
     }
 
     /// Drawn after the deferred passes, on the side composite passes read.
     pub(crate) fn after_deferred(self) -> bool {
-        self == DrawKind::Translucent
+        matches!(
+            self,
+            DrawKind::Translucent
+                | DrawKind::EntitiesTranslucent
+                | DrawKind::BlockTranslucent
+                | DrawKind::BeaconBeam
+                | DrawKind::HandWater
+        )
+    }
+
+    /// The first-person hand, drawn in hand space with the hand projection.
+    pub(crate) fn hand(self) -> bool {
+        matches!(self, DrawKind::Hand | DrawKind::HandWater)
     }
 
     /// Tests depth: everything but the sky and the sky effects, which draw behind everything.
@@ -140,27 +225,43 @@ impl DrawKind {
         }
     }
 
-    /// Writes depth when it tests it, except effects Java draws without depth writes.
+    /// Writes depth when it tests it, except effects Java draws without depth writes and
+    /// Vanilla's no-depth-write layers (eyes, glint and the beacon beam's translucent shell).
     pub(crate) fn depth_write(self, settings: &EffectSettings) -> bool {
         match self {
             DrawKind::Effect(effect) => effect.depth_write(settings.rain_depth),
-            _ => self.depth(),
+            _ => {
+                self.depth()
+                    && !matches!(
+                        self,
+                        DrawKind::SpiderEyes | DrawKind::ArmorGlint | DrawKind::BeaconBeam
+                    )
+            }
         }
     }
 
     /// Its lightmap coordinates are raw `light × 16` values for `gl_TextureMatrix[1]`.
     pub(crate) fn lightmap_matrix(self) -> bool {
-        matches!(self, DrawKind::Effect(_)) || self.category().is_some()
+        matches!(self, DrawKind::Effect(_)) || self.category().is_some() || self.actor()
     }
 
-    /// Culls back faces: camera terrain and clouds do, as Java; the sky, shadows and other
-    /// effects draw both sides.
+    /// Culls back faces: camera terrain, actors and clouds do, as Java (actor two-sided faces
+    /// carry explicit back faces); the sky, block entities (whose meshes mix one- and
+    /// two-sided quads of either winding), shadows and other effects draw both sides.
     pub(crate) fn culls(self) -> bool {
         match self {
             DrawKind::Effect(effect) => effect.culls(),
             _ => matches!(
                 self,
-                DrawKind::TerrainSolid | DrawKind::TerrainCutout | DrawKind::Translucent
+                DrawKind::TerrainSolid
+                    | DrawKind::TerrainCutout
+                    | DrawKind::Translucent
+                    | DrawKind::Entities
+                    | DrawKind::EntitiesTranslucent
+                    | DrawKind::SpiderEyes
+                    | DrawKind::ArmorGlint
+                    | DrawKind::Hand
+                    | DrawKind::HandWater
             ),
         }
     }
@@ -175,26 +276,45 @@ impl DrawKind {
             DrawKind::Translucent | DrawKind::ShadowTranslucent => {
                 render_stage::TERRAIN_TRANSLUCENT
             }
+            DrawKind::Entities
+            | DrawKind::EntitiesTranslucent
+            | DrawKind::SpiderEyes
+            | DrawKind::ArmorGlint
+            | DrawKind::ShadowEntities => render_stage::ENTITIES,
+            DrawKind::Block
+            | DrawKind::BlockTranslucent
+            | DrawKind::BeaconBeam
+            | DrawKind::ShadowBlock => render_stage::BLOCK_ENTITIES,
+            DrawKind::Hand => render_stage::HAND_SOLID,
+            DrawKind::HandWater => render_stage::HAND_TRANSLUCENT,
             DrawKind::Effect(effect) => effect.render_stage(),
         }
     }
 
-    /// Iris's alpha test without an `alphaTest.<program>` rule: cutout terrain and the effects
-    /// whose shader key tests keep `alpha > 0.1`, everything else is untested.
+    /// Iris's alpha test without an `alphaTest.<program>` rule: cutout terrain, every actor
+    /// program but the beacon beam and the effects whose shader key tests keep `alpha > 0.1`,
+    /// everything else is untested.
     pub(crate) fn default_alpha_test(self) -> Option<AlphaTest> {
         if let DrawKind::Effect(effect) = self {
             return effect.default_alpha_test();
         }
-        let tested = matches!(self, DrawKind::TerrainCutout | DrawKind::ShadowCutout);
+        let tested = matches!(self, DrawKind::TerrainCutout | DrawKind::ShadowCutout)
+            || (self.actor() && self != DrawKind::BeaconBeam);
         tested.then_some(ONE_TENTH_ALPHA)
     }
 
     /// Vanilla's blending without a `blend.<program>` rule.
     pub(crate) fn default_blend(self) -> BlendMode {
         match self {
-            DrawKind::Sunset | DrawKind::Translucent | DrawKind::ShadowTranslucent => {
-                TRANSLUCENT_BLEND
-            }
+            DrawKind::Sunset
+            | DrawKind::Translucent
+            | DrawKind::ShadowTranslucent
+            | DrawKind::EntitiesTranslucent
+            | DrawKind::BlockTranslucent
+            | DrawKind::BeaconBeam
+            | DrawKind::HandWater => TRANSLUCENT_BLEND,
+            DrawKind::SpiderEyes => ADDITIVE_BLEND,
+            DrawKind::ArmorGlint => GLINT_BLEND,
             DrawKind::Effect(effect) => effect.default_blend(),
             _ => BlendMode::Off,
         }
@@ -608,6 +728,106 @@ mod tests {
             Some("shadow_water")
         );
         assert_eq!(resolve(DrawKind::ShadowSolid, &["gbuffers_basic"]), None);
+    }
+
+    #[test]
+    fn actor_draws_follow_iris_fallback_chains() {
+        let generic = [
+            "gbuffers_basic",
+            "gbuffers_textured",
+            "gbuffers_textured_lit",
+        ];
+        for (kind, expected) in [
+            (DrawKind::Entities, "gbuffers_textured_lit"),
+            (DrawKind::EntitiesTranslucent, "gbuffers_textured_lit"),
+            (DrawKind::SpiderEyes, "gbuffers_textured"),
+            (DrawKind::ArmorGlint, "gbuffers_textured"),
+            (DrawKind::Block, "gbuffers_textured_lit"),
+            (DrawKind::BlockTranslucent, "gbuffers_textured_lit"),
+            (DrawKind::BeaconBeam, "gbuffers_textured"),
+            (DrawKind::Hand, "gbuffers_textured_lit"),
+            (DrawKind::HandWater, "gbuffers_textured_lit"),
+        ] {
+            assert_eq!(resolve(kind, &generic), Some(expected), "{kind:?}");
+        }
+        let specific = [
+            "gbuffers_terrain",
+            "gbuffers_entities",
+            "gbuffers_block",
+            "gbuffers_hand",
+            "shadow",
+        ];
+        assert_eq!(
+            resolve(DrawKind::EntitiesTranslucent, &specific),
+            Some("gbuffers_entities"),
+            "entities_translucent → entities"
+        );
+        assert_eq!(
+            resolve(DrawKind::BlockTranslucent, &specific),
+            Some("gbuffers_block"),
+            "block_translucent → block"
+        );
+        assert_eq!(
+            resolve(DrawKind::HandWater, &specific),
+            Some("gbuffers_hand"),
+            "hand_water → hand"
+        );
+        assert_eq!(
+            resolve(DrawKind::Block, &["gbuffers_terrain"]),
+            Some("gbuffers_terrain"),
+            "block → terrain"
+        );
+        assert_eq!(resolve(DrawKind::ArmorGlint, &specific), None);
+        assert_eq!(resolve(DrawKind::ShadowEntities, &specific), Some("shadow"));
+        assert_eq!(resolve(DrawKind::ShadowBlock, &specific), Some("shadow"));
+        assert_eq!(
+            resolve(DrawKind::ShadowEntities, &["shadow", "shadow_entities"]),
+            Some("shadow_entities")
+        );
+    }
+
+    #[test]
+    fn actor_draws_take_vanillas_render_type_state() {
+        assert_eq!(DrawKind::Entities.default_blend(), BlendMode::Off);
+        assert_eq!(
+            DrawKind::EntitiesTranslucent.default_blend(),
+            TRANSLUCENT_BLEND
+        );
+        assert_eq!(DrawKind::SpiderEyes.default_blend(), ADDITIVE_BLEND);
+        assert_eq!(DrawKind::ArmorGlint.default_blend(), GLINT_BLEND);
+        let settings = EffectSettings::default();
+        assert!(DrawKind::Entities.depth_write(&settings) && DrawKind::Hand.depth_write(&settings));
+        assert!(
+            !DrawKind::ArmorGlint.depth_write(&settings)
+                && !DrawKind::SpiderEyes.depth_write(&settings)
+        );
+        assert!(DrawKind::ArmorGlint.depth() && !DrawKind::Sky.depth());
+        assert_eq!(
+            DrawKind::Entities.alpha_test("gbuffers_entities", &[]),
+            Some(ONE_TENTH_ALPHA)
+        );
+        assert_eq!(
+            DrawKind::BeaconBeam.alpha_test("gbuffers_beaconbeam", &[]),
+            None
+        );
+        assert_eq!(DrawKind::Entities.render_stage(), 11);
+        assert_eq!(DrawKind::Block.render_stage(), 12);
+        assert_eq!(DrawKind::Hand.render_stage(), 16);
+        assert_eq!(DrawKind::HandWater.render_stage(), 23);
+        let after: Vec<_> = DrawKind::ALL
+            .into_iter()
+            .filter(|k| k.after_deferred())
+            .collect();
+        assert_eq!(
+            after,
+            [
+                DrawKind::Translucent,
+                DrawKind::EntitiesTranslucent,
+                DrawKind::BlockTranslucent,
+                DrawKind::BeaconBeam,
+                DrawKind::HandWater
+            ]
+        );
     }
 
     #[test]

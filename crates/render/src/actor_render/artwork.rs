@@ -23,6 +23,14 @@ pub(super) struct GpuArtworkPage {
     pub multitexture: bool,
 }
 
+#[cfg(feature = "shaderpacks")]
+impl GpuArtworkPage {
+    /// The page's array texture, for single-layer views.
+    pub fn texture(&self) -> &Texture {
+        &self._texture
+    }
+}
+
 /// One immutable glint raster, replaced only when its pixels change.
 #[derive(Default)]
 pub(super) struct GpuGlint {
@@ -292,7 +300,7 @@ fn upload_page(
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
+            view_formats: crate::actor::gpu::ARTWORK_VIEW_FORMATS,
         })
     })?;
     #[cfg(test)]

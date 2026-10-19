@@ -681,6 +681,8 @@ fn pass_bind_entries<'a>(
 /// matrices and render stage) and bind groups.
 pub(crate) struct DrawBinding {
     pub uniforms: Option<wgpu::Buffer>,
+    /// This frame's packed uniform block, which actor draws patch per actor.
+    pub base: Vec<u8>,
     /// Per [`ViewTargets::parity`].
     pub groups: [Groups; 2],
 }
@@ -786,6 +788,7 @@ impl ViewBindings {
                     .map(|block| uniform_buffer(device, &program.name, block));
                 DrawBinding {
                     uniforms,
+                    base: vec![],
                     groups: Default::default(),
                 }
             })

@@ -1,7 +1,9 @@
 //! Recording the pack's geometry: the shadow pass, the sky, opaque and translucent terrain,
-//! the effects (see `effects`), the depth copies Iris's `depthtex*`/`shadowtex*` semantics
-//! need, and the Vanilla overlay that stands in for geometry the host does not draw yet.
+//! the effects (see `effects`), actors, block entities and the hand (through
+//! [`super::actors`]), the depth copies Iris's `depthtex*`/`shadowtex*` semantics need, and
+//! the Vanilla overlay that stands in for geometry the host does not draw yet.
 
+use super::actors::ActorSources;
 use super::draws::DrawKind;
 use super::effects::textures::ShaderpackEffectTextures;
 use super::effects::{Effect, EffectInputs, prepare_effects};
@@ -48,6 +50,8 @@ pub(crate) struct FrameGeometry<'a> {
     /// Eye distance within which every section is expanded (`f32::MAX` when all are); the
     /// Vanilla overlay passes nothing beyond it.
     pub overlay_radius: f32,
+    /// Actors, block entities and the hand the pack draws.
+    pub actors: ActorSources<'a>,
 }
 
 pub(crate) fn depth_attachment(
@@ -341,8 +345,9 @@ fn record_effects(
     }
 }
 
-/// The shadow pass: shadow colour clears, opaque shadow casters into `shadowtex1`, then
-/// translucent ones into `shadowtex0`, as Iris renders them.
+/// The shadow pass: shadow colour clears, opaque shadow casters (terrain, then actors and
+/// block entities) into `shadowtex1`, then translucent ones into `shadowtex0`, as Iris
+/// renders them.
 pub(crate) fn record_shadow(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -374,6 +379,9 @@ pub(crate) fn record_shadow(
             record_kind(encoder, state, geometry, kind, 0, depth, None);
         }
     }
+    for kind in [DrawKind::ShadowEntities, DrawKind::ShadowBlock] {
+        super::actors::record(encoder, state, kind, 0, depth);
+    }
     let translucent = pack.shadow_translucent
         && pack
             .draws
@@ -396,11 +404,11 @@ pub(crate) fn record_shadow(
     }
 }
 
-/// The sky (no depth) with the sun, moon and stars, then opaque terrain against a cleared
-/// depth attachment and the effects Iris draws before the deferred passes, the copy into
-/// `depthtex2` when sampled, then the copy into `depthtex1`, which also stands in for
-/// `depthtex0` until translucents draw. Solid and cutout terrain are timed as the terrain
-/// stages during aggregate profiling.
+/// The sky (no depth) with the sun, moon and stars, then opaque terrain, actors and block
+/// entities against a cleared depth attachment and the effects Iris draws before the
+/// deferred passes, the copy into `depthtex2` when sampled, the solid hand, then the copy
+/// into `depthtex1`, which also stands in for `depthtex0` until translucents draw. Solid
+/// and cutout terrain are timed as the terrain stages during aggregate profiling.
 pub(crate) fn record_opaque(
     device: &Device,
     queue: &Queue,
@@ -450,6 +458,14 @@ pub(crate) fn record_opaque(
             );
         });
     }
+    for kind in [
+        DrawKind::Entities,
+        DrawKind::SpiderEyes,
+        DrawKind::ArmorGlint,
+        DrawKind::Block,
+    ] {
+        super::actors::record(encoder, state, kind, scene_alt, Some((&view, size)));
+    }
     let before = [
         Effect::Lightning,
         Effect::DamagedBlock,
@@ -471,13 +487,21 @@ pub(crate) fn record_opaque(
     // Iris's `depthtex2` holds the depth before the hand, `depthtex1` before translucents.
     let before_hand: &[usize] = if pack.depth_sampled[2] { &[2] } else { &[] };
     copy_view_depth(device, encoder, state, before_hand, &[2]);
+    super::actors::record(
+        encoder,
+        state,
+        DrawKind::Hand,
+        scene_alt,
+        Some((&view, size)),
+    );
     // The Vanilla overlay compares against `depthtex1`, so it is always copied.
     copy_view_depth(device, encoder, state, &[1], &[0, 1]);
 }
 
-/// What Vanilla drew in front of the pack's opaque geometry, then translucent terrain after
-/// the deferred passes and the effects Iris draws after them (particles by the pack's
-/// ordering, clouds, weather), all into the geometry depth `depthtex0` reads.
+/// What Vanilla drew in front of the pack's opaque geometry, then translucent terrain,
+/// actors and block entities after the deferred passes, the effects Iris draws after them
+/// (particles by the pack's ordering, clouds, weather) and the translucent hand, all into
+/// the geometry depth `depthtex0` reads.
 pub(crate) fn record_translucent(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -501,6 +525,13 @@ pub(crate) fn record_translucent(
         Some((&view, size)),
         None,
     );
+    for kind in [
+        DrawKind::EntitiesTranslucent,
+        DrawKind::BlockTranslucent,
+        DrawKind::BeaconBeam,
+    ] {
+        super::actors::record(encoder, state, kind, translucent_alt, Some((&view, size)));
+    }
     let pack = std::sync::Arc::clone(&state.pack);
     let after = [
         Effect::Particles,
@@ -519,15 +550,22 @@ pub(crate) fn record_translucent(
         translucent_alt,
         Some((&view, size)),
     );
+    super::actors::record(
+        encoder,
+        state,
+        DrawKind::HandWater,
+        translucent_alt,
+        Some((&view, size)),
+    );
     copy_view_depth(device, encoder, state, &[], &[0]);
 }
 
 /// Composites the Vanilla scene where it is clearly nearer than the pack's opaque geometry
 /// into `colortex0` (gamma-encoded, on the side composite passes read) and the depth
 /// attachment, before translucent geometry draws over it.
-/// What the pack does not draw itself (actors, block entities and the hand) reaches the
-/// pack this way, already lit by Vanilla and without gbuffer data; Vanilla leaves out the
-/// categories and effects the pack draws (`ShaderPackDrawnCategories`, `ShaderPackEffects`).
+/// What the pack does not draw itself (block-entity portals) reaches the pack this way,
+/// already lit by Vanilla and without gbuffer data; Vanilla leaves out the categories and
+/// effects the pack draws (`ShaderPackDrawnCategories`, `ShaderPackEffects`).
 fn record_vanilla_overlay(
     device: &Device,
     encoder: &mut CommandEncoder,

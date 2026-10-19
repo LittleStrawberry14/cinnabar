@@ -1,0 +1,308 @@
+//! The skinning kernel against an original one-triangle rig on a real device.
+
+use super::skin::{
+    SKIN_PARAMS_BYTES, SkinJob, SkinParams, output_layout, rig_layout, skin_shader_source,
+};
+use crate::gpu_snapshot::Gpu;
+use crate::shaderpack::geometry::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};
+use bevy::math::Vec3;
+use render_model::{ACTOR_GPU_INSTANCE_WORDS, ACTOR_RIG_VERTEX_WORDS};
+use wgpu::util::DeviceExt;
+
+const CAMERA: Vec3 = Vec3::new(1.0, 2.0, 3.0);
+const ACTOR: Vec3 = Vec3::new(10.0, 64.0, -5.0);
+const ENTITY_ID: i32 = 42;
+const BLOCK_LIGHT: u32 = 3;
+const SKY_LIGHT: u32 = 12;
+
+/// Rig-local corners of one triangle in the XY plane, facing +Z, with front and back UVs.
+const CORNERS: [([f32; 3], [f32; 2], [f32; 2]); 3] = [
+    ([0.0, 0.0, 0.0], [0.0, 0.0], [0.5, 0.0]),
+    ([1.0, 0.0, 0.0], [0.25, 0.0], [0.75, 0.0]),
+    ([0.0, 1.0, 0.0], [0.0, 0.25], [0.5, 0.25]),
+];
+
+fn layout(
+    gpu: &Gpu,
+    descriptor: &bevy::render::render_resource::BindGroupLayoutDescriptor,
+) -> wgpu::BindGroupLayout {
+    gpu.device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &descriptor.entries,
+        })
+}
+
+/// Skins the fixture rig at `ACTOR` and returns the kernel's Iris vertex words.
+fn skin(name: &str) -> Option<Vec<u32>> {
+    let gpu = Gpu::for_fixture(name)?;
+    let mut instance = vec![0_u32; ACTOR_GPU_INSTANCE_WORDS];
+    // `world_from_actor` rows: a translation to ACTOR.
+    for (row, translation) in ACTOR.to_array().into_iter().enumerate() {
+        instance[row * 4 + row] = 1.0_f32.to_bits();
+        instance[row * 4 + 3] = translation.to_bits();
+    }
+    // Bone bases 0, span 0, partial tick 1, no uv offset and unit uv scale.
+    instance[16] = 1.0_f32.to_bits();
+    instance[22] = 1.0_f32.to_bits();
+    instance[23] = 1.0_f32.to_bits();
+    let mut vertices = vec![0_u32; CORNERS.len() * ACTOR_RIG_VERTEX_WORDS];
+    for (index, (position, uv, back_uv)) in CORNERS.into_iter().enumerate() {
+        let base = index * ACTOR_RIG_VERTEX_WORDS;
+        let floats = [
+            position[0],
+            position[1],
+            position[2],
+            0.0,
+            0.0,
+            1.0,
+            uv[0],
+            uv[1],
+            back_uv[0],
+            back_uv[1],
+        ];
+        for (offset, value) in floats.into_iter().enumerate() {
+            vertices[base + offset] = value.to_bits();
+        }
+        vertices[base + 10] = 0;
+    }
+    let identity_bone: Vec<u32> = [
+        [1.0_f32, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ]
+    .into_iter()
+    .flatten()
+    .map(f32::to_bits)
+    .collect();
+    let job = SkinJob {
+        instance: 0,
+        first_output: 0,
+        vertex_count: 3,
+        flags: 0,
+        light: BLOCK_LIGHT | (SKY_LIGHT << 4),
+        colour: u32::MAX,
+        block_id: ENTITY_ID,
+        pad: 0,
+    };
+    let params = SkinParams {
+        camera: [CAMERA.x, CAMERA.y, CAMERA.z, 0.0],
+        counts: [1, 0, 0, 0],
+    };
+    let storage = |words: &[u32]| {
+        gpu.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(words),
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+    };
+    let sources = [
+        storage(&instance),
+        storage(&vertices),
+        storage(&[0, 3]),
+        storage(&identity_bone),
+        storage(&identity_bone),
+    ];
+    let jobs = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&job),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let output_bytes = u64::from(job.output_vertices() * IRIS_VERTEX_WORDS * 4);
+    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: output_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let uniform = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+    assert_eq!(std::mem::size_of::<SkinParams>() as u64, SKIN_PARAMS_BYTES);
+
+    let source = crate::shader_source::composed_prepared_with(
+        &skin_shader_source(include_str!("skin.wesl")),
+        &[],
+        Vec::new(),
+    );
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    let rig_layout = layout(&gpu, &rig_layout());
+    let output_layout = layout(&gpu, &output_layout());
+    let pipeline_layout = gpu
+        .device
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&rig_layout), Some(&output_layout)],
+            immediate_size: 0,
+        });
+    let pipeline = gpu
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("skin_rig"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let source_entries: Vec<_> = sources
+        .iter()
+        .enumerate()
+        .map(|(binding, buffer)| wgpu::BindGroupEntry {
+            binding: binding as u32,
+            resource: buffer.as_entire_binding(),
+        })
+        .collect();
+    let source_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &rig_layout,
+        entries: &source_entries,
+    });
+    let output_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &output_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: jobs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: output.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform.as_entire_binding(),
+            },
+        ],
+    });
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: output_bytes,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &source_group, &[]);
+        pass.set_bind_group(1, &output_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_bytes);
+    gpu.queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    readback
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    rx.recv().unwrap().unwrap();
+    let bytes = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("readback buffer is mapped")
+        .to_vec();
+    Some(bytemuck::cast_slice(&bytes).to_vec())
+}
+
+fn half(bits: u32) -> f32 {
+    half_to_f32(bits as u16)
+}
+
+/// IEEE half-precision bits to `f32` for the lightmap values the kernel writes.
+fn half_to_f32(bits: u16) -> f32 {
+    let exponent = i32::from((bits >> 10) & 0x1f);
+    let mantissa = f32::from(bits & 0x3ff);
+    let magnitude = if exponent == 0 {
+        mantissa * 2f32.powi(-24)
+    } else {
+        (1.0 + mantissa / 1024.0) * 2f32.powi(exponent - 15)
+    };
+    if bits & 0x8000 != 0 {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+/// An entity triangle lands camera-relative with Java's entity attributes, and its
+/// two-sided back face reverses the winding, flips the normal and samples the back UVs.
+#[test]
+fn a_skinned_actor_triangle_writes_iris_entity_vertices_and_its_back_face() {
+    let Some(words) = skin("shader-pack actor skinning") else {
+        return;
+    };
+    let vertex = |index: usize| &words[index * IRIS_VERTEX_WORDS as usize..];
+    let position = |index: usize| {
+        let v = vertex(index);
+        let at = POSITION.word as usize;
+        Vec3::new(
+            f32::from_bits(v[at]),
+            f32::from_bits(v[at + 1]),
+            f32::from_bits(v[at + 2]),
+        )
+    };
+    let uv = |index: usize| {
+        let word = vertex(index)[UV0.word as usize];
+        [
+            (word & 0xffff) as f32 / 65535.0,
+            (word >> 16) as f32 / 65535.0,
+        ]
+    };
+    let normal = |index: usize| {
+        vertex(index)[NORMAL.word as usize]
+            .to_le_bytes()
+            .map(|b| b as i8)
+    };
+    let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3;
+    for (index, (local, front_uv, _)) in CORNERS.into_iter().enumerate() {
+        let expected = Vec3::from_array(local) + ACTOR - CAMERA;
+        assert!(
+            position(index).abs_diff_eq(expected, 1e-4),
+            "corner {index}: {} vs {expected}",
+            position(index)
+        );
+        assert!(close(uv(index), front_uv), "front uv {index}");
+        assert_eq!(normal(index), [0, 0, 127, 0]);
+        let v = vertex(index);
+        let ids = v[BLOCK_ID.word as usize];
+        assert_eq!((ids & 0xffff) as u16 as i16, ENTITY_ID as i16);
+        assert_eq!(
+            (ids >> 16) as u16 as i16,
+            -1,
+            "entities read Iris's BLOCK_RENDER_TYPE in mc_Entity.y"
+        );
+        let light = v[LIGHTMAP.word as usize];
+        assert_eq!(
+            [half(light & 0xffff), half(light >> 16)],
+            [(BLOCK_LIGHT * 16) as f32, (SKY_LIGHT * 16) as f32],
+            "raw Java lightmap coordinates"
+        );
+    }
+    // Back face: corners 0, 2, 1 with the back UV map and the reversed normal.
+    for (slot, corner) in [0_usize, 2, 1].into_iter().enumerate() {
+        let back = 3 + slot;
+        let (local, _, back_uv) = CORNERS[corner];
+        assert!(
+            position(back).abs_diff_eq(Vec3::from_array(local) + ACTOR - CAMERA, 1e-4),
+            "back corner {slot}"
+        );
+        assert!(close(uv(back), back_uv), "back uv {slot}");
+        assert_eq!(normal(back), [0, 0, -127, 0]);
+    }
+}
