@@ -103,7 +103,6 @@ async fn receive<S: BatchPhase>(
         return Err(io::Error::other("native client sent a dropped batch"));
     };
     packets
-        .into_iter()
         .map(|bytes| {
             let mut reader = wire::Reader::from_shared(&bytes);
             let header =

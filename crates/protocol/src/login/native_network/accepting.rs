@@ -52,9 +52,12 @@ impl NativeAcceptingIo {
         let handshake =
             ServerHandshake::new(key, Some(transport_key), options, deadline, Instant::now())
                 .map_err(|_| denied())?;
-        let mut limits = BatchLimits::default();
-        // The actual Go friend listener retains its incoming count limit.
-        limits.max_incoming_packets = Some(limits.max_packets);
+        let defaults = BatchLimits::default();
+        // Accepted sessions retain their incoming packet-count limit.
+        let limits = BatchLimits {
+            max_incoming_packets: Some(defaults.max_packets),
+            ..defaults
+        };
         Ok((
             Self {
                 connection: Connection::with_limits(Transport::from_accepted(accepted), limits),
