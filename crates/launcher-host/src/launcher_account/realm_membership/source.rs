@@ -105,7 +105,7 @@ impl Prepared {
 
 impl Loaded {
     /// Releases presentation only while the original verified native account remains current.
-    pub(super) fn into_current(self) -> Result<Reply, ()> {
+    pub(super) async fn into_current(self) -> Result<Reply, ()> {
         match self {
             Self::Core(result) => Ok(Reply {
                 card: realm_card(&result.realm),
@@ -115,6 +115,7 @@ impl Loaded {
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             Self::Native(result) => result
                 .into_current()
+                .await
                 .map(|(code, card)| Reply {
                     code,
                     card,

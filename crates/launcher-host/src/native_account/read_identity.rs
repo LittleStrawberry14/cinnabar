@@ -26,30 +26,52 @@ impl ReadIdentity {
 
     /// Rechecks selection after asynchronous work without authenticating or replacing its proof.
     pub(super) fn current(&self) -> bool {
-        let Ok(lease) = self.account.store.try_native_lease() else {
-            return false;
+        self.current_status().unwrap_or(false)
+    }
+
+    /// Retains a completed result through contention; its caller owns cancellation and the cutoff.
+    pub(super) async fn wait_current(&self) -> bool {
+        loop {
+            if let Some(current) = self.current_status() {
+                return current;
+            }
+            tokio::time::sleep(LEASE_RETRY).await;
+        }
+    }
+
+    /// An unavailable lease or owner is not evidence that its verified identity was replaced.
+    fn current_status(&self) -> Option<bool> {
+        let lease = match self.account.store.try_native_lease() {
+            Ok(lease) => lease,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return None,
+            Err(_) => return Some(false),
         };
-        let Ok(state) = self.account.state.try_lock() else {
-            return false;
+        let state = match self.account.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+            Err(std::sync::TryLockError::Poisoned(_)) => return Some(false),
         };
+        if state.busy {
+            return None;
+        }
         let Some(cached) = state.cached.as_ref() else {
-            return false;
+            return Some(false);
         };
-        !state.busy
-            && cached.generation == self.generation
-            && lease.generation() == self.generation
-            && cached.binding == lease.binding()
-            && lease
-                .selected_id()
-                .is_none_or(|selected| selected == self.xuid)
-            && self
-                .account
-                .selected_id
-                .as_deref()
-                .is_none_or(|selected| lease.selected_id() == Some(selected))
-            && cached
-                .identity
-                .as_ref()
-                .is_some_and(|identity| identity.current_credential && identity.xuid == self.xuid)
+        Some(
+            cached.generation == self.generation
+                && lease.generation() == self.generation
+                && cached.binding == lease.binding()
+                && lease
+                    .selected_id()
+                    .is_none_or(|selected| selected == self.xuid)
+                && self
+                    .account
+                    .selected_id
+                    .as_deref()
+                    .is_none_or(|selected| lease.selected_id() == Some(selected))
+                && cached.identity.as_ref().is_some_and(|identity| {
+                    identity.current_credential && identity.xuid == self.xuid
+                }),
+        )
     }
 }

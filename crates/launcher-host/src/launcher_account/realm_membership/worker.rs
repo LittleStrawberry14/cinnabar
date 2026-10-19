@@ -65,7 +65,20 @@ pub(super) async fn run(
                 };
                 match result {
                     Some(Ok(Ok(loaded))) if tokio::time::Instant::now() < deadline => {
-                        loaded.into_current()
+                        match wait(
+                            tokio::time::timeout_at(deadline, loaded.into_current()),
+                            &shared,
+                            &selected,
+                            &mut requests,
+                            &mut pending,
+                            &mut changed,
+                        )
+                        .await
+                        {
+                            Some(Ok(result)) if tokio::time::Instant::now() < deadline => result,
+                            Some(_) => Err(()),
+                            None => continue,
+                        }
                     }
                     Some(_) => Err(()),
                     None => continue,

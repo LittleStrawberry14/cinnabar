@@ -18,9 +18,12 @@ pub(crate) struct RealmMembershipResult {
 }
 
 impl RealmMembershipResult {
-    /// Rejects a replaced account before publishing the service's card to its original UI flow.
-    pub(crate) fn into_current(self) -> Option<(String, MenuRealmCard)> {
-        self.identity.current().then_some((self.code, self.realm))
+    /// Waits through account contention under the worker's original cutoff, without repeating the service call.
+    pub(crate) async fn into_current(self) -> Option<(String, MenuRealmCard)> {
+        self.identity
+            .wait_current()
+            .await
+            .then_some((self.code, self.realm))
     }
 }
 
@@ -132,7 +135,7 @@ mod tests {
             .unwrap(),
         };
         let contender = Arc::clone(&account).acquire_verified().await.unwrap();
-        let mut publishing = Box::pin(async move { result.into_current() });
+        let mut publishing = Box::pin(result.into_current());
         assert!(
             publishing
                 .as_mut()
@@ -147,5 +150,54 @@ mod tests {
         assert_eq!(code, "fixture");
         assert_eq!(realm.name, "Confirmed");
         assert!(realm.member);
+    }
+
+    /// A busy owner may return a different identity; waiting must still reject that result.
+    #[tokio::test(start_paused = true)]
+    async fn native_realm_membership_publication_rechecks_identity_after_contention() {
+        let (_directory, account) = super::super::super::profile::tests::account();
+        let mut original = Arc::clone(&account).acquire_verified().await.unwrap();
+        let identity = ReadIdentity::capture(&original);
+        original.persist().unwrap();
+        drop(original);
+        let mut contender = account.begin().unwrap();
+        let mut publishing = Box::pin(identity.wait_current());
+        assert!(
+            publishing
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending(),
+            "an acquired owner has temporarily taken the cached identity"
+        );
+        contender
+            .cached
+            .as_mut()
+            .unwrap()
+            .identity
+            .as_mut()
+            .unwrap()
+            .xuid = "456".into();
+        drop(contender);
+        assert!(!publishing.await);
+    }
+
+    /// The caller's original cutoff still bounds a real account wait without canceling its owner.
+    #[tokio::test(start_paused = true)]
+    async fn native_realm_membership_publication_keeps_the_original_cutoff() {
+        let (_directory, account) = super::super::super::profile::tests::account();
+        let mut original = Arc::clone(&account).acquire_verified().await.unwrap();
+        let identity = ReadIdentity::capture(&original);
+        original.persist().unwrap();
+        drop(original);
+        let contender = account.begin().unwrap();
+        let deadline = tokio::time::Instant::now() + LEASE_RETRY;
+        assert!(
+            tokio::time::timeout_at(deadline, identity.wait_current())
+                .await
+                .is_err()
+        );
+        assert!(account.state.lock().unwrap().busy);
+        drop(contender);
+        assert!(identity.current());
     }
 }
