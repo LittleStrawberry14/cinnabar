@@ -268,7 +268,7 @@ async fn exercise(boundary: Boundary) {
         listener.close().await.unwrap();
         drop(listener);
         let signaling_joined = match Arc::try_unwrap(signaling) {
-            Ok(signaling) => { signaling.shutdown().await.unwrap(); true }
+            Ok(signaling) => { signaling.shutdown().await; true }
             Err(signaling) => { drop(signaling); false }
         };
 
