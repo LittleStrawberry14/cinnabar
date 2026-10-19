@@ -120,19 +120,19 @@ fn local_http_requires_numeric_loopback_and_a_signed_answer() {
         "127.0.0.1:0",
     ] {
         assert!(
-            crate::NativeConnectionTarget {
-                address: address.into(),
-                transport: crate::NativeTransport::LocalNetherNetHttp
-            }
+            crate::NativeConnectionTarget::new(
+                address.into(),
+                crate::NativeTransport::LocalNetherNetHttp
+            )
             .local_http_address()
             .is_err()
         );
     }
     for address in ["127.0.0.1:19132", "[::1]:19132"] {
-        let selected = crate::NativeConnectionTarget {
-            address: address.into(),
-            transport: crate::NativeTransport::LocalNetherNetHttp,
-        };
+        let selected = crate::NativeConnectionTarget::new(
+            address.into(),
+            crate::NativeTransport::LocalNetherNetHttp,
+        );
         assert_eq!(selected.local_http_address().unwrap().to_string(), address);
     }
     let credentials = Credentials::new(None).unwrap();

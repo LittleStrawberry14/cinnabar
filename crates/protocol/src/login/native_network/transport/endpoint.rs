@@ -54,7 +54,8 @@ async fn connect_resolved(
                         .map(Transport::NetherNetLan),
                     NativeTransport::NetherNetMessaging
                     | NativeTransport::NetherNetLegacy
-                    | NativeTransport::LocalNetherNetHttp => Err(io::Error::new(
+                    | NativeTransport::LocalNetherNetHttp
+                    | NativeTransport::LocalNetherNetLan => Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "messaging handoff cannot resolve direct endpoints",
                     )),

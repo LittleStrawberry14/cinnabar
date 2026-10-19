@@ -567,6 +567,58 @@ fn bds_targets_use_lan_discovery_when_the_server_advertises() {
     assert_eq!(target_for(&world, &lan).transport, Transport::RakNet);
 }
 
+/// The actual manager handoff retains the selected BDS level, rather than its HTTP projection.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+#[test]
+fn native_local_bds_lan_selection_uses_the_original_process_discovery_endpoint() {
+    let address = "127.0.0.1:7552";
+    let runner = Arc::new(FakeRunner {
+        lan: Some(address.into()),
+        ..Default::default()
+    });
+    let fixture = fixture(|parts, dir| {
+        let process: Arc<dyn Runner> = runner.clone();
+        parts.runners.bds = Some(process);
+        parts.setup = Some(provisioner(dir, LINUX));
+    });
+    let manager = &fixture.manager;
+    let world = manager
+        .create(&NewWorld {
+            name: "selected-local-bds".into(),
+            backend: Some(Backend::Bds),
+            ..Default::default()
+        })
+        .unwrap();
+    manager.accept_eula().unwrap();
+    manager.open(&world.id, None).unwrap();
+    wait_for(manager, WorldState::Running);
+    let selection = manager.native_local_world(&world.id).unwrap();
+    let target = selection.connection_target().unwrap();
+    assert_eq!(
+        target.transport,
+        protocol::NativeTransport::LocalNetherNetLan
+    );
+    assert_eq!(target.address, address);
+    assert_eq!(
+        target.local_lan_route().unwrap(),
+        (
+            address.parse().unwrap(),
+            world.id.as_str(),
+            Duration::from_millis(u64::from(bridge::contract::LOCAL_LAN_DISCOVERY_TIMEOUT_MS)),
+        )
+    );
+    assert_eq!(
+        manager.core_report().target.unwrap().transport,
+        Transport::NetherNetLan
+    );
+    selection.request_close();
+    wait_for(manager, WorldState::Idle);
+    assert_eq!(
+        selection.connection_target().unwrap_err().kind(),
+        std::io::ErrorKind::NotConnected
+    );
+}
+
 /// The unavailable reason reaches the status, and a Retry that finds Docker flips the default.
 #[test]
 fn a_redetect_that_finds_docker_flips_the_default_backend() {

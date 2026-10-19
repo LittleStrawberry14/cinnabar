@@ -21,6 +21,8 @@ pub enum NativeTransport {
     NetherNetLegacy,
     /// HTTP/full-ICE signaling to an explicitly selected numeric loopback world process.
     LocalNetherNetHttp,
+    /// Offline LAN admission to one selected level on an original loopback world process.
+    LocalNetherNetLan,
 }
 
 /// An explicit Player Messaging route, distinct from a discovery listing.
@@ -57,10 +59,7 @@ impl NativeMessagingTarget {
 
     /// Produces the sole endpoint eligible for this prepared account handoff.
     pub fn connection_target(&self) -> NativeConnectionTarget {
-        NativeConnectionTarget {
-            address: self.peer.to_string(),
-            transport: NativeTransport::NetherNetMessaging,
-        }
+        NativeConnectionTarget::new(self.peer.to_string(), NativeTransport::NetherNetMessaging)
     }
 
     /// Borrows the joined-session admission challenge only for signed client data.
@@ -72,6 +71,40 @@ impl NativeMessagingTarget {
 #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    /// Local policy cannot be fabricated or redirected by changing the public endpoint projection.
+    #[test]
+    fn selected_local_lan_rejects_invalid_or_changed_route_capabilities() {
+        use std::{net::SocketAddr, time::Duration};
+        let budget = NATIVE_JOIN_TIMEOUT;
+        for value in ["192.0.2.1:1234", "[::1]:1234", "127.0.0.1:0"] {
+            assert!(
+                NativeConnectionTarget::local_lan(value.parse().unwrap(), "World".into(), budget)
+                    .is_err()
+            );
+        }
+        let address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
+        assert!(NativeConnectionTarget::local_lan(address, String::new(), budget).is_err());
+        assert!(
+            NativeConnectionTarget::local_lan(address, "World".into(), Duration::ZERO).is_err()
+        );
+        assert!(
+            NativeConnectionTarget::new(address.to_string(), NativeTransport::LocalNetherNetLan)
+                .validate()
+                .is_err()
+        );
+        let original = NativeConnectionTarget::local_lan(address, "World".into(), budget).unwrap();
+        assert_eq!(
+            original.local_lan_route().unwrap(),
+            (address, "World", budget)
+        );
+        let mut changed = original.clone();
+        changed.address = "127.0.0.1:4321".into();
+        assert!(changed.validate().is_err());
+        let mut changed = original;
+        changed.transport = NativeTransport::RakNet;
+        assert!(changed.validate().is_err());
+    }
 
     /// A listing cannot supply an absent peer/challenge or an unbounded join handoff.
     #[test]
@@ -102,9 +135,83 @@ pub struct NativeConnectionTarget {
     pub address: String,
     /// Transport chosen for this endpoint.
     pub transport: NativeTransport,
+    local_lan: Option<LocalLanRoute>,
+}
+
+#[derive(Debug, Clone)]
+struct LocalLanRoute {
+    address: std::net::SocketAddr,
+    level: String,
+    discovery_budget: std::time::Duration,
 }
 
 impl NativeConnectionTarget {
+    /// Retains an explicit direct or service endpoint without resolving or changing its transport.
+    pub fn new(address: String, transport: NativeTransport) -> Self {
+        Self {
+            address,
+            transport,
+            local_lan: None,
+        }
+    }
+
+    /// Binds local offline discovery to the original process endpoint and selected level.
+    /// Callers still own process lifetime; this capability cannot follow another endpoint.
+    pub fn local_lan(
+        address: std::net::SocketAddr,
+        level: String,
+        discovery_budget: std::time::Duration,
+    ) -> std::io::Result<Self> {
+        if !address.is_ipv4()
+            || !address.ip().is_loopback()
+            || address.port() == 0
+            || level.is_empty()
+            || discovery_budget.is_zero()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "local LAN requires a selected level and IPv4 loopback endpoint",
+            ));
+        }
+        Ok(Self {
+            address: address.to_string(),
+            transport: NativeTransport::LocalNetherNetLan,
+            local_lan: Some(LocalLanRoute {
+                address,
+                level,
+                discovery_budget,
+            }),
+        })
+    }
+
+    /// Validates the original selected route before discovery; public projections grant no new route.
+    pub fn local_lan_route(
+        &self,
+    ) -> std::io::Result<(std::net::SocketAddr, &str, std::time::Duration)> {
+        if self.transport == NativeTransport::LocalNetherNetLan
+            && let Some(route) = &self.local_lan
+            && self.address == route.address.to_string()
+            && route.address.is_ipv4()
+            && route.address.ip().is_loopback()
+            && route.address.port() != 0
+            && !route.level.is_empty()
+        {
+            return Ok((route.address, &route.level, route.discovery_budget));
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "local LAN selection changed or is unavailable",
+        ))
+    }
+
+    /// Rejects a changed local projection before any native credential or transport work.
+    pub fn validate(&self) -> std::io::Result<()> {
+        if self.local_lan.is_some() || self.transport == NativeTransport::LocalNetherNetLan {
+            self.local_lan_route()?;
+        }
+        Ok(())
+    }
+
     /// Checks only local HTTP endpoint syntax; callers still own process/account admission.
     ///
     /// # Errors

@@ -211,10 +211,8 @@ async fn default_urls() {
     };
     let client = async {
         let settings = crate::LoginSettings::default();
-        let target = NativeConnectionTarget {
-            address: address.to_string(),
-            transport: NativeTransport::NetherNetLan,
-        };
+        let target =
+            NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
         let (attempts, mut observed) = mpsc::channel(ids.len());
         let joining = HTTP_ATTEMPTS.scope(
             attempts,

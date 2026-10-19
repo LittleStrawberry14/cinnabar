@@ -118,10 +118,8 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
             peer.session.closed().await;
         };
         let client = async {
-            let target = NativeConnectionTarget {
-                address: address.to_string(),
-                transport: NativeTransport::NetherNetLan,
-            };
+            let target =
+                NativeConnectionTarget::new(address.to_string(), NativeTransport::NetherNetLan);
             let transport = transport::Transport::connect(
                 &target,
                 None,

@@ -47,6 +47,12 @@ impl SessionCompanion for LocalWorldCompanion {
         )>,
     > {
         let target = self.selection.connection_target()?;
+        if target.transport == protocol::NativeTransport::LocalNetherNetLan {
+            target.local_lan_route()?;
+            self.account = None;
+            self.claims = None;
+            return Ok(None);
+        }
         let Some(account) = self.account.take() else {
             return Ok(None);
         };

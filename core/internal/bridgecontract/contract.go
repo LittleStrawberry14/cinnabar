@@ -203,6 +203,8 @@ const (
 	MethodPresence = "presence.v1"
 	// MethodLocalWorld: Control method for local world.
 	MethodLocalWorld = "local_world.v1"
+	// LocalLANDiscoveryTimeoutMS: Original discovery budget for a selected local BDS LAN level.
+	LocalLANDiscoveryTimeoutMS = 8000
 	// MethodWorldInvite: Control method for world invite.
 	MethodWorldInvite = "world_invite.v1"
 	// RPCParseError: Control error code for parse error.

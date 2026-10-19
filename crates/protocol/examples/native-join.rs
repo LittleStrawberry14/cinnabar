@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ..LoginSettings::default()
     };
     let (mut session, packs) = LoginSequence::connect_native(
-        &NativeConnectionTarget { address, transport },
+        &NativeConnectionTarget::new(address, transport),
         SessionLogin {
             display_name: "NativeExample",
             client_random_id: ClientRandomId::new(1).expect("nonzero constant"),

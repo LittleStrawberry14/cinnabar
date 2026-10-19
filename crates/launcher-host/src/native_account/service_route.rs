@@ -81,18 +81,18 @@ impl ResolvedServiceRoute {
     /// Consumes the already-validated transport projection after its original response is retained.
     pub(super) fn into_target(self) -> protocol::NativeConnectionTarget {
         match self.recipient {
-            Some(Recipient::Messaging(peer)) => protocol::NativeConnectionTarget {
-                address: peer.to_string(),
-                transport: protocol::NativeTransport::NetherNetMessaging,
-            },
-            Some(Recipient::Legacy(_)) => protocol::NativeConnectionTarget {
-                address: self.address,
-                transport: protocol::NativeTransport::NetherNetLegacy,
-            },
-            None => protocol::NativeConnectionTarget {
-                address: self.address,
-                transport: protocol::NativeTransport::RakNet,
-            },
+            Some(Recipient::Messaging(peer)) => protocol::NativeConnectionTarget::new(
+                peer.to_string(),
+                protocol::NativeTransport::NetherNetMessaging,
+            ),
+            Some(Recipient::Legacy(_)) => protocol::NativeConnectionTarget::new(
+                self.address,
+                protocol::NativeTransport::NetherNetLegacy,
+            ),
+            None => protocol::NativeConnectionTarget::new(
+                self.address,
+                protocol::NativeTransport::RakNet,
+            ),
         }
     }
 }

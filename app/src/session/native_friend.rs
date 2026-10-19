@@ -24,9 +24,9 @@ pub(super) fn begin(
         address: String::new(),
         auth_cache: None,
         local_world: false,
-        stage: JoinStage::Native(protocol::NativeConnectionTarget {
-            address: String::new(),
-            transport: protocol::NativeTransport::NetherNetMessaging,
-        }),
+        stage: JoinStage::Native(protocol::NativeConnectionTarget::new(
+            String::new(),
+            protocol::NativeTransport::NetherNetMessaging,
+        )),
     });
 }

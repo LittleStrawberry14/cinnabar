@@ -434,6 +434,8 @@ pub(crate) struct FakeRunner {
     pub gate: Option<Receiver<()>>,
     pub error: Option<fn() -> WorldError>,
     pub can_pause: Option<bool>,
+    /// The original discovery endpoint reported by each started instance.
+    pub lan: Option<String>,
     pub made: Mutex<Vec<Arc<FakeInstance>>>,
     /// Passed to each instance as its save.
     pub save: Option<Receiver<()>>,
@@ -506,6 +508,7 @@ impl Runner for FakeRunner {
         let instance = Arc::new(FakeInstance {
             save: self.save.clone(),
             cleanup: self.cleanup.clone(),
+            lan: self.lan.clone(),
             ..FakeInstance::new(self.can_pause.unwrap_or(true))
         });
         made.push(Arc::clone(&instance));
