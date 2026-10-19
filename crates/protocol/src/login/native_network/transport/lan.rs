@@ -276,3 +276,6 @@ fn timed_out() -> io::Error {
         "native local LAN discovery or join timed out",
     )
 }
+
+#[cfg(test)]
+mod tests;

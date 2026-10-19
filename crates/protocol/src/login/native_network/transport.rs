@@ -99,7 +99,7 @@ impl Transport {
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "local HTTP requires its original Login proof",
+                "local transport requires its original selection and Login policy",
             ));
         }
         if target.transport == NativeTransport::NetherNetMessaging {

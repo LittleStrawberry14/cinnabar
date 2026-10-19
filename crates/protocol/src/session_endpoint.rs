@@ -85,6 +85,40 @@ impl NativeMessagingTarget {
 mod tests {
     use super::*;
 
+    /// Local policy cannot be fabricated or redirected by changing the public endpoint projection.
+    #[test]
+    fn selected_local_lan_rejects_invalid_or_changed_route_capabilities() {
+        use std::{net::SocketAddr, time::Duration};
+        let budget = NATIVE_JOIN_TIMEOUT;
+        for value in ["192.0.2.1:1234", "[::1]:1234", "127.0.0.1:0"] {
+            assert!(
+                NativeConnectionTarget::local_lan(value.parse().unwrap(), "World".into(), budget)
+                    .is_err()
+            );
+        }
+        let address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
+        assert!(NativeConnectionTarget::local_lan(address, String::new(), budget).is_err());
+        assert!(
+            NativeConnectionTarget::local_lan(address, "World".into(), Duration::ZERO).is_err()
+        );
+        assert!(
+            NativeConnectionTarget::new(address.to_string(), NativeTransport::LocalNetherNetLan)
+                .validate()
+                .is_err()
+        );
+        let original = NativeConnectionTarget::local_lan(address, "World".into(), budget).unwrap();
+        assert_eq!(
+            original.local_lan_route().unwrap(),
+            (address, "World", budget)
+        );
+        let mut changed = original.clone();
+        changed.address = "127.0.0.1:4321".into();
+        assert!(changed.validate().is_err());
+        let mut changed = original;
+        changed.transport = NativeTransport::RakNet;
+        assert!(changed.validate().is_err());
+    }
+
     /// A listing cannot supply an absent peer/challenge or an unbounded join handoff.
     #[test]
     fn messaging_target_requires_an_explicit_finite_join_challenge() {

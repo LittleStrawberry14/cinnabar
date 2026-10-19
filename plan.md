@@ -107,11 +107,11 @@ Local BDS HTTP now uses the same HTTP/full-ICE adapter and original loopback
 family, without DNS, proxy or redirects. SDP and Login retain one original proof;
 selected account validity is unchanged and signed-out play uses self-signed SDP.
 The original ready receiver/Inbox/close owner is reused, with no second I/O loop.
-This source addition requires owning execution and actual BDS qualification. BDS
+This source addition requires owning execution and actual BDS qualification.
 Local BDS LAN source now retains the original selected level and IPv4 loopback discovery
 endpoint, requires advertised offline admission and the actual Login nonce, and uses the
 existing LAN transport with no HTTP substitution. This source remains incomplete pending
-owning controls, coherent dependency checks and real selected-world acceptance. Generic
+execution of the new controls, coherent dependency checks and real selected-world acceptance. Generic
 authenticated LAN and friend-session LAN remain separate gaps; the pinned Go friend
 signaling selector rejects LAN rather than defining an online friend route.
 
