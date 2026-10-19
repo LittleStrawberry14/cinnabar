@@ -260,3 +260,5 @@ async fn initialized_world_peer_survives_same_key_mint_and_fresh_turn_on_origina
     .await
     .expect("finite original-host renewal and actual peer fixture stalled");
 }
+
+mod expiry;

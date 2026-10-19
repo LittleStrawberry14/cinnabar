@@ -38,6 +38,8 @@ pub struct ActiveHostedWorld {
     visitor_limit: usize,
     invitations: mpsc::Receiver<Invite>,
     invitation: HostedInvitation,
+    #[cfg(test)]
+    renewal_committed: Option<oneshot::Sender<()>>,
 }
 
 /// Accepting and invitation capability ended; the same local and remote owners remain reachable.
@@ -90,6 +92,8 @@ impl NativeHostedWorld {
             visitor_limit,
             invitations,
             invitation: HostedInvitation(send),
+            #[cfg(test)]
+            renewal_committed: None,
         })
     }
 }
