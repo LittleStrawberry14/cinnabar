@@ -33,21 +33,36 @@ impl MessagingAdmission {
         verifier: Arc<NativeTokenVerifier>,
         expires: Instant,
     ) -> io::Result<Self> {
-        ensure_current(expires, Instant::now())?;
-        let identity = TokenIdentity::new(key, token.to_owned(), clock.now(Instant::now())?)
-            .map_err(|_| super::verifier::rejected())?;
+        let (identity, trust) = identity_policy(key, token, clock, verifier, expires)?;
         Ok(Self {
             prepared,
             target,
-            identity: Arc::new(ServiceIdentity {
-                identity,
-                clock,
-                expires,
-            }),
-            trust: TokenTrust::Provider(Arc::new(PeerVerifier { verifier, clock })),
+            identity,
+            trust,
             expires,
         })
     }
+}
+
+/// Shares one qualified key and calibrated policy between connecting and accepting transport owners.
+pub(super) fn identity_policy(
+    key: Arc<SigningKey>,
+    token: &str,
+    clock: NativeServiceClock,
+    verifier: Arc<NativeTokenVerifier>,
+    expires: Instant,
+) -> io::Result<(Arc<dyn SdpIdentity>, TokenTrust)> {
+    ensure_current(expires, Instant::now())?;
+    let identity = TokenIdentity::new(key, token.to_owned(), clock.now(Instant::now())?)
+        .map_err(|_| super::verifier::rejected())?;
+    Ok((
+        Arc::new(ServiceIdentity {
+            identity,
+            clock,
+            expires,
+        }),
+        TokenTrust::Provider(Arc::new(PeerVerifier { verifier, clock })),
+    ))
 }
 
 struct ServiceIdentity {

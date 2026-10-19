@@ -132,3 +132,62 @@ fn unavailable() -> io::Error {
         "native hosted world opening is no longer running",
     )
 }
+
+/// User intent tied to one actual Dragonfly opening, never a mutable latest-world locator.
+#[derive(Clone)]
+pub struct NativeHostIntent {
+    manager: Manager,
+    opening: HostOpening,
+}
+
+impl NativeHostIntent {
+    /// Compares exact server ownership without touching credentials or the filesystem on the frame.
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        self.opening.same(&other.opening)
+    }
+
+    /// Verifies the selected account and reserves only this captured still-running opening.
+    pub(crate) async fn open(
+        &self,
+        account: Arc<crate::native_account::NativeAccount>,
+        deadline: Instant,
+    ) -> io::Result<crate::native_account::NativeHostedWorld> {
+        self.opening.validate()?;
+        tokio::time::timeout_at(deadline.into(), Arc::clone(&account).validate())
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "native hosting account timed out")
+            })??;
+        self.opening.validate()?;
+        self.manager
+            .inner
+            .native_host
+            .open(account, self.opening.clone(), deadline)
+    }
+
+    /// Resumes this manager's exact remote obligation before another activation is attempted.
+    pub(crate) async fn cleanup(&self, deadline: Instant) -> io::Result<()> {
+        if let Some(mut pending) = self.manager.native_host_cleanup()? {
+            pending.close(deadline).await?;
+        }
+        Ok(())
+    }
+}
+
+impl Manager {
+    /// Captures only the user-opened backend supported by the existing native process bridge.
+    /// Go's existing advertiser owns BDS; this path never creates a second advertiser for it.
+    pub fn native_host_intent(&self) -> io::Result<NativeHostIntent> {
+        let opening = HostOpening::capture(self)?;
+        if opening.world().backend != bridge::Backend::Dragonfly || opening.max_players() < 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "native hosting requires a Dragonfly visitor slot",
+            ));
+        }
+        Ok(NativeHostIntent {
+            manager: self.clone(),
+            opening,
+        })
+    }
+}

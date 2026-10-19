@@ -16,6 +16,8 @@ use crate::lifecycle::children::{self, ExitHookGuard};
 mod opening;
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub(crate) use opening::HostOpening;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+pub use opening::NativeHostIntent;
 
 use super::{
     Cancel, CancelHandle, cancel_pair, lock,

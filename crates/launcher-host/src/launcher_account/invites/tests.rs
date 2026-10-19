@@ -134,3 +134,23 @@ async fn missing_native_people_owner_never_falls_back_to_core() {
         std::io::ErrorKind::WouldBlock
     );
 }
+
+/// A selected native host without an acknowledged incarnation cannot dispatch through an unrelated Go host.
+#[cfg(all(unix, feature = "native-networking", not(target_arch = "wasm32")))]
+#[tokio::test]
+async fn unavailable_native_invitation_never_dispatches_core_rpc() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener =
+        std::os::unix::net::UnixListener::bind(directory.path().join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        Destination::Native(None)
+            .send(directory.path(), "456")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}

@@ -47,6 +47,8 @@ pub mod profile_worker;
 mod realm_membership;
 pub use presence::{TitlePresenceLifetime, TitlePresenceRetirement};
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod native_host;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 mod native_presence;
 
 #[cfg(all(test, unix))]
@@ -88,6 +90,10 @@ struct Snapshot {
     title_presence_owner: crate::launcher_core::TitlePresenceOwner,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     native_presence_account: Option<Arc<crate::native_account::NativeAccount>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_host_wake: Option<tokio::sync::watch::Sender<native_host::Desired>>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_host_invitation: Option<crate::native_account::HostedInvitation>,
     /// The Cinnabar API identity and visibility the events worker keeps the core configured with.
     cinnabar_api: Option<bridge::CinnabarApiConfig>,
     shared_players: shared_players::Exchange,
@@ -132,6 +138,13 @@ impl Snapshot {
         self.featured = None;
         self.profile = None;
         self.people = None;
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        {
+            self.native_host_invitation = None;
+            if let Some(wake) = &self.native_host_wake {
+                native_host::retire(wake);
+            }
+        }
         self.realm_membership = None;
         self.home = None;
         if let Some(wake) = &self.people_wake {
@@ -184,6 +197,13 @@ impl Drop for LauncherAccount {
     fn drop(&mut self) {
         profile_worker::stop(&self.profile_refresh);
         self.presence_lifetime.retire();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        self.with(|snapshot| {
+            snapshot.native_host_invitation = None;
+            if let Some(wake) = &snapshot.native_host_wake {
+                native_host::stop(wake);
+            }
+        });
     }
 }
 
@@ -236,6 +256,16 @@ impl LauncherAccount {
                 if let Some(wake) = &snapshot.catalog_wake {
                     let _ = wake.try_send(());
                 }
+            }
+        });
+    }
+
+    /// Supplies only the actual played opening; the existing native worker owns all service IO.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn set_native_host_intent(&self, intent: Option<crate::local_worlds::NativeHostIntent>) {
+        self.with(|snapshot| {
+            if let Some(wake) = &snapshot.native_host_wake {
+                native_host::set(wake, intent);
             }
         });
     }

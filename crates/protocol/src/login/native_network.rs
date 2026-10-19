@@ -7,7 +7,8 @@ pub use accepting::{
     NativeAcceptingSendOutcome, NativeAcceptingSendRetirement, NativeHostWorld, native_host_packs,
 };
 pub use authentication::{
-    NativeAuthentication, NativeCredential, NativeProvider, NativeServiceClock, NativeTokenVerifier,
+    NativeAuthentication, NativeCredential, NativeHostingIdentity, NativeProvider,
+    NativeServiceClock, NativeTokenVerifier,
 };
 mod connection;
 #[cfg(feature = "test-support")]

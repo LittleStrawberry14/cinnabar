@@ -504,3 +504,66 @@ fn native_provider_raw_claims_keep_canonical_identity_and_signed_opaque_values()
     assert!(!raw.get().contains("stale"));
     assert!(!raw.get().contains("alias"));
 }
+
+/// Host SDP and accepting Login share the original proof allocation and provider-bound hard validity.
+#[test]
+fn native_hosting_identity_keeps_selected_proof_and_service_validity() {
+    use crate::NativeHostingIdentity;
+    use nethernet::identity::{Identity, validate_sdp};
+    use std::sync::Arc;
+
+    let observed = Instant::now();
+    let token = signed(claims(), "synthetic");
+    let proof = Arc::new(key());
+    let verifier = verifier();
+    let lifetime = Duration::from_secs(60);
+    let host = NativeHostingIdentity::new(
+        Arc::clone(&proof),
+        credential(token.clone(), observed, lifetime),
+        &verifier,
+        XUID,
+        observed,
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&proof, &host.signing_key()));
+    assert_eq!(host.expires_at(), observed + lifetime);
+    let sdp = host
+        .sdp_identity()
+        .augment(
+            "v=0\r\na=fingerprint:sha-256 AB:CD\r\nm=application 9\r\n",
+            UNIX_EPOCH,
+        )
+        .unwrap();
+    assert_eq!(Identity::from_sdp(&sdp).unwrap().assertion.token, token);
+    let checked = validate_sdp(&sdp, &host.offer_trust(), UNIX_EPOCH).unwrap();
+    assert_eq!(checked.xuid(), Some(XUID));
+    assert_eq!(checked.client_public_key().unwrap(), *proof.verifying_key());
+    assert!(
+        validate_sdp(
+            &sdp.replace("AB:CD", "EF:01"),
+            &host.offer_trust(),
+            UNIX_EPOCH
+        )
+        .is_err()
+    );
+    for (proof, xuid, now) in [
+        (
+            Arc::new(SigningKey::from_slice(&[2; 48]).unwrap()),
+            XUID,
+            observed,
+        ),
+        (Arc::clone(&proof), "456", observed),
+        (Arc::clone(&proof), XUID, observed + lifetime),
+    ] {
+        assert!(
+            NativeHostingIdentity::new(
+                proof,
+                credential(token.clone(), observed, lifetime),
+                &verifier,
+                xuid,
+                now,
+            )
+            .is_err()
+        );
+    }
+}

@@ -1,5 +1,8 @@
 //! Unadvertised native host membership and conditional title nonce approval.
 
+mod active;
+pub(crate) use active::HostedInvitation;
+pub use active::{ActiveHostedWorld, ClosingHostedWorld};
 mod approval;
 mod directory;
 mod login;
