@@ -3,7 +3,7 @@
 
 use super::super::widgets;
 use super::Content;
-use launcher::menu::{MenuAction, MenuView, RendererChoice};
+use launcher::menu::{MenuAction, MenuView, RendererChoice, shader_pack_status::pack_label};
 use ui_engine::engine::screen::PaintError;
 
 #[cfg(test)]
@@ -37,20 +37,6 @@ fn choices(view: &MenuView) -> impl Iterator<Item = (RendererChoice, &str)> {
         .chain(packs)
 }
 
-/// A pack's display name: its file or folder name without a `.zip` extension.
-fn pack_label(name: &str) -> &str {
-    name.len()
-        .checked_sub(".zip".len())
-        .filter(|&split| {
-            split > 0
-                && name
-                    .get(split..)
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case(".zip"))
-        })
-        .and_then(|split| name.get(..split))
-        .unwrap_or(name)
-}
-
 /// One segmented row choosing between Vanilla and the compiled optional renderers.
 fn renderer(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     let view = content.view;
@@ -65,6 +51,8 @@ fn renderer(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     let extra = control_height + content.canvas.r(0.4);
     let description = if !render_model::SHADER_PACKS_ENABLED {
         "Enhanced improves lighting, shadows, sky and reflections."
+    } else if let Some(failure) = view.renderer_failure.as_deref() {
+        failure
     } else if view.shader_packs.is_empty() {
         "Java shader packs (zips or folders) in the shaderpacks data folder appear here."
     } else {

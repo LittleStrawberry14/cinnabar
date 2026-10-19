@@ -11,6 +11,7 @@ use ui::RenderMode;
 
 use super::{MenuRuntime, RenderModeConfig, RuntimeSettings, compiled_render_mode};
 
+pub(super) mod status;
 #[cfg(test)]
 mod tests;
 

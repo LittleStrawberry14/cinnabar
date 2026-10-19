@@ -200,6 +200,7 @@ impl Plugin for RenderModePlugin {
                     shader_pack::refresh_shader_packs,
                     apply_menu_render_mode,
                     shader_pack::sync_shader_pack_request,
+                    shader_pack::status::sync_shader_pack_status,
                     authored_textures::update_authored_textures,
                     apply_render_mode_to_cameras,
                     sync_enhanced_bloom,
