@@ -9,6 +9,7 @@ fn preloaded(archive: Vec<u8>, id: uuid::Uuid) -> packs::Acquired {
     offered.pack_id_version.pack_version.version = "1.0.0".into();
     offered.pack_size = wire::U64LE(archive.len() as u64);
     offered.cdn_url = "https://example.invalid/original.zip".into();
+    let facts = packs::verified::describe(&archive, &offered).unwrap();
     let mut offer = PackOffer::new_with_metadata(
         packets::ResourcePacksInfo {
             resource_packs: vec![offered],
@@ -41,6 +42,7 @@ fn preloaded(archive: Vec<u8>, id: uuid::Uuid) -> packs::Acquired {
     packs::Acquired {
         handoff,
         metadata: metadata.map(Box::new),
+        preloaded: BTreeMap::from([(id, facts)]),
     }
 }
 
@@ -66,4 +68,44 @@ fn hosted_snapshot_accepts_actual_preloaded_archive_without_invented_data_info()
         id
     );
     assert_eq!(snapshot.contents.len(), 1);
+}
+
+/// Retained facts cannot be paired with replacement archive metadata after preload completion.
+#[test]
+fn hosted_preloaded_snapshot_rejects_replaced_version_size_and_key() {
+    let id = uuid::Uuid::from_u128(1);
+    let original = resource_pack::test_support::archive_bytes(id, &[]);
+    for replaced in ["facts", "version", "size", "key"] {
+        let mut acquired = preloaded(original.clone(), id);
+        let mut archives = acquired.handoff.into_archives();
+        let archive = &mut archives[0];
+        let offered = &mut acquired.metadata.as_mut().unwrap().offer.resource_packs[0];
+        match replaced {
+            "facts" => acquired.preloaded.clear(),
+            "version" => {
+                archive.version = "01.0.0".into();
+                offered.pack_id_version.pack_version.version = archive.version.clone().into();
+            }
+            "size" => {
+                archive.archive.push(0);
+                offered.pack_size = wire::U64LE(archive.archive.len() as u64);
+            }
+            "key" => {
+                *archive = bedrock_packs::ResourcePackArchive::with_content_key(
+                    id,
+                    archive.version.clone(),
+                    archive.sub_pack_name.clone(),
+                    std::mem::take(&mut archive.archive),
+                    b"replacement".to_vec(),
+                );
+                offered.content_key = "replacement".into();
+            }
+            _ => unreachable!(),
+        }
+        acquired.handoff = bedrock_packs::ResourcePackHandoff::from_archives(archives);
+        assert!(
+            snapshot(acquired).is_err(),
+            "replacement {replaced} bypassed the original verified archive descriptor"
+        );
+    }
 }

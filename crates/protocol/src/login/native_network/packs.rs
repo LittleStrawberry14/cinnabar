@@ -1,6 +1,7 @@
 //! Runtime-only acquisition around the reusable caller-driven pack negotiation.
 
 mod acquisition;
+pub(super) mod verified;
 
 use super::{Connection, PacketConnection, apply_key_exchange, failure, handshake_failure};
 use crate::ProtocolError;
@@ -11,7 +12,7 @@ use bedrock_client::{
 use bedrock_packs::ResourcePackHandoff;
 use bedrock_protocol_1_26_51::packets;
 use futures::{StreamExt, stream};
-use std::{io, path::Path, sync::Arc};
+use std::{collections::BTreeMap, io, path::Path, sync::Arc};
 
 pub(super) const MAX_CDN_DOWNLOADS: usize = 4;
 
@@ -36,6 +37,7 @@ pub(super) enum Acquisition<'a> {
 pub(super) struct Acquired {
     pub(super) handoff: ResourcePackHandoff,
     pub(super) metadata: Option<Box<bedrock_client::packs::PackMetadata>>,
+    pub(super) preloaded: BTreeMap<uuid::Uuid, verified::ArchiveFacts>,
 }
 
 /// Drives the same typed pack negotiation without constructing HTTP or filesystem work for an in-band caller.
@@ -80,11 +82,17 @@ pub(super) async fn acquire(
     let mut preloads = wait_io(connection, preloads).await;
     preloads.sort_unstable_by_key(|(index, _, _)| *index);
     let mut stores = acquisition::Stores::new();
+    let mut preloaded = BTreeMap::new();
     for (_, offer, preload) in preloads {
         if cache.is_some() && !preload.cache_hit {
             stores.register(&offer);
         }
         if let Some(bytes) = preload.archive {
+            if matches!(policy, Acquisition::Hosted)
+                && let Some(facts) = preload.facts
+            {
+                preloaded.insert(offer.pack_id_version.pack_uuid, facts);
+            }
             preloading
                 .supply_preloaded(offer.pack_id_version.pack_uuid, bytes)
                 .map_err(pack_failure)?;
@@ -121,7 +129,11 @@ pub(super) async fn acquire(
                     (response, handoff, None)
                 };
                 connection.send(response).await?;
-                return Ok(Acquired { handoff, metadata });
+                return Ok(Acquired {
+                    handoff,
+                    metadata,
+                    preloaded,
+                });
             }
             PacksEvent::KeyExchange(exchange) => {
                 negotiation = apply_key_exchange(connection, exchange).await?;

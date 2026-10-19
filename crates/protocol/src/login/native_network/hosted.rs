@@ -287,12 +287,16 @@ impl NativeHostedUpstreamClosing {
 
 /// Keeps exact admitted metadata and original archives aligned by actual offer identity/version.
 fn snapshot(acquired: packs::Acquired) -> io::Result<(ServerPackSnapshot, Vec<Bytes>)> {
-    let metadata = *acquired.metadata.ok_or_else(invalid)?;
+    let packs::Acquired {
+        handoff,
+        metadata,
+        mut preloaded,
+    } = acquired;
+    let metadata = *metadata.ok_or_else(invalid)?;
     if metadata.data.len() != metadata.offer.resource_packs.len() {
         return Err(invalid());
     }
-    let mut acquired: BTreeMap<_, _> = acquired
-        .handoff
+    let mut acquired: BTreeMap<_, _> = handoff
         .into_archives()
         .into_iter()
         .map(|pack| ((pack.pack_id, pack.version.clone()), pack))
@@ -300,7 +304,6 @@ fn snapshot(acquired: packs::Acquired) -> io::Result<(ServerPackSnapshot, Vec<By
     let mut contents = Vec::with_capacity(metadata.data.len());
     let mut archives = Vec::with_capacity(metadata.data.len());
     for (offer, data) in metadata.offer.resource_packs.iter().zip(metadata.data) {
-        let data = data.ok_or_else(invalid)?;
         let id = (
             offer.pack_id_version.pack_uuid,
             offer
@@ -312,19 +315,24 @@ fn snapshot(acquired: packs::Acquired) -> io::Result<(ServerPackSnapshot, Vec<By
         );
         let archive = acquired.remove(&id).ok_or_else(invalid)?;
         let size = u64::try_from(archive.archive.len()).map_err(|_| invalid())?;
-        let hash: [u8; 32] = data.file_hash.as_ref().try_into().map_err(|_| invalid())?;
-        if size != offer.pack_size.0
-            || size != data.file_size.0
-            || archive.content_key.expose() != offer.content_key.as_bytes()
+        if size != offer.pack_size.0 || archive.content_key.expose() != offer.content_key.as_bytes()
         {
             return Err(invalid());
         }
-        contents.push(ServerPackContent::external(
-            size,
-            hash,
-            data.pack_type.0,
-            data.is_premium_pack,
-        ));
+        let content = match data {
+            Some(data) => {
+                let hash: [u8; 32] = data.file_hash.as_ref().try_into().map_err(|_| invalid())?;
+                if size != data.file_size.0 {
+                    return Err(invalid());
+                }
+                ServerPackContent::external(size, hash, data.pack_type.0, data.is_premium_pack)
+            }
+            None => preloaded
+                .remove(&id.0)
+                .ok_or_else(invalid)?
+                .into_content(&archive)?,
+        };
+        contents.push(content);
         archives.push(Bytes::from(archive.archive));
     }
     if !acquired.is_empty() {
