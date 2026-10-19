@@ -20,6 +20,8 @@ type Rgba = [u8; 4];
 const MODIFIED: Rgba = [255, 201, 74, 255];
 const CELL_HEIGHT: f32 = 8.4;
 const SWITCH_HEIGHT: f32 = 5.2;
+/// A row of blank cells only spaces the rows around it.
+const EMPTY_HEIGHT: f32 = 1.6;
 const GAP: f32 = 0.8;
 const PAD: f32 = 1.2;
 /// Narrowest cell before the grid drops a column.
@@ -87,26 +89,40 @@ pub(super) fn body<'v>(
     let fit = ((width + gap) / (content.canvas.r(MIN_CELL_WIDTH) + gap)).floor() as usize;
     let columns = usize::from(options.columns).min(fit).max(1);
     let cell_width = (width - gap * (columns - 1) as f32) / columns as f32;
-    let height = content.canvas.r(CELL_HEIGHT);
     let mut described = None;
-    for (index, element) in options.elements.iter().enumerate() {
-        let (row, column) = (index / columns, index % columns);
-        let x = left + column as f32 * (cell_width + gap);
-        let y = top + row as f32 * (height + gap);
-        if cell(
-            content.canvas,
-            content.view,
-            options,
-            index,
-            element,
-            [x, y, x + cell_width, y + height],
-        )? {
-            described = Some(element);
+    let mut y = top;
+    for (row, cells) in options.elements.chunks(columns).enumerate() {
+        // A row is as tall as its tallest control; a row of blanks keeps only a spacer.
+        let height = cells
+            .iter()
+            .map(|element| content.canvas.r(cell_height(&element.control)))
+            .fold(0.0, f32::max);
+        for (column, element) in cells.iter().enumerate() {
+            let x = left + column as f32 * (cell_width + gap);
+            if cell(
+                content.canvas,
+                content.view,
+                options,
+                row * columns + column,
+                element,
+                [x, y, x + cell_width, y + height],
+            )? {
+                described = Some(element);
+            }
         }
+        y += height + gap;
     }
-    let rows = options.elements.len().div_ceil(columns);
-    content.y = top + rows as f32 * (height + gap) + content.canvas.r(1.6);
+    content.y = y + content.canvas.r(1.6);
     Ok(described)
+}
+
+/// The height, in rem, a control needs.
+fn cell_height(control: &Control) -> f32 {
+    match control {
+        Control::Empty => EMPTY_HEIGHT,
+        Control::Link | Control::Switch { .. } | Control::Fixed { .. } => SWITCH_HEIGHT,
+        Control::Choice { .. } | Control::Profile { .. } | Control::Slider { .. } => CELL_HEIGHT,
+    }
 }
 
 /// Draws one cell; returns whether it is hovered or focused.
@@ -164,6 +180,21 @@ fn cell(
             )?;
             canvas.hit(next, face)?;
             Ok(engaged(view, &[next]))
+        }
+        Control::Fixed { value } => {
+            // A value the pack offers no alternative to, such as its name and author: shown
+            // as a heading, not a control.
+            let width = (inner[2] - inner[0]).max(1.0);
+            let top = (b[1] + b[3] - canvas.r(BODY.line + CAPTION.line)) * 0.5;
+            canvas.text_line(&element.label, [inner[0], top], width, BODY, label_color)?;
+            canvas.text_line(
+                value,
+                [inner[0], top + canvas.r(BODY.line)],
+                width,
+                CAPTION,
+                TEXT_DIMMER,
+            )?;
+            Ok(false)
         }
         Control::Choice { value } | Control::Profile { value } => {
             panel(canvas, b)?;

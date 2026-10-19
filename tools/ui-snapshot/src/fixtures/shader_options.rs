@@ -63,9 +63,11 @@ fn hover(view: &mut MenuView, index: u16, input: Input) {
     }));
 }
 
-/// The Renderer row with a pack selected, offering its options.
+/// The Renderer row with a pack selected, scrolled to the button that opens its options.
 pub(super) fn renderer_row() -> Fixture {
-    Fixture::Menu(Box::new(selected()))
+    let mut view = selected();
+    view.focused_action = Some(MenuAction::ShaderOptions(Action::Open));
+    Fixture::Menu(Box::new(view))
 }
 
 /// The main screen: the pack's banner value, profile selector and links.

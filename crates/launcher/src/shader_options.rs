@@ -55,6 +55,9 @@ pub enum Control {
     Switch { on: bool },
     /// A value option stepped through its choices; `value` is its display text.
     Choice { value: String },
+    /// A value option with a single choice (such as a pack's name and author): shown as a
+    /// heading, not a control.
+    Fixed { value: String },
     /// A value option on a slider at choice `index` of `count`.
     Slider {
         value: String,

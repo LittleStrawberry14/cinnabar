@@ -184,3 +184,22 @@ fn profiles_cancel_and_reset() {
         }
     );
 }
+
+#[test]
+fn a_value_without_alternatives_is_a_heading() {
+    let pack = ShaderPack::new(PackSource::from_files([
+        ("settings.glsl", "#define INFO 1 // [1]\n"),
+        ("shaders.properties", "screen=INFO\n"),
+        (
+            "lang/en_us.lang",
+            "option.INFO=Dusk\nvalue.INFO.1=by someone\n",
+        ),
+    ]));
+    let editor = Editor::new(OptionSession::new(&pack, &OptionValues::new()), "Dusk");
+    assert_eq!(
+        editor.view().elements[0].control,
+        Control::Fixed {
+            value: "by someone".to_owned()
+        }
+    );
+}

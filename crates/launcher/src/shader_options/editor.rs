@@ -168,8 +168,10 @@ impl Editor {
                                     index: u16::try_from(index).unwrap_or(u16::MAX),
                                     count: u16::try_from(choices.len()).unwrap_or(u16::MAX),
                                 }
-                            } else {
+                            } else if choices.len() > 1 {
                                 Control::Choice { value }
+                            } else {
+                                Control::Fixed { value }
                             }
                         }
                         None => Control::Empty,
