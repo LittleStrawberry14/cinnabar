@@ -10,6 +10,8 @@ pub use authentication::{
     NativeAuthentication, NativeCredential, NativeProvider, NativeServiceClock, NativeTokenVerifier,
 };
 mod connection;
+#[cfg(feature = "test-support")]
+pub(crate) mod fixtures;
 mod negotiated;
 mod packs;
 mod relay;

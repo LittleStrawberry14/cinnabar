@@ -10,6 +10,8 @@ pub(in crate::login::native_network) struct AcceptedTransport {
     inbox: Inbox,
     input_failure: Option<Arc<io::Error>>,
     input_terminal_seen: bool,
+    #[cfg(feature = "test-support")]
+    fixture_nonce: Option<String>,
 }
 enum State {
     Established(AcceptedSession),
@@ -24,7 +26,23 @@ impl AcceptedTransport {
             inbox: Inbox::default(),
             input_failure: None,
             input_terminal_seen: false,
+            #[cfg(feature = "test-support")]
+            fixture_nonce: None,
         }
+    }
+
+    /// Retains only a fixture caller's original challenge on its actual already-established client.
+    #[cfg(feature = "test-support")]
+    pub(super) fn fixture_client(client: nethernet_tokio::NetherClient, nonce: String) -> Self {
+        let mut transport = Self::new(client.into_accepted());
+        transport.fixture_nonce = Some(nonce);
+        transport
+    }
+
+    /// Normal server construction has no fixture challenge and retains its empty transport nonce.
+    #[cfg(feature = "test-support")]
+    pub(super) fn fixture_nonce(&self) -> &str {
+        self.fixture_nonce.as_deref().unwrap_or_default()
     }
 
     /// Borrows capacity from this exact established association, without exposing its sender.

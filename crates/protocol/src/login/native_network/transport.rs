@@ -30,6 +30,12 @@ pub(super) enum Transport {
 }
 
 impl Transport {
+    /// Reuses the actual accepted IO driver for a fixture's ready signed client and original challenge.
+    #[cfg(feature = "test-support")]
+    pub(super) fn fixture_nether(client: NetherClient, nonce: String) -> Self {
+        Self::Accepted(Box::new(AcceptedTransport::fixture_client(client, nonce)))
+    }
+
     /// Takes a private capacity handle only from the same established accepted association.
     pub(super) fn accepted_sender(&self) -> io::Result<nethernet_tokio::SessionSender> {
         match self {
@@ -191,6 +197,8 @@ impl Transport {
         match self {
             Self::NetherNetLan(transport) => transport.nonce(),
             Self::Messaging(transport) => transport.nonce(),
+            #[cfg(feature = "test-support")]
+            Self::Accepted(transport) => transport.fixture_nonce(),
             _ => "",
         }
     }

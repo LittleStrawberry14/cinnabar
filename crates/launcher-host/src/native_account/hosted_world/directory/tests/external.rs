@@ -266,12 +266,42 @@ struct SignedPair {
     signaling: Arc<HttpSignalingServer>,
 }
 
-/// Establishes real signed HTTP/ICE/DTLS/SCTP over loopback with no STUN/TURN services.
+/// Wraps the real association with the existing accepting codec for the original admission controls.
 async fn signed_pair(deadline: Instant) -> SignedPair {
+    let SignedAssociation {
+        accepted,
+        key,
+        client,
+        listener,
+        signaling,
+    } = signed_association(Arc::new(SigningKey::generate())).await;
+    let sender = accepted.session.sender();
+    let (wire, _handshake) =
+        NativeAcceptingIo::from_nether(accepted, key, ServerHandshakeOptions::default(), deadline)
+            .await
+            .unwrap();
+    SignedPair {
+        wire,
+        sender,
+        client,
+        listener,
+        signaling,
+    }
+}
+
+struct SignedAssociation {
+    accepted: nethernet_tokio::AcceptedSession,
+    key: Arc<SigningKey>,
+    client: NetherClient,
+    listener: NetherServer,
+    signaling: Arc<HttpSignalingServer>,
+}
+
+/// Establishes the same signed host-only association before either actual protocol consumer takes it.
+async fn signed_association(client_key: Arc<SigningKey>) -> SignedAssociation {
     let now = SystemTime::now();
     let lifetime = ACQUISITION_TIMEOUT;
     let key = Arc::new(SigningKey::generate());
-    let client_key = Arc::new(SigningKey::generate());
     let client_trust = trust(*client_key.verifying_key(), None);
     let signaling = Arc::new(
         HttpSignalingServer::bind(
@@ -323,14 +353,9 @@ async fn signed_pair(deadline: Instant) -> SignedPair {
     .await
     .unwrap();
     let accepted = listener.accept().await.unwrap();
-    let sender = accepted.session.sender();
-    let (wire, _handshake) =
-        NativeAcceptingIo::from_nether(accepted, key, ServerHandshakeOptions::default(), deadline)
-            .await
-            .unwrap();
-    SignedPair {
-        wire,
-        sender,
+    SignedAssociation {
+        accepted,
+        key,
         client,
         listener,
         signaling,
@@ -421,3 +446,5 @@ async fn drain(receiver: &mut SessionReceiver) -> bool {
 }
 
 mod output;
+
+mod paired;

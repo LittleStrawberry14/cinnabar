@@ -34,6 +34,24 @@ struct Configuration {
 }
 
 impl NativeProvider {
+    /// Seeds only a nondefault fixture's checked public response; normal acquisition remains HTTPS-only.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn fixture_metadata(
+        issuer: &str,
+        user_agent: &str,
+        jwks: &[u8],
+        now: Instant,
+    ) -> io::Result<Self> {
+        let mut provider = Self::new(issuer, user_agent)?;
+        provider.verifier = Some(NativeTokenVerifier::new(
+            provider.expected_issuer.clone(),
+            &["RS256".into()],
+            jwks,
+        )?);
+        provider.fetched = Some(now);
+        Ok(provider)
+    }
+
     /// Builds the existing redirect-free HTTPS client with the owning service's user agent.
     /// The caller retains this cache alongside its concrete account and original deadline.
     ///
