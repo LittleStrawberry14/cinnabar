@@ -44,6 +44,7 @@ pub(super) struct HostDirectory {
     refresh_deadline: Option<Instant>,
     approvals: Option<Approvals>,
     pending: Option<ApprovalWrite>,
+    confirmed: Option<ApprovalWrite>,
     deadline: Instant,
     closing: bool,
     closed: bool,
@@ -244,6 +245,7 @@ impl HostDirectory {
             refresh_deadline: None,
             approvals: None,
             pending: None,
+            confirmed: None,
             deadline,
             closing: false,
             closed: false,
@@ -736,8 +738,12 @@ impl HostDirectory {
         self.changed = changed;
         self.validate_session()?;
         self.observe()?;
-        if !self.changed && self.pending.is_some() {
-            let _ = self.confirm_pending();
+        if !self.changed {
+            if self.pending.is_some() {
+                let _ = self.confirm_pending();
+            } else {
+                let _ = self.confirm_retained();
+            }
         }
         Ok(())
     }
@@ -832,8 +838,50 @@ impl HostDirectory {
                     .get("nonces")
                     .ok_or_else(|| invalid("host nonce metadata is unavailable"))?,
             )?;
-        self.pending = None;
+        self.confirmed = self.pending.take();
         Ok(())
+    }
+
+    /// Restores a prior service acknowledgment only after its exact document and member epoch survive refresh.
+    fn confirm_retained(&mut self) -> io::Result<()> {
+        self.active()?;
+        self.validate_session()?;
+        if self.changed || self.pending.is_some() {
+            return Err(invalid("host approval publication is unresolved"));
+        }
+        let confirmed = self
+            .confirmed
+            .as_ref()
+            .ok_or_else(|| invalid("host acknowledged approval is unavailable"))?;
+        let actual = self
+            .session
+            .as_ref()
+            .expect("validated membership")
+            .description()
+            .properties
+            .as_ref()
+            .and_then(|section| section.custom.as_ref())
+            .ok_or_else(|| invalid("host custom metadata is unavailable"))?;
+        if self
+            .approvals
+            .as_ref()
+            .ok_or_else(|| invalid("host approval owner is unavailable"))?
+            .revision()
+            != confirmed.revision
+            || actual != &confirmed.document
+            || actual != &self.properties()?
+        {
+            return Err(invalid("host acknowledged approval changed"));
+        }
+        self.approvals
+            .as_mut()
+            .ok_or_else(|| invalid("host approval owner is unavailable"))?
+            .acknowledge(
+                confirmed.revision,
+                actual
+                    .get("nonces")
+                    .ok_or_else(|| invalid("host nonce metadata is unavailable"))?,
+            )
     }
 
     /// Produces title metadata without any activity, supported connection or invented accepting route.
