@@ -199,7 +199,8 @@ fn strip_continuation(text: &str) -> Option<&str> {
 
 /// Splits a logical line into key and value: the key ends at the first unescaped `=`,
 /// `:` or whitespace; whitespace and one `=`/`:` separator follow; both sides are
-/// unescaped and trimmed.
+/// unescaped and trimmed, except that a value keeps an escaped leading space (`\ `) as
+/// java.util.Properties does.
 fn parse_entry(line: u32, logical: &str) -> RawEntry {
     let mut key_end = logical.len();
     let mut escaped = false;
@@ -220,7 +221,7 @@ fn parse_entry(line: u32, logical: &str) -> RawEntry {
     RawEntry {
         line,
         key: unescape(&logical[..key_end]).trim().to_owned(),
-        value: unescape(value).trim().to_owned(),
+        value: unescape(value).trim_end().to_owned(),
     }
 }
 
