@@ -323,10 +323,18 @@ async fn exercise(case: Case) -> (Result<(), ProtocolError>, io::Result<()>) {
         let fixture = fixture_route(Route::Lan).await;
         let mut listener = fixture.listener;
         let (rejected, mut rejection) = tokio::sync::oneshot::channel();
+        let (delivered, delivery) = tokio::sync::oneshot::channel();
         let server = async {
             let mut peer = listener.accept().await.map_err(io::Error::other)?;
             let result = tokio::select! { biased;
-                result = serve(&mut peer, case) => result,
+                result = async {
+                    serve(&mut peer, case).await?;
+                    if matches!(case, Case::LargeLive) {
+                        // Keep the original peer alive until the client finishes its actual read.
+                        delivery.await.map_err(|_| io::Error::other("live packet read was dropped"))?;
+                    }
+                    Ok(())
+                } => result,
                 Ok(()) = &mut rejection => Err(io::Error::other("client rejected the actual startup input")),
             };
             let retired = peer.close();
@@ -359,7 +367,9 @@ async fn exercise(case: Case) -> (Result<(), ProtocolError>, io::Result<()>) {
                     }
                     play.finish_loading().await?;
                     if matches!(case, Case::LargeLive) {
-                        receive_live(&mut play).await?;
+                        let received = receive_live(&mut play).await;
+                        let _ = delivered.send(());
+                        received?;
                     }
                     Ok::<_, ProtocolError>((runtime_id, packets))
                 }.await;
