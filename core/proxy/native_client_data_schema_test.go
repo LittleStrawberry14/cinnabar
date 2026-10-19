@@ -242,7 +242,8 @@ func nativeClientDataSchemaSource(t *testing.T, packagePath string) nativeSchema
 	provider := "runtime/debug.ReadBuildInfo dependency"
 	if selected == nil {
 		provider = "GOROOT/bin/go list -mod=readonly -m -json metadata"
-		selected = nativeClientDataSchemaListedModule(t, importModule)
+		listed := nativeClientDataModuleMetadata(t, importModule)
+		selected = &listed.Module
 	}
 	if selected.Path != importModule || selected.Replace == nil {
 		t.Fatal("native client-data source must have an identified compiled module replacement")
@@ -323,8 +324,14 @@ func nativeClientDataSchemaPins(t *testing.T) []nativeSchemaSource {
 	return pins
 }
 
-// nativeClientDataSchemaListedModule reads metadata under this test's Go toolchain without changing pins.
-func nativeClientDataSchemaListedModule(t *testing.T, importModule string) *debug.Module {
+// nativeListedModule retains the selected source directory without making it portable artifact metadata.
+type nativeListedModule struct {
+	debug.Module
+	Dir string
+}
+
+// nativeClientDataModuleMetadata reads metadata under this test's Go toolchain without changing pins.
+func nativeClientDataModuleMetadata(t *testing.T, importModule string) *nativeListedModule {
 	t.Helper()
 	if runtime.GOROOT() == "" {
 		t.Fatal("the current Go toolchain root is unavailable")
@@ -346,7 +353,7 @@ func nativeClientDataSchemaListedModule(t *testing.T, importModule string) *debu
 	if err != nil {
 		t.Fatalf("read native client-data module metadata: %v", err)
 	}
-	var module debug.Module
+	var module nativeListedModule
 	if err := json.Unmarshal(data, &module); err != nil {
 		t.Fatalf("decode native client-data module metadata: %v", err)
 	}
