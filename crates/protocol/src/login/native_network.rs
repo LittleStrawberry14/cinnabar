@@ -111,7 +111,7 @@ impl LoginSequence {
         native_join(target, login, None, prepare).await
     }
 
-    /// Joins RakNet or explicitly prepared Player Messaging with an acquired account credential.
+    /// Joins the selected native transport with an acquired account credential.
     ///
     /// Account HTTP and persistence stay with the application. The connection
     /// retains this key through signed client data and the server key exchange.
@@ -126,12 +126,6 @@ impl LoginSequence {
         authentication: NativeAuthentication,
         prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
     ) -> Result<(PlaySession, P), ProtocolError> {
-        if target.transport == NativeTransport::NetherNetLan {
-            return Err(failure(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "native account joins require RakNet or prepared signed Player Messaging",
-            )));
-        }
         native_join(target, login, Some(authentication), prepare).await
     }
 }

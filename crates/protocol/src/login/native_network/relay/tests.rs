@@ -134,6 +134,7 @@ async fn relay_handoff_preserves_raw_startup_siblings_and_consuming_close() {
             let connected = transport::Transport::connect(
                 &target,
                 None,
+                None,
                 tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
             )
             .await

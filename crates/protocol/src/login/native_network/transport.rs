@@ -4,6 +4,7 @@ mod accepted;
 pub(super) mod addressed;
 mod endpoint;
 pub(super) mod http;
+pub(super) mod identity;
 mod inbox;
 pub(super) mod lan;
 mod messaging;
@@ -102,6 +103,7 @@ impl Transport {
     pub(super) async fn connect(
         target: &NativeConnectionTarget,
         messaging: Option<super::authentication::MessagingAdmission>,
+        identity: Option<&identity::TransportIdentity>,
         deadline: tokio::time::Instant,
     ) -> io::Result<Self> {
         if matches!(
@@ -130,7 +132,7 @@ impl Transport {
                 "messaging handoff requires its exact target",
             ));
         }
-        endpoint::connect(target, deadline).await
+        endpoint::connect(target, identity, deadline).await
     }
 
     /// Borrows the LAN discovery admission challenge, absent on RakNet.

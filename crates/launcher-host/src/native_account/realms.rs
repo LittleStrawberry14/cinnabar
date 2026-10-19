@@ -31,7 +31,9 @@ impl NativeAccount {
         }
         if !matches!(
             target.transport,
-            protocol::NativeTransport::RakNet | protocol::NativeTransport::Addressed
+            protocol::NativeTransport::RakNet
+                | protocol::NativeTransport::Addressed
+                | protocol::NativeTransport::NetherNetLan
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,

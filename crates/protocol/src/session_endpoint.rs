@@ -25,7 +25,7 @@ pub enum NativeTransport {
     Addressed,
     /// Reliable ordered UDP with application batch encryption.
     RakNet,
-    /// Directed LAN discovery and ICE/DTLS/SCTP with self-signed Login.
+    /// Directed LAN discovery and ICE/DTLS/SCTP with caller-selected Login authentication.
     NetherNetLan,
     /// Protected Player Messaging with signed SDP and explicit friend or service admission.
     NetherNetMessaging,

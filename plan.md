@@ -51,6 +51,11 @@ Native account checkpoints, resource packs, local-world joins and hosted-peer
 lifecycles have focused owning coverage. Local Dragonfly worlds retain their
 existing world-process owner.
 
+Generic signed LAN joins require the selected account's original proof and an
+online-capable advertisement; they do not retry unsigned. Advertisement-driven
+authentication preference and fallback remain unverified. Selected own-world LAN
+joins retain their explicit offline policy.
+
 A native signout source candidate now waits for the original session Core's exit
 and the account event owner's completed retirement before credential mutation.
 Owning process, account and production session regressions still require execution.

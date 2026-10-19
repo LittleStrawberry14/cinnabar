@@ -114,6 +114,7 @@ async fn deferred_and_unread_siblings_reframe_within_the_original_packet_bound()
             let transport = transport::Transport::connect(
                 &target,
                 None,
+                None,
                 tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
             )
             .await

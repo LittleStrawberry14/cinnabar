@@ -22,6 +22,8 @@ const ISSUER: &str = "https://synthetic.example/tenant/";
 const XUID: &str = "123";
 const SERVICE_SECONDS: u64 = 1_900_000_000;
 
+mod lan;
+
 /// Generates an original synthetic issuer once; no real credential or private fixture is loaded.
 fn issuer() -> &'static pkcs1v15::SigningKey<Sha256> {
     static ISSUER: OnceLock<pkcs1v15::SigningKey<Sha256>> = OnceLock::new();

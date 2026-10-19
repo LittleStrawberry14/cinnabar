@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::time::Instant;
 use std::{io, sync::Arc, time::SystemTime};
 use zeroize::Zeroizing;
-mod local_http;
+mod identity;
 
 /// Moves the same codec, ciphers, unread FIFO and selected archives into startup.
 pub(super) struct NegotiatedConnection {
@@ -49,7 +49,7 @@ pub(super) async fn negotiate(
     let mut credentials = Credentials::new(authentication)?;
     let (transport, address) = if target.transport == crate::NativeTransport::Addressed {
         let identity = credentials
-            .http_identity()
+            .transport_identity()
             .map_err(ProtocolError::Authentication)?;
         match transport::addressed::connect(target, identity, deadline).await {
             Ok((transport, address)) => (Ok(transport), address),
@@ -69,13 +69,29 @@ pub(super) async fn negotiate(
     } else if target.transport == crate::NativeTransport::LocalNetherNetHttp {
         let address = target.local_http_address().map_err(failure)?;
         let identity = credentials
-            .http_identity()
+            .transport_identity()
             .map_err(ProtocolError::Authentication)?;
         let transport = transport::http::connect(address, identity, deadline).await;
         (transport, format!("http://{address}:{}", address.port()))
+    } else if target.transport == crate::NativeTransport::NetherNetLan
+        && credentials.authentication.is_some()
+    {
+        let identity = credentials
+            .transport_identity()
+            .map_err(ProtocolError::Authentication)?;
+        let cutoff = identity
+            .expires
+            .map_or(deadline, |expires| deadline.min(expires.into()));
+        let connected = transport::Transport::connect(target, None, Some(&identity), cutoff).await;
+        if let Some(expires) = identity.expires {
+            authentication::ensure_current(expires, Instant::now())
+                .map_err(ProtocolError::Authentication)?;
+        }
+        (connected, target.address.clone())
     } else {
         (
-            transport::Transport::connect(target, credentials.messaging.take(), deadline).await,
+            transport::Transport::connect(target, credentials.messaging.take(), None, deadline)
+                .await,
             target.address.clone(),
         )
     };

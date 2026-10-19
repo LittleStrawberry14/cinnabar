@@ -107,6 +107,7 @@ async fn completed_handoff_releases_the_consumed_start_game_backing() {
             let transport = transport::Transport::connect(
                 &target,
                 None,
+                None,
                 tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
             )
             .await

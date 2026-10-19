@@ -291,7 +291,9 @@ impl SessionController {
             if auth_cache.is_some()
                 && !matches!(
                     target.transport,
-                    protocol::NativeTransport::RakNet | protocol::NativeTransport::Addressed
+                    protocol::NativeTransport::RakNet
+                        | protocol::NativeTransport::Addressed
+                        | protocol::NativeTransport::NetherNetLan
                 )
             {
                 return Err(

@@ -9,10 +9,11 @@ use tokio::time::Instant;
 /// Resolves once without extending the caller's existing transport/Login/packs/spawn budget.
 pub(super) async fn connect(
     target: &NativeConnectionTarget,
+    identity: Option<&super::identity::TransportIdentity>,
     deadline: Instant,
 ) -> io::Result<Transport> {
     let addresses = before_deadline(deadline, tokio::net::lookup_host(&target.address)).await?;
-    connect_resolved(target.transport, addresses, deadline).await
+    connect_resolved(target.transport, addresses, identity, deadline).await
 }
 
 /// Drives every compatible resolved alternative so a silent first answer cannot starve the rest.
@@ -20,6 +21,7 @@ pub(super) async fn connect(
 async fn connect_resolved(
     transport: NativeTransport,
     addresses: impl Iterator<Item = SocketAddr>,
+    identity: Option<&super::identity::TransportIdentity>,
     deadline: Instant,
 ) -> io::Result<Transport> {
     before_deadline(deadline, async {
@@ -48,10 +50,12 @@ async fn connect_resolved(
                             .map(Transport::RakNet)
                             .map_err(io::Error::other)
                     }
-                    NativeTransport::NetherNetLan => LanTransport::connect(address)
-                        .await
-                        .map(Box::new)
-                        .map(Transport::NetherNetLan),
+                    NativeTransport::NetherNetLan => {
+                        LanTransport::connect(address, identity, deadline)
+                            .await
+                            .map(Box::new)
+                            .map(Transport::NetherNetLan)
+                    }
                     NativeTransport::Addressed
                     | NativeTransport::NetherNetMessaging
                     | NativeTransport::NetherNetLegacy

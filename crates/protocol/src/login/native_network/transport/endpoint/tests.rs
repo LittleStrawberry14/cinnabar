@@ -50,7 +50,7 @@ async fn native_lan_resolution_skips_ipv6_and_keeps_the_ready_ipv4_owner() {
             std::iter::once(SocketAddr::new(Ipv6Addr::LOCALHOST.into(), address.port()))
                 .chain(resolved);
         let (connected, peer) = tokio::join!(
-            connect_resolved(NativeTransport::NetherNetLan, addresses, deadline),
+            connect_resolved(NativeTransport::NetherNetLan, addresses, None, deadline),
             listener.accept(),
         );
         let mut connected = connected.unwrap();
@@ -86,6 +86,7 @@ async fn native_candidate_cancellation_and_original_deadline_release_actual_sock
         let mut connecting = Box::pin(connect_resolved(
             NativeTransport::RakNet,
             std::iter::once(address),
+            None,
             deadline,
         ));
         let mut datagram = [0; 2048];
@@ -133,7 +134,7 @@ async fn native_raknet_alternative_progresses_past_a_silent_first_endpoint() {
             .await
             .unwrap();
         let addresses = std::iter::once(blackhole.local_addr().unwrap()).chain(resolved);
-        let mut connected = connect_resolved(NativeTransport::RakNet, addresses, deadline)
+        let mut connected = connect_resolved(NativeTransport::RakNet, addresses, None, deadline)
             .await
             .unwrap();
         assert_eq!(connected.header(), BatchHeader::RakNet);
@@ -154,6 +155,7 @@ async fn native_lan_resolution_rejects_an_incompatible_candidate_set() {
     let error = connect_resolved(
         NativeTransport::NetherNetLan,
         addresses.into_iter(),
+        None,
         Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
     )
     .await

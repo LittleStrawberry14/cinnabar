@@ -123,6 +123,7 @@ async fn tiny_relay_startup_detaches_from_discarded_batch_backing() {
             let transport = transport::Transport::connect(
                 &target,
                 None,
+                None,
                 tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT,
             )
             .await

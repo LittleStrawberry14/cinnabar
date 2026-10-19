@@ -1,16 +1,18 @@
-//! The original Login proof and credential policy used for HTTP SDP.
+//! The original Login proof and credential policy shared by signed direct transports.
 
 use super::*;
-use crate::login::native_network::transport::http::HttpIdentity;
+use crate::login::native_network::transport::identity::TransportIdentity;
 use nethernet::identity::{SelfSignedIdentity, TokenTrust};
 
 impl Credentials {
     /// Retains one proof key for both SDP and Login without acquiring another account credential.
-    pub(super) fn http_identity(&self) -> io::Result<HttpIdentity> {
+    pub(in crate::login::native_network) fn transport_identity(
+        &self,
+    ) -> io::Result<TransportIdentity> {
         if self.messaging.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "HTTP cannot consume a Messaging handoff",
+                "direct transport cannot consume a Messaging handoff",
             ));
         }
         match (&self.authentication, &self.sdp) {
@@ -25,13 +27,13 @@ impl Credentials {
                 let TokenTrust::Provider(provider) = trust else {
                     unreachable!("qualified identity policy retains its configured provider");
                 };
-                Ok(HttpIdentity {
+                Ok(TransportIdentity {
                     identity,
                     trust: TokenTrust::ServerAnswer(provider),
                     expires: Some(*expires),
                 })
             }
-            (None, None) => Ok(HttpIdentity {
+            (None, None) => Ok(TransportIdentity {
                 identity: Arc::new(
                     SelfSignedIdentity::from_key(
                         Arc::clone(&self.key),
@@ -43,7 +45,9 @@ impl Credentials {
                 trust: authentication::offline_answer_trust(),
                 expires: None,
             }),
-            _ => Err(io::Error::other("HTTP credential policy is unavailable")),
+            _ => Err(io::Error::other(
+                "direct transport credential policy is unavailable",
+            )),
         }
     }
 }

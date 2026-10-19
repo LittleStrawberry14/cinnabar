@@ -3,11 +3,11 @@ use bedrock_protocol_1_26_51::{enums::PlayStatusType, wire};
 mod provider;
 
 #[tokio::test]
-async fn authenticated_join_refuses_a_transport_without_signed_identity_support() {
+async fn authenticated_lan_rejects_an_empty_target_before_discovery() {
     let settings = super::super::LoginSettings::default();
     let authentication = provider::authentication();
     let result = LoginSequence::connect_native_authenticated(
-        &NativeConnectionTarget::new("unresolved.invalid:0".into(), NativeTransport::NetherNetLan),
+        &NativeConnectionTarget::new(String::new(), NativeTransport::NetherNetLan),
         SessionLogin {
             display_name: "Fixture",
             client_random_id: crate::ClientRandomId::new(1).unwrap(),
@@ -25,7 +25,7 @@ async fn authenticated_join_refuses_a_transport_without_signed_identity_support(
         result,
         Err(ProtocolError::Session(crate::SessionError(
             SessionFailure::NativeTransport(error)
-        ))) if error.kind() == io::ErrorKind::Unsupported
+        ))) if error.kind() == io::ErrorKind::InvalidInput
     ));
 }
 

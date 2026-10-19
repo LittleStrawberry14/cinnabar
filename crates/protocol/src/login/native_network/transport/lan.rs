@@ -1,5 +1,6 @@
 //! The actual ready LAN client and its same receiver queues after local retirement.
 
+use super::identity::TransportIdentity;
 use super::{Inbox, LAN_CONNECTION_TYPE};
 use bytes::Bytes;
 use nethernet_tokio::{
@@ -31,10 +32,19 @@ impl LanTransport {
     }
 
     /// Discovers and connects one compatible IPv4 endpoint under the selection owner's cutoff.
-    pub(super) async fn connect(address: SocketAddr) -> io::Result<Self> {
-        Self::connect_route(address, None, None)
-            .await
-            .map(|(transport, _)| transport)
+    pub(super) async fn connect(
+        address: SocketAddr,
+        identity: Option<&TransportIdentity>,
+        deadline: tokio::time::Instant,
+    ) -> io::Result<Self> {
+        if let Some(expires) = identity.and_then(|identity| identity.expires) {
+            super::super::authentication::ensure_current(expires, Instant::now())?;
+        }
+        let result = Self::connect_route(address, None, identity, identity.map(|_| deadline)).await;
+        if let Some(expires) = identity.and_then(|identity| identity.expires) {
+            super::super::authentication::ensure_current(expires, Instant::now())?;
+        }
+        result.map(|(transport, _)| transport)
     }
 
     /// Retains the selected local level and one finite discovery budget on the original LAN owner.
@@ -58,7 +68,12 @@ impl LanTransport {
         check_deadline(deadline)?;
         let result = tokio::time::timeout_at(
             deadline,
-            Self::connect_route(address, Some((level, discovery_budget)), Some(deadline)),
+            Self::connect_route(
+                address,
+                Some((level, discovery_budget)),
+                None,
+                Some(deadline),
+            ),
         )
         .await;
         check_deadline(deadline)?;
@@ -69,6 +84,7 @@ impl LanTransport {
     async fn connect_route(
         address: SocketAddr,
         selected: Option<(&str, std::time::Duration)>,
+        identity: Option<&TransportIdentity>,
         deadline: Option<tokio::time::Instant>,
     ) -> io::Result<(Self, u64)> {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -155,7 +171,23 @@ impl LanTransport {
             );
         }
         let (id, data) = discovered?;
-        if !data.flag_b || data.session_id.is_empty() {
+        if identity.is_some() {
+            if !data.flag_a {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "LAN peer does not advertise online admission",
+                ));
+            }
+            if data.session_id.is_empty()
+                || data.session_id.len() > crate::MAX_NATIVE_JOIN_NONCE_BYTES
+                || data.session_id.chars().any(char::is_control)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "LAN peer advertises an invalid admission nonce",
+                ));
+            }
+        } else if !data.flag_b || data.session_id.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "LAN peer does not advertise self-signed admission with a nonce",
@@ -174,9 +206,15 @@ impl LanTransport {
             attempts: 1,
             ..ConnectionConfig::default()
         };
+        if let Some(identity) = identity {
+            config.identity = Some(std::sync::Arc::clone(&identity.identity));
+            config.server_trust = Some(identity.trust.clone());
+        }
         if selected.is_some() {
             config.server_trust = Some(super::super::authentication::offline_answer_trust());
             config.allow_anonymous_answers = true;
+        }
+        if selected.is_some() || identity.is_some() {
             config.client_ice = Some(ClientIceConfig {
                 turn_streams: Vec::new(),
                 turn_tls: None,
@@ -194,6 +232,9 @@ impl LanTransport {
         let connection = NetherClient::connect_with(signaling, id.to_string(), config)
             .await
             .map_err(io::Error::other)?;
+        if let Some(deadline) = deadline {
+            check_deadline(deadline)?;
+        }
         Ok((Self::new(connection, data.session_id), id))
     }
 
@@ -217,11 +258,8 @@ impl LanTransport {
         message: Bytes,
         deadline: Option<Instant>,
     ) -> io::Result<()> {
-        if deadline.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "signed credential admission requires an authenticated transport",
-            ));
+        if let Some(deadline) = deadline {
+            super::super::authentication::ensure_current(deadline, Instant::now())?;
         }
         let Connection::Established(connection) = self
             .connection
@@ -231,7 +269,13 @@ impl LanTransport {
             return Err(super::closing());
         };
         let sender = connection.sender();
-        let sending = async { sender.send(message).await.map_err(io::Error::other) };
+        let sending = async {
+            match deadline {
+                Some(deadline) => sender.send_before(message, deadline).await,
+                None => sender.send(message).await,
+            }
+            .map_err(io::Error::other)
+        };
         let incoming = futures::stream::unfold(connection, |connection| async move {
             match connection.recv().await {
                 Ok(Some(message)) => Some((Ok(message), connection)),
@@ -239,7 +283,11 @@ impl LanTransport {
                 Err(error) => Some((Err(io::Error::other(error)), connection)),
             }
         });
-        self.inbox.send(sending, incoming).await
+        let result = self.inbox.send(sending, incoming).await;
+        if let Some(deadline) = deadline {
+            super::super::authentication::ensure_current(deadline, Instant::now())?;
+        }
+        result
     }
 
     /// Drains previously accepted wire messages before the retained live or retired receiver.

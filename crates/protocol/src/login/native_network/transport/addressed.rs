@@ -1,6 +1,6 @@
 //! Address discovery and first-use authorization on the original native join lifetime.
 
-use super::{Transport, endpoint, http};
+use super::{Transport, endpoint, http, identity::TransportIdentity};
 use crate::NativeConnectionTarget;
 mod cache;
 #[cfg(test)]
@@ -25,7 +25,7 @@ fn probes() -> &'static Mutex<ProbeCache> {
 /// Selects once and carries the actual HTTP association into the same Login/pack/spawn driver.
 pub(in crate::login::native_network) async fn connect(
     target: &NativeConnectionTarget,
-    identity: http::HttpIdentity,
+    identity: TransportIdentity,
     deadline: tokio::time::Instant,
 ) -> io::Result<(Transport, String)> {
     let route = target.addressed_route()?;
@@ -59,7 +59,7 @@ pub(in crate::login::native_network) async fn connect(
         None => {
             let target = route.raknet_target();
             let address = target.address.clone();
-            endpoint::connect(&target, cutoff)
+            endpoint::connect(&target, None, cutoff)
                 .await
                 .map(|transport| (transport, address))
         }
@@ -133,7 +133,7 @@ async fn probe(
 /// Authorizes only an already verified Ready key, retaining its exact selected URL and original proof.
 async fn connect_http(
     selected: &str,
-    identity: &http::HttpIdentity,
+    identity: &TransportIdentity,
     http_client: &reqwest::Client,
     trust: &dyn crate::NativeServerTrust,
     deadline: tokio::time::Instant,

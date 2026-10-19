@@ -140,10 +140,14 @@ fn startup_account_preserves_offline_scope_and_rejects_a_lost_selected_cache() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     for endpoint in [
         protocol::SessionEndpoint::Core(layout.runtime_root.clone()),
-        protocol::SessionEndpoint::Native(protocol::NativeConnectionTarget::new(
-            "127.0.0.1:19132".into(),
-            protocol::NativeTransport::NetherNetLan,
-        )),
+        protocol::SessionEndpoint::Native(
+            protocol::NativeConnectionTarget::local_lan(
+                "127.0.0.1:19132".parse().unwrap(),
+                "World".into(),
+                protocol::NATIVE_JOIN_TIMEOUT,
+            )
+            .unwrap(),
+        ),
     ] {
         assert!(
             controller

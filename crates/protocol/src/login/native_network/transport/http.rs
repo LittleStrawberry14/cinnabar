@@ -1,23 +1,15 @@
 //! Full-ICE HTTP signaling using the original native proof and accepted transport owners.
 
-use super::Transport;
-use nethernet::identity::{SdpIdentity, TokenTrust};
+use super::{Transport, identity::TransportIdentity};
 use nethernet_tokio::{
     ClientIceConfig, ConnectionConfig, NetherClient, signaling::http::HttpSignaling,
 };
 use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
-/// Original proof and policy; neither metadata nor a status response grants account authority.
-pub(in crate::login::native_network) struct HttpIdentity {
-    pub(in crate::login::native_network) identity: Arc<dyn SdpIdentity>,
-    pub(in crate::login::native_network) trust: TokenTrust,
-    pub(in crate::login::native_network) expires: Option<Instant>,
-}
-
 /// Uses the same actual ready association/Inbox/retirement owner as accepting connections.
 pub(in crate::login::native_network) async fn connect(
     address: SocketAddr,
-    identity: HttpIdentity,
+    identity: TransportIdentity,
     deadline: tokio::time::Instant,
 ) -> io::Result<Transport> {
     if !address.ip().is_loopback() || address.port() == 0 {
@@ -74,7 +66,7 @@ pub(super) fn client(deadline: tokio::time::Instant) -> io::Result<reqwest::Clie
 /// Establishes one actual HTTP/ICE/DTLS/SCTP association, retaining the original proof and cutoff.
 pub(super) async fn dial(
     endpoint: &str,
-    identity: &HttpIdentity,
+    identity: &TransportIdentity,
     client: reqwest::Client,
     bind: Option<SocketAddr>,
     deadline: tokio::time::Instant,
