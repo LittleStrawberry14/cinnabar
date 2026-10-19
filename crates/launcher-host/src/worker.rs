@@ -1,6 +1,6 @@
 //! Completion accounting for existing application-owned OS workers.
 
-use tokio_util::task::{TaskTracker, TaskTrackerToken};
+use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 
 /// Arms completion before spawn and retains it through the body's captures, return or unwind.
 pub(crate) fn tracked<F: FnOnce()>(work: F, tasks: &TaskTracker) -> impl FnOnce() + use<F> {
