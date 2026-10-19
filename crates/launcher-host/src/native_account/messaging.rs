@@ -8,7 +8,7 @@ use prepare::check_preparation_deadline;
 impl NativeAccount {
     /// Prepares signed NetherNet on the same selected account that mints its multiplayer token.
     ///
-    /// The caller supplies a validated peer UUID and join nonce obtained from an
+    /// The caller supplies a typed signaling route and join nonce obtained from an
     /// explicit admission flow. This does not join MPSD, resolve cards, host a world
     /// or admit a friend listing. Poll on the existing session runtime; dropping
     /// the future retires its socket and persists already visible OAuth rotation.
@@ -60,15 +60,9 @@ impl NativeAccount {
         protocol::NativeConnectionTarget,
         protocol::NativeAuthentication,
     )> {
-        let peer = target.peer();
+        let peer = target.recipient().clone();
         let (prepared, authentication) = self
-            .prepare_messaging_socket_borrowed(
-                operation,
-                Recipient::Messaging(peer),
-                claims,
-                random_id,
-                deadline,
-            )
+            .prepare_messaging_socket_borrowed(operation, peer, claims, random_id, deadline)
             .await?;
         let endpoint = target.connection_target();
         let authentication = authentication.with_messaging(prepared, target)?;

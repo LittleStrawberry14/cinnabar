@@ -204,9 +204,7 @@ impl NativeAuthentication {
         prepared: bedrock_net::messaging::PreparedMessaging,
         target: crate::NativeMessagingTarget,
     ) -> io::Result<Self> {
-        if self.messaging.is_some()
-            || !matches!(prepared.recipient(), bedrock_net::messaging::Recipient::Messaging(peer) if *peer == target.peer())
-        {
+        if self.messaging.is_some() || !target.matches_recipient(prepared.recipient()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "native messaging target mismatch",
@@ -222,7 +220,7 @@ impl NativeAuthentication {
     /// Realm or Gathering join on the same acquired account. This method checks transport
     /// consistency, not membership. These services do not supply a joined-friend admission nonce.
     /// Present answers retain provider verification and the originally minted key.
-    /// Only the legacy service route may omit its answer identity.
+    /// Legacy service routes may omit their answer identity.
     pub fn with_service_messaging(
         mut self,
         prepared: bedrock_net::messaging::PreparedMessaging,

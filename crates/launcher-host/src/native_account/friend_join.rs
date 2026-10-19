@@ -9,6 +9,7 @@ use super::directory::{
     rta_error, service, socket_error,
 };
 use super::{NativeAccount, Operation};
+use bedrock_net::messaging::Recipient;
 use bedrock_services::xbox::{mpsd, rta};
 use rta::websocket::{Options, RtaSocket, SocketError};
 use sha2::{Digest, Sha256};
@@ -51,14 +52,14 @@ impl NativeFriendSelection {
 /// No Debug or serialization: the nonce authorizes this player's game login.
 pub struct FriendAdmission {
     scope: Scope,
-    peer: Uuid,
+    recipient: Recipient,
     nonce: zeroize::Zeroizing<String>,
 }
 
 impl FriendAdmission {
-    /// Returns the joined host's Player Messaging UUID, never an activity's advertised endpoint.
-    pub fn peer(&self) -> Uuid {
-        self.peer
+    /// Borrows the joined host's exact signaling route, never an activity's advertised endpoint.
+    pub fn recipient(&self) -> &Recipient {
+        &self.recipient
     }
 
     /// Checks the existing leased account immediately before the caller mints a connection credential.
@@ -66,10 +67,21 @@ impl FriendAdmission {
         self.scope.check(operation)
     }
 
-    /// Moves the immutable joined peer and nonce to the owned networking handoff.
+    /// Moves the immutable joined route and nonce to the owned networking handoff.
     /// Keep the originating FriendJoin alive, drive it through play, and explicitly close it.
-    pub fn into_parts(mut self) -> (Uuid, String) {
-        (self.peer, std::mem::take(&mut *self.nonce))
+    pub fn into_parts(mut self) -> (Recipient, String) {
+        (self.recipient, std::mem::take(&mut *self.nonce))
+    }
+
+    /// Revokes the original admission if its dialect, exact route or player nonce changes.
+    fn matches_identity(&self, original: &(Recipient, [u8; 32])) -> bool {
+        let same_route = match (&self.recipient, &original.0) {
+            (Recipient::Messaging(current), Recipient::Messaging(previous)) => current == previous,
+            (Recipient::Legacy(current), Recipient::Legacy(previous)) => current == previous,
+            _ => false,
+        };
+        let nonce: [u8; 32] = Sha256::digest(self.nonce.as_bytes()).into();
+        same_route && nonce == original.1
     }
 }
 
@@ -103,7 +115,7 @@ pub struct FriendJoin {
     deadline: Instant,
     admitted: bool,
     prepared: bool,
-    admission_identity: Option<(Uuid, [u8; 32])>,
+    admission_identity: Option<(Recipient, [u8; 32])>,
     closing: bool,
     closed: bool,
 }
@@ -228,8 +240,8 @@ impl FriendJoin {
         }
         let admission = self.current_admission()?;
         admission.validate(&operation)?;
-        let (peer, nonce) = admission.into_parts();
-        let target = protocol::NativeMessagingTarget::new(peer, nonce)?;
+        let (recipient, nonce) = admission.into_parts();
+        let target = protocol::NativeMessagingTarget::new(recipient, nonce)?;
         let account = Arc::clone(&self.account);
         let prepared = service(
             self.socket
@@ -374,7 +386,7 @@ impl FriendJoin {
                 }
                 check_deadline(self.deadline)?;
                 self.admission_identity = Some((
-                    admission.peer,
+                    admission.recipient.clone(),
                     Sha256::digest(admission.nonce.as_bytes()).into(),
                 ));
                 self.admitted = true;
@@ -696,11 +708,10 @@ impl FriendJoin {
             &self.selection.host,
         )?
         .ok_or_else(|| invalid("friend-world admission was revoked"))?;
-        if self.admission_identity
-            != Some((
-                admission.peer,
-                Sha256::digest(admission.nonce.as_bytes()).into(),
-            ))
+        if !self
+            .admission_identity
+            .as_ref()
+            .is_some_and(|original| admission.matches_identity(original))
         {
             return Err(invalid("friend-world admission identity changed"));
         }

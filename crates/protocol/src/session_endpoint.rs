@@ -24,7 +24,7 @@ pub enum NativeTransport {
     NetherNetLan,
     /// Protected Player Messaging with signed SDP and explicit friend or service admission.
     NetherNetMessaging,
-    /// Original string-routed WebSocket signaling from an authenticated service join.
+    /// Original string-routed WebSocket signaling from an authenticated service or joined friend.
     NetherNetLegacy,
     /// HTTP/full-ICE signaling to an explicitly selected numeric loopback world process.
     LocalNetherNetHttp,
@@ -32,21 +32,30 @@ pub enum NativeTransport {
     LocalNetherNetLan,
 }
 
-/// An explicit Player Messaging route, distinct from a discovery listing.
+/// An explicit signaling route, distinct from a discovery listing.
 /// Friend nonces come from joined-session admission; service routes have their own private policy.
 /// No Debug implementation exposes the admission challenge.
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 pub struct NativeMessagingTarget {
-    peer: uuid::Uuid,
+    recipient: bedrock_net::messaging::Recipient,
     nonce: zeroize::Zeroizing<String>,
 }
 
 #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
 impl NativeMessagingTarget {
-    /// Validates the peer messaging UUID and a finite, nonempty opaque join nonce before any I/O.
-    pub fn new(peer: uuid::Uuid, nonce: String) -> std::io::Result<Self> {
+    /// Validates an explicit route and finite, nonempty opaque join nonce before any I/O.
+    /// The caller still owns joined-session authority and the legacy route's metadata validation.
+    pub fn new(
+        recipient: bedrock_net::messaging::Recipient,
+        nonce: String,
+    ) -> std::io::Result<Self> {
+        use bedrock_net::messaging::Recipient;
         let nonce = zeroize::Zeroizing::new(nonce);
-        if peer.is_nil()
+        let invalid_peer = match &recipient {
+            Recipient::Messaging(peer) => peer.is_nil(),
+            Recipient::Legacy(peer) => peer.is_empty() || peer.chars().any(char::is_control),
+        };
+        if invalid_peer
             || nonce.is_empty()
             || nonce.len() > MAX_NATIVE_JOIN_NONCE_BYTES
             || nonce.chars().any(char::is_control)
@@ -56,17 +65,35 @@ impl NativeMessagingTarget {
                 "invalid native messaging join target",
             ));
         }
-        Ok(Self { peer, nonce })
+        Ok(Self { recipient, nonce })
     }
 
-    /// Returns the exact Player Messaging recipient supplied by the admission owner.
-    pub fn peer(&self) -> uuid::Uuid {
-        self.peer
+    /// Borrows the exact signaling dialect and route supplied by the admission owner.
+    pub fn recipient(&self) -> &bedrock_net::messaging::Recipient {
+        &self.recipient
     }
 
     /// Produces the sole endpoint eligible for this prepared account handoff.
     pub fn connection_target(&self) -> NativeConnectionTarget {
-        NativeConnectionTarget::new(self.peer.to_string(), NativeTransport::NetherNetMessaging)
+        use bedrock_net::messaging::Recipient;
+        match &self.recipient {
+            Recipient::Messaging(peer) => {
+                NativeConnectionTarget::new(peer.to_string(), NativeTransport::NetherNetMessaging)
+            }
+            Recipient::Legacy(peer) => {
+                NativeConnectionTarget::new(peer.clone(), NativeTransport::NetherNetLegacy)
+            }
+        }
+    }
+
+    /// Requires the prepared socket to retain this exact dialect and joined route.
+    pub(crate) fn matches_recipient(&self, recipient: &bedrock_net::messaging::Recipient) -> bool {
+        use bedrock_net::messaging::Recipient;
+        match (&self.recipient, recipient) {
+            (Recipient::Messaging(expected), Recipient::Messaging(actual)) => expected == actual,
+            (Recipient::Legacy(expected), Recipient::Legacy(actual)) => expected == actual,
+            _ => false,
+        }
     }
 
     /// Borrows the joined-session admission challenge only for signed client data.
@@ -184,22 +211,55 @@ mod tests {
     /// A listing cannot supply an absent peer/challenge or an unbounded join handoff.
     #[test]
     fn messaging_target_requires_an_explicit_finite_join_challenge() {
+        use bedrock_net::messaging::Recipient;
         let peer = uuid::Uuid::from_u128(1);
         for nonce in [
             String::new(),
             "invalid\nchallenge".into(),
             "x".repeat(MAX_NATIVE_JOIN_NONCE_BYTES + 1),
         ] {
-            assert!(NativeMessagingTarget::new(peer, nonce).is_err());
+            assert!(NativeMessagingTarget::new(Recipient::Messaging(peer), nonce).is_err());
         }
-        assert!(NativeMessagingTarget::new(uuid::Uuid::nil(), "challenge".into()).is_err());
-        let target = NativeMessagingTarget::new(peer, "synthetic-challenge".into()).unwrap();
+        assert!(
+            NativeMessagingTarget::new(Recipient::Messaging(uuid::Uuid::nil()), "challenge".into())
+                .is_err()
+        );
+        let target =
+            NativeMessagingTarget::new(Recipient::Messaging(peer), "synthetic-challenge".into())
+                .unwrap();
         let endpoint = target.connection_target();
         assert_eq!(endpoint.transport, NativeTransport::NetherNetMessaging);
         assert_eq!(endpoint.address, peer.to_string());
         assert_eq!(target.nonce(), "synthetic-challenge");
 
-        assert!(NativeMessagingTarget::new(peer, String::new()).is_err());
+        assert!(NativeMessagingTarget::new(Recipient::Messaging(peer), String::new()).is_err());
+    }
+
+    /// Joined legacy projects its original string route and never loses its nonce or dialect fence.
+    #[test]
+    fn joined_legacy_target_keeps_its_original_route_and_nonce() {
+        use bedrock_net::messaging::Recipient;
+        let target = NativeMessagingTarget::new(
+            Recipient::Legacy("42".into()),
+            "synthetic-challenge".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            target.connection_target().transport,
+            NativeTransport::NetherNetLegacy
+        );
+        assert_eq!(target.connection_target().address, "42");
+        assert_eq!(target.nonce(), "synthetic-challenge");
+        assert!(target.matches_recipient(&Recipient::Legacy("42".into())));
+        assert!(!target.matches_recipient(&Recipient::Legacy("43".into())));
+        assert!(!target.matches_recipient(&Recipient::Messaging(uuid::Uuid::from_u128(42))));
+        for recipient in [
+            Recipient::Legacy(String::new()),
+            Recipient::Legacy("bad\nroute".into()),
+        ] {
+            assert!(NativeMessagingTarget::new(recipient, "challenge".into()).is_err());
+        }
+        assert!(NativeMessagingTarget::new(Recipient::Legacy("42".into()), String::new()).is_err());
     }
 }
 

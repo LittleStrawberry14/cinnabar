@@ -1,7 +1,10 @@
 //! Interpretation of title metadata from a complete joined directory snapshot.
 
-use super::super::world_metadata::{JSON_RPC_SIGNALING, NETHERNET_TRANSPORT, field};
+use super::super::world_metadata::{
+    JSON_RPC_SIGNALING, NETHERNET_TRANSPORT, WEBSOCKET_SIGNALING, field,
+};
 use super::{FriendAdmission, Scope, invalid};
+use bedrock_net::messaging::Recipient;
 use bedrock_services::xbox::mpsd;
 use serde_json::{Map, Value};
 use std::io;
@@ -55,10 +58,15 @@ pub(super) fn admission(
     let connections = field(custom, "SupportedConnections")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("friend world has no connections"))?;
-    let peer = connections
+    let recipient = connections
         .iter()
         .filter_map(Value::as_object)
         .find_map(|connection| {
+            if integer(connection, "ConnectionType") == Some(WEBSOCKET_SIGNALING) {
+                return text(connection, "RakNetGUID")
+                    .filter(|peer| usable_network_id(peer))
+                    .map(|peer| Recipient::Legacy(peer.to_owned()));
+            }
             if integer(connection, "ConnectionType") != Some(JSON_RPC_SIGNALING) {
                 return None;
             }
@@ -73,13 +81,14 @@ pub(super) fn admission(
                     text(connection, "PmsgId")
                         .and_then(|value| Uuid::parse_str(value).ok())
                         .filter(|value| !value.is_nil())
+                        .map(Recipient::Messaging)
                 })
                 .flatten()
         })
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Unsupported,
-                "friend world has no native Player Messaging connection",
+                "friend world has no supported signaling connection",
             )
         })?;
     let Some(nonces) = field(custom, "nonces") else {
@@ -101,7 +110,7 @@ pub(super) fn admission(
         .ok_or_else(|| invalid("invalid friend-world admission nonce"))?;
     Ok(Some(FriendAdmission {
         scope: scope.clone(),
-        peer,
+        recipient,
         nonce: zeroize::Zeroizing::new(nonce.to_owned()),
     }))
 }

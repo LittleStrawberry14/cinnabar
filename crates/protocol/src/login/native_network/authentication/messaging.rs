@@ -54,9 +54,14 @@ impl MessagingTarget {
         }
     }
 
-    /// Missing-only answer admission is confined to the actual authenticated legacy service route.
+    /// Only an explicit authenticated legacy route permits a missing answer identity.
+    /// Joined friends retain their original Login nonce; present assertions still use provider trust.
     pub(in crate::login::native_network) fn allow_anonymous_answers(&self) -> bool {
-        matches!(self, Self::Service(Recipient::Legacy(_)))
+        let recipient = match self {
+            Self::Joined(target) => target.recipient(),
+            Self::Service(recipient) => recipient,
+        };
+        matches!(recipient, Recipient::Legacy(_))
     }
 }
 
@@ -144,6 +149,32 @@ mod tests {
     use super::*;
     use nethernet::identity::{Identity, jwk::EcJwk, jwt::Jws};
     use std::time::{Duration, UNIX_EPOCH};
+
+    /// Legacy answer policy does not turn joined Login admission into a nonce-free service route.
+    #[test]
+    fn joined_legacy_preserves_nonce_and_explicit_missing_only_answer_policy() {
+        let joined = MessagingTarget::Joined(
+            crate::NativeMessagingTarget::new(
+                Recipient::Legacy("42".into()),
+                "original-player-nonce".into(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(joined.nonce(), "original-player-nonce");
+        assert!(joined.allow_anonymous_answers());
+        let messaging = MessagingTarget::Joined(
+            crate::NativeMessagingTarget::new(
+                Recipient::Messaging(uuid::Uuid::from_u128(7)),
+                "original-player-nonce".into(),
+            )
+            .unwrap(),
+        );
+        assert!(!messaging.allow_anonymous_answers());
+        assert_eq!(messaging.nonce(), "original-player-nonce");
+        let service = MessagingTarget::Service(Recipient::Legacy("42".into()));
+        assert_eq!(service.nonce(), "");
+        assert!(service.allow_anonymous_answers());
+    }
 
     /// Host UTC and generic JWT leeway cannot extend the mint's hard monotonic admission deadline.
     #[test]

@@ -36,10 +36,9 @@ fn joined_snapshot_requires_the_selected_host_and_actual_local_membership() {
     let admission = world::admission(&description, &scope(), "456")
         .unwrap()
         .unwrap();
-    assert_eq!(
-        admission.into_parts(),
-        (Uuid::from_u128(7), "synthetic-player-admission".into())
-    );
+    let (recipient, nonce) = admission.into_parts();
+    assert!(matches!(recipient, Recipient::Messaging(peer) if peer == Uuid::from_u128(7)));
+    assert_eq!(nonce, "synthetic-player-admission");
 
     let mut value = snapshot();
     value["members"]["me"] = Value::Null;
@@ -116,4 +115,89 @@ fn joined_legacy_snapshot_admits_its_own_member_nonce() {
     );
     let admission = result.unwrap().expect("joined player's original nonce");
     assert_eq!(admission.into_parts().1, "synthetic-player-admission");
+}
+
+/// Dialect and route come from the first usable joined connection, not an unrelated advertised ID.
+#[test]
+fn joined_connection_order_and_exact_legacy_route_remain_part_of_admission() {
+    let mut value = snapshot();
+    let connections = value["properties"]["custom"]["SupportedConnections"]
+        .as_array_mut()
+        .unwrap();
+    connections.insert(
+        1,
+        json!({
+            "ConnectionType":super::super::world_metadata::WEBSOCKET_SIGNALING,
+            "RakNetGUID":"42", "NetherNetId":"ignored", "PmsgId":Uuid::from_u128(8)
+        }),
+    );
+    let admission = world::admission(
+        &serde_json::from_value(value.clone()).unwrap(),
+        &scope(),
+        "456",
+    )
+    .unwrap()
+    .unwrap();
+    assert!(matches!(admission.recipient(), Recipient::Legacy(peer) if peer == "42"));
+    let original = (
+        admission.recipient().clone(),
+        Sha256::digest(admission.nonce.as_bytes()).into(),
+    );
+    assert!(admission.matches_identity(&original));
+    for change in ["route", "dialect", "nonce"] {
+        let mut changed = value.clone();
+        match change {
+            "route" => {
+                changed["properties"]["custom"]["SupportedConnections"][1]["RakNetGUID"] =
+                    json!("43")
+            }
+            "dialect" => {
+                changed["properties"]["custom"]["SupportedConnections"]
+                    .as_array_mut()
+                    .unwrap()
+                    .remove(1);
+            }
+            "nonce" => {
+                changed["properties"]["custom"]["nonces"]["123"] = json!("replacement-nonce")
+            }
+            _ => unreachable!(),
+        }
+        let changed = world::admission(&serde_json::from_value(changed).unwrap(), &scope(), "456")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !changed.matches_identity(&original),
+            "{change} retained old admission"
+        );
+    }
+}
+
+/// A type3 connection must use its own valid string RakNetGUID; malformed neighbors cannot redirect it.
+#[test]
+fn unusable_legacy_fields_do_not_replace_the_joined_jsonrpc_route() {
+    for legacy in [
+        json!(null),
+        json!(0),
+        json!("0"),
+        json!("0007"),
+        json!("host:19132"),
+    ] {
+        let mut value = snapshot();
+        value["properties"]["custom"]["SupportedConnections"]
+            .as_array_mut()
+            .unwrap()
+            .insert(
+                1,
+                json!({
+                    "ConnectionType":super::super::world_metadata::WEBSOCKET_SIGNALING,
+                    "RakNetGUID":legacy, "NetherNetId":42, "PmsgId":Uuid::from_u128(8)
+                }),
+            );
+        let admission = world::admission(&serde_json::from_value(value).unwrap(), &scope(), "456")
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(admission.recipient(), Recipient::Messaging(peer) if *peer == Uuid::from_u128(7))
+        );
+    }
 }

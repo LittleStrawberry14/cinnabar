@@ -471,7 +471,7 @@ async fn borrowed_messaging_cannot_reuse_another_account_operation() {
     );
     let mut operation = first.begin().unwrap();
     let target = protocol::NativeMessagingTarget::new(
-        uuid::Uuid::from_u128(1),
+        bedrock_net::messaging::Recipient::Messaging(uuid::Uuid::from_u128(1)),
         "synthetic-joined-challenge".into(),
     )
     .unwrap();
