@@ -2,6 +2,7 @@
 
 mod accepted;
 mod endpoint;
+pub(super) mod http;
 mod inbox;
 mod lan;
 mod messaging;
@@ -30,6 +31,7 @@ pub(super) enum Transport {
     NetherNetLan(Box<LanTransport>),
     Messaging(Box<MessagingTransport>),
     Accepted(Box<AcceptedTransport>),
+    LocalHttp(Box<AcceptedTransport>),
 }
 
 impl Transport {
@@ -91,6 +93,12 @@ impl Transport {
         messaging: Option<super::authentication::MessagingAdmission>,
         deadline: tokio::time::Instant,
     ) -> io::Result<Self> {
+        if target.transport == NativeTransport::LocalNetherNetHttp {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "local HTTP requires its original Login proof",
+            ));
+        }
         if target.transport == NativeTransport::NetherNetMessaging {
             return MessagingTransport::connect(target, messaging)
                 .await
@@ -123,7 +131,7 @@ impl Transport {
             Self::RakNet(_) => BatchHeader::RakNet,
             Self::NetherNetLan(_) => BatchHeader::NetherNet,
             Self::Messaging(_) => BatchHeader::NetherNet,
-            Self::Accepted(_) => BatchHeader::NetherNet,
+            Self::Accepted(_) | Self::LocalHttp(_) => BatchHeader::NetherNet,
         }
     }
 
@@ -143,6 +151,13 @@ impl Transport {
             Self::RakNet(transport) => transport.send_until(message, deadline).await,
             Self::NetherNetLan(transport) => transport.send_until(message, deadline).await,
             Self::Accepted(transport) => transport.send_until(message, deadline).await,
+            Self::LocalHttp(transport) => {
+                let result = transport.send_until(message, deadline).await;
+                if let Some(deadline) = deadline {
+                    super::authentication::ensure_current(deadline, Instant::now())?;
+                }
+                result
+            }
         }
     }
 
@@ -152,7 +167,7 @@ impl Transport {
             Self::Messaging(transport) => transport.recv().await,
             Self::RakNet(transport) => transport.recv().await,
             Self::NetherNetLan(transport) => transport.recv().await,
-            Self::Accepted(transport) => transport.recv().await,
+            Self::Accepted(transport) | Self::LocalHttp(transport) => transport.recv().await,
         }
     }
 
@@ -176,7 +191,7 @@ impl Transport {
                 transport.close();
                 Ok(())
             }
-            Self::Accepted(transport) => {
+            Self::Accepted(transport) | Self::LocalHttp(transport) => {
                 transport.close();
                 Ok(())
             }

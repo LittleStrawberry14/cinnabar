@@ -7,6 +7,7 @@ mod provider;
 pub use provider::NativeProvider;
 mod verifier;
 pub(super) use messaging::MessagingAdmission;
+pub(super) use messaging::identity_policy;
 pub use verifier::NativeTokenVerifier;
 
 use crate::login::client_data::{NativeClaims, RawClientData};
@@ -245,7 +246,7 @@ impl NativeAuthentication {
                     Arc::clone(&key),
                     &self.token,
                     self.clock,
-                    self.verifier,
+                    Arc::clone(&self.verifier),
                     self.expires,
                 )
             })
@@ -257,6 +258,10 @@ impl NativeAuthentication {
             expires: self.expires,
             identity: self.identity,
             messaging,
+            sdp: SdpPolicy {
+                clock: self.clock,
+                verifier: self.verifier,
+            },
         })
     }
 }
@@ -269,6 +274,13 @@ pub(super) struct AuthenticationHandoff {
     pub(super) expires: Instant,
     pub(super) identity: crate::session_wire::SessionIdentity,
     pub(super) messaging: Option<MessagingAdmission>,
+    pub(super) sdp: SdpPolicy,
+}
+
+/// Pure original credential policy retained only for an actual signaling consumer.
+pub(super) struct SdpPolicy {
+    pub(super) clock: NativeServiceClock,
+    pub(super) verifier: Arc<NativeTokenVerifier>,
 }
 
 /// The mint's original calibrated service observation, shared by local SDP and peer verification.

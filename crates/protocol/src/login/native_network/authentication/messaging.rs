@@ -45,7 +45,7 @@ impl MessagingAdmission {
 }
 
 /// Shares one qualified key and calibrated policy between connecting and accepting transport owners.
-pub(super) fn identity_policy(
+pub(in crate::login::native_network) fn identity_policy(
     key: Arc<SigningKey>,
     token: &str,
     clock: NativeServiceClock,

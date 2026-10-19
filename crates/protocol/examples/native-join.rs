@@ -7,16 +7,18 @@ use protocol::{
 use std::{error::Error, io, io::Write, time::Duration};
 
 /// Joins an explicitly supplied signed-out test server and receives its world stream.
+/// Local HTTP assumes the caller owns/admitted that loopback process; address syntax grants no account authority.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let transport = match args.next().as_deref() {
         Some("raknet") => NativeTransport::RakNet,
         Some("nethernet-lan") => NativeTransport::NetherNetLan,
+        Some("local-nethernet-http") => NativeTransport::LocalNetherNetHttp,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "usage: native-join <raknet|nethernet-lan> HOST:PORT",
+                "usage: native-join <raknet|nethernet-lan|local-nethernet-http> HOST:PORT",
             )
             .into());
         }
