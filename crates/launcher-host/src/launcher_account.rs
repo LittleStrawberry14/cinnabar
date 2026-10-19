@@ -117,6 +117,8 @@ struct Snapshot {
     native_host_invitation: Option<crate::native_account::HostedInvitation>,
     /// The Cinnabar API identity and visibility the events worker keeps the core configured with.
     cinnabar_api: Option<bridge::CinnabarApiConfig>,
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    native_product_api: Option<crate::product_api::Client>,
     shared_players: shared_players::Exchange,
     /// Roster identifiers the API reports as Cinnabar players; replaced whole on change.
     cinnabar_players: Arc<std::collections::HashSet<String>>,
@@ -155,6 +157,12 @@ impl Snapshot {
     /// Retires values tied to the old account before accepting responses for another identity.
     fn retire_account_data(&mut self) {
         self.shared_players = shared_players::Exchange::default();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Some(api) = &self.native_product_api {
+            api.retire_account();
+            self.cinnabar_players = Arc::default();
+            self.cinnabar_roster_key = None;
+        }
         self.auth_generation = self.auth_generation.wrapping_add(1);
         self.realms = None;
         self.friends = None;
@@ -234,6 +242,10 @@ impl Drop for LauncherAccount {
     fn drop(&mut self) {
         profile_worker::stop(&self.profile_refresh);
         self.with(|snapshot| {
+            #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+            if let Some(api) = &snapshot.native_product_api {
+                api.stop();
+            }
             if let Some(wake) = &snapshot.home_cancel {
                 wake.send_replace(home_feed::Wake::Stop);
             }
@@ -282,6 +294,7 @@ impl LauncherAccount {
                 realm_source: realm_membership::Source::Native(account.clone()),
                 home_source: home_feed::Source::Native(account.clone()),
                 featured_source: featured_feed::Source::Native(account.clone()),
+                native_product_api: Some(crate::product_api::Client::default()),
                 home_language: if language.is_empty() {
                     bridge::contract::DEFAULT_SERVICE_LANGUAGE.to_owned()
                 } else {

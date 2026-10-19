@@ -15,6 +15,7 @@ mod operation;
 mod people;
 mod prepare;
 pub(crate) mod presence;
+mod product_api;
 mod profile;
 mod read_identity;
 mod realms;
@@ -36,6 +37,7 @@ pub use hosted_world::{
 };
 pub(crate) use hosted_world::{HostSlot, HostedInvitation};
 pub(crate) use people::NativePeople;
+pub(crate) use product_api::{ApiCredential, ApiScope};
 pub(crate) use profile::NativeProfile;
 pub use realms::is_realm_target;
 pub(crate) use realms::membership::{PreparedRealmMembership, RealmMembershipResult};

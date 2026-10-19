@@ -1184,6 +1184,12 @@ screen-effect parity remain incomplete.
 - The account core keeps an optional WebSocket to the Cinnabar API (`core/cinnabarapi`). It dials
   before minting and reuses unexpired key-bound credentials with fresh challenge proofs. Negotiated
   limits, retry minima, reconnect jitter and bounded frame-rejection retries control its traffic.
+- The optional native backend owns the same product connection on the existing account event
+  executor. Its selected account mints the key-bound token after dial under one authentication
+  deadline, then releases its credential lease before the socket lifetime. Native lookups,
+  nearby playback, loadouts and release notices use the existing launcher records and caches;
+  a missing native account stays offline. The new source and loopback controls await execution
+  on the coherent dependency graph, independent review and deployed-service acceptance.
 - Player lookups prioritize new joiners, drain coalesced refresh rounds, expire visible positives and discard
   older-session replies. Release notices include manifest builds and schedule jittered checks with
   bounded retries for older signed manifests. Packaging rejects placeholder origins and announces
