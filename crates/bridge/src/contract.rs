@@ -74,6 +74,9 @@ pub const RELAY_RESUME_SECONDS: u32 = 120;
 /// Original pre-Hello and control write budget.
 pub const RELAY_HELLO_SECONDS: u32 = 10;
 
+/// Interval between operator certificate file reload attempts.
+pub const RELAY_CERTIFICATE_RELOAD_SECONDS: u32 = 60;
+
 /// Random bytes in one relay resume capability.
 pub const RELAY_RESUME_BYTES: usize = 32;
 

@@ -51,6 +51,8 @@ const (
 	RelayResumeSeconds = 120
 	// RelayHelloSeconds: Original pre-Hello and control write budget.
 	RelayHelloSeconds = 10
+	// RelayCertificateReloadSeconds: Interval between operator certificate file reload attempts.
+	RelayCertificateReloadSeconds = 60
 	// RelayResumeBytes: Random bytes in one relay resume capability.
 	RelayResumeBytes = 32
 	// RelayControlRequestBurst: Control request token-bucket burst.
