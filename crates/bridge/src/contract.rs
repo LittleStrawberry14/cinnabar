@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Largest session frame payload in bytes.
 pub const MAX_FRAME_LEN: usize = 67108864;
 
+/// Largest decoded upstream batch after NetworkSettings enables compression.
+pub const MAX_UPSTREAM_DECOMPRESSED_BATCH_BYTES: usize = 268435456;
+
 /// Largest control request or response payload in bytes.
 pub(crate) const CONTROL_MAX_FRAME_LEN: usize = 65536;
 
@@ -128,7 +131,7 @@ pub const GATEWAY_EGRESS_CANDIDATES: usize = 16;
 /// Maximum queued reliable frames or browser receive chunks.
 pub const QUEUED_FRAMES: usize = 16;
 
-/// Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+/// Incoming frame queue budget; a larger frame is admitted alone.
 pub const RELAY_QUEUED_FRAME_BYTES: usize = 8388608;
 
 /// Upload rate limiter burst, independent of message and queue limits.

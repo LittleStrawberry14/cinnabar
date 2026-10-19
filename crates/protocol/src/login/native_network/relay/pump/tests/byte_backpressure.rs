@@ -68,6 +68,59 @@ async fn desktop_count_only_ingress_keeps_the_original_capacity() {
     pump.await.unwrap();
 }
 
+#[tokio::test]
+async fn an_emitted_shared_packet_keeps_byte_credit_after_its_cursor_is_exhausted() {
+    let first = body(0..2);
+    let (mut pump, mut incoming, reads, source) =
+        fixture(Some(first.len()), [first, body(10..12), body(20..21)]).await;
+    assert!(futures::poll!(&mut pump).is_pending());
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    let first = incoming.recv().await.unwrap();
+    let CoreMessage::Batch(raw) = &first else {
+        panic!("expected the original generated packet")
+    };
+    assert_eq!(raw.len(), 1);
+    let retained = raw[0].clone();
+    assert_eq!(time(first), 0);
+    assert_eq!(time(incoming.recv().await.unwrap()), 1);
+
+    let next_before_release = {
+        let next = incoming.recv();
+        tokio::pin!(next);
+        // This actual receive exhausts the original cursor before waiting for its successor.
+        assert!(futures::poll!(&mut next).is_pending());
+        assert!(futures::poll!(&mut pump).is_pending());
+        match futures::poll!(&mut next) {
+            Poll::Ready(result) => Some(result.unwrap()),
+            Poll::Pending => None,
+        }
+    };
+    let released_before_last_view = next_before_release.is_some();
+    let reads_while_retained = reads.load(Ordering::SeqCst);
+    drop(retained);
+    let next = match next_before_release {
+        Some(next) => next,
+        None => {
+            assert!(futures::poll!(&mut pump).is_pending());
+            incoming.recv().await.unwrap()
+        }
+    };
+    assert_eq!(time(next), 10);
+    drop(incoming);
+    drop(source);
+    pump.await.unwrap();
+    drop(reads);
+
+    assert!(
+        !released_before_last_view,
+        "the emitted shared packet released byte credit before its last view was dropped"
+    );
+    assert_eq!(
+        reads_while_retained, 2,
+        "cursor exhaustion admitted another payload while its emitted view was retained"
+    );
+}
+
 /// Builds original generated packet bodies, not a parallel byte-accounting model.
 fn body(times: std::ops::Range<i32>) -> Bytes {
     crate::session_transport::batch_body(

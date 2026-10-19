@@ -26,11 +26,36 @@ pub(crate) const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 type PendingInput = Option<IncomingBody>;
 
-/// The original one body, with optional credit retained until its consumer releases the cursor.
+/// The original body and its optional incoming byte credit.
 #[derive(Debug)]
 pub(crate) struct IncomingBody {
     pub(crate) body: io::Result<Bytes>,
     pub(crate) permit: Option<ByteCredit>,
+}
+
+impl IncomingBody {
+    /// Keeps optional credit with every shared view of the original body.
+    pub(crate) fn into_body(self) -> io::Result<Bytes> {
+        match (self.body, self.permit) {
+            (Ok(body), Some(credit)) => Ok(Bytes::from_owner(CreditedBody {
+                body,
+                _credit: credit,
+            })),
+            (body, _) => body,
+        }
+    }
+}
+
+/// Drops the original bytes before returning their byte credit.
+struct CreditedBody {
+    body: Bytes,
+    _credit: ByteCredit,
+}
+
+impl AsRef<[u8]> for CreditedBody {
+    fn as_ref(&self) -> &[u8] {
+        &self.body
+    }
 }
 
 /// Transfers the same uncommitted incoming tail after the actual transport close attempt.
@@ -122,7 +147,7 @@ impl NativeReader {
     pub(super) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<io::Result<Bytes>>> {
         match self.incoming.poll_recv(cx) {
             Poll::Ready(None) => {}
-            other => return other.map(|item| item.map(|item| item.body)),
+            other => return other.map(|item| item.map(IncomingBody::into_body)),
         }
         match std::task::ready!(self.poll_driver(cx)) {
             Ok(Some(item)) => self.tail = Some(item),
@@ -130,7 +155,7 @@ impl NativeReader {
             Err(error) if !self.closed => self.failure = Some(error),
             Err(_) => {}
         }
-        Poll::Ready(self.tail.take().map(|item| item.body))
+        Poll::Ready(self.tail.take().map(IncomingBody::into_body))
     }
 }
 
@@ -270,7 +295,8 @@ impl NativeSender {
     }
 }
 
-/// Prepares the original count-bounded desktop driver without polling or spawning it.
+/// Prepares the original count-only incoming owner without polling or spawning it.
+#[cfg(test)]
 pub(crate) fn prepare(connection: impl PacketConnection) -> PreparedPump {
     prepare_with_byte_budget(connection, None)
 }
@@ -395,7 +421,7 @@ impl SessionTransport {
             incoming,
             stop,
             driver,
-        } = prepare(connection);
+        } = prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
         // Desktop keeps its original close-result policy and same joined pending-input transfer.
         let task = tokio::spawn(async move { driver.await.pending });
         Self {

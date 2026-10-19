@@ -5,6 +5,8 @@ package bridgecontract
 const (
 	// MaxFrameLen: Largest session frame payload in bytes.
 	MaxFrameLen = 67108864
+	// MaxUpstreamDecompressedBatchBytes: Largest decoded upstream batch after NetworkSettings enables compression.
+	MaxUpstreamDecompressedBatchBytes = 268435456
 	// MaxControlFrameLen: Largest control request or response payload in bytes.
 	MaxControlFrameLen = 65536
 	// MaxPingTargets: Most server addresses admitted in one ping request.
@@ -87,7 +89,7 @@ const (
 	GatewayEgressCandidates = 16
 	// QueuedFrames: Maximum queued reliable frames or browser receive chunks.
 	QueuedFrames = 16
-	// RelayQueuedFrameBytes: Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+	// RelayQueuedFrameBytes: Incoming frame queue budget; a larger frame is admitted alone.
 	RelayQueuedFrameBytes = 8388608
 	// RelayUploadBurstBytes: Upload rate limiter burst, independent of message and queue limits.
 	RelayUploadBurstBytes = 8388608
