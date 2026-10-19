@@ -62,7 +62,9 @@ impl Fixture {
         let tcp = listener.local_addr().unwrap();
         let mut config = gateway.quic_config().unwrap();
         if prefix_credit {
-            Arc::make_mut(&mut config.transport).stream_receive_window(1_u32.into());
+            Arc::get_mut(&mut config.transport)
+                .expect("fresh gateway transport configuration is uniquely owned")
+                .stream_receive_window(1_u32.into());
         }
         let udp = quinn::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let tcp_incoming = Box::pin(futures::stream::unfold(listener, |listener| async {
