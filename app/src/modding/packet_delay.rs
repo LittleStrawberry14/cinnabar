@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const _: () = assert!(mod_api::MAX_PACKET_DELAY_MS == bridge::contract::MAX_PACKET_DELAY_MS);
+
 const HEARTBEAT: Duration = Duration::from_secs(1);
 const POSITION_POLL: Duration = Duration::from_millis(50);
 const MAX_POSITION_AGE: Duration = Duration::from_millis(250);

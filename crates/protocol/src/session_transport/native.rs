@@ -15,8 +15,10 @@ use super::{PacketSender, Reader, SessionTransport};
 use crate::login::native_network::{Connection, PacketConnection};
 
 mod budget;
+pub(crate) mod delay;
 use budget::ByteBudget;
 pub(crate) use budget::ByteCredit;
+use delay::{Deadline, NativePacketDelay};
 
 const QUEUED_BATCHES: usize = 4;
 pub(crate) const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -132,17 +134,20 @@ impl NativeReader {
 
 #[derive(Clone)]
 pub(crate) struct NativeSender {
+    pub(crate) delay: NativePacketDelay,
     send: mpsc::Sender<SendBatch>,
     closed: Arc<Mutex<bool>>,
 }
 
 struct SendBatch {
     body: Bytes,
+    delay: Option<Deadline>,
     written: oneshot::Sender<io::Result<()>>,
 }
 
 /// Serializes queue commitment with receiver closure and every receiver-drop path.
 struct Writes {
+    delay: NativePacketDelay,
     receive: mpsc::Receiver<SendBatch>,
     closed: Arc<Mutex<bool>>,
     failed: bool,
@@ -163,6 +168,7 @@ impl Writes {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *closed = true;
         self.receive.close();
+        self.delay.retire();
     }
 
     /// Resolves queued receipts once no producer can append a late batch.
@@ -185,12 +191,15 @@ impl Writes {
 fn write_channel(capacity: usize) -> (NativeSender, Writes) {
     let (send, receive) = mpsc::channel(capacity);
     let closed = Arc::new(Mutex::new(false));
+    let delay = NativePacketDelay::new();
     (
         NativeSender {
+            delay: delay.clone(),
             send,
             closed: Arc::clone(&closed),
         },
         Writes {
+            delay,
             receive,
             closed,
             failed: false,
@@ -205,6 +214,7 @@ impl NativeSender {
             .closed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.delay.retire();
     }
 
     /// Commits one bounded batch after capacity is reserved, returning its write receipt.
@@ -247,7 +257,12 @@ impl NativeSender {
                 "native connection closed",
             ));
         }
-        permit.send(SendBatch { body, written });
+        let delay = self.delay.capture(delay::now());
+        permit.send(SendBatch {
+            body,
+            delay,
+            written,
+        });
         drop(closed);
         Ok(receipt)
     }

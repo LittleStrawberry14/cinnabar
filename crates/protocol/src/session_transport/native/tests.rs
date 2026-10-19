@@ -1,6 +1,7 @@
 use super::*;
 use std::future::Future;
 
+mod delay;
 mod public_close;
 
 struct ReplayConnection {

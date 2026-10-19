@@ -107,6 +107,13 @@ impl WorldIngress {
 }
 
 impl<R: bridge::FrameRead> PlaySession<R> {
+    /// Returns only this spawned native connection's optional local application-delay control.
+    /// Core/browser sessions have no native capability and keep their original policy owner.
+    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+    pub fn packet_delay(&self) -> Option<crate::NativePacketDelay> {
+        self.transport.packet_delay()
+    }
+
     /// Drains accepted native writes and closes the peer before the host stops its runtime.
     /// Core sessions retain their host-owned endpoint lifecycle.
     pub async fn close(&mut self) -> Result<(), ProtocolError> {
@@ -143,6 +150,10 @@ impl<R: bridge::FrameRead> PlaySession<R> {
         initialization: SpawnReady,
     ) -> Self {
         let terrain_before_spawn = initialization.terrain_received();
+        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+        if let Some(delay) = transport.packet_delay() {
+            delay.bind(initialization.runtime_id());
+        }
         Self {
             transport,
             pending_initialization: Some(initialization),
