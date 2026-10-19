@@ -100,12 +100,12 @@ rust-version = "1.99.0"
 [workspace.dependencies]
 bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc/protocolgen", rev = "4e9626abbb51b8fa842f49b4aea0fb4d3c01a682" }
 raknet = { git = "https://github.com/cinnabar-mc/raknet", rev = "4cb7fac06c2a530e0f98899637e1949e1037c553" }
-bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "abcb71bfbe4a340b0fa952dc4244fc0664db0dc0" }
-nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "98e88005200030a92f468e429cacb1e37079f44c" }
-nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "98e88005200030a92f468e429cacb1e37079f44c" }
-bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
-bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
-bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "d559692748a27a9279f47a2174b81d7927f1cdc5" }
+bedrock-services = { git = "https://github.com/cinnabar-mc/bedrock-services", rev = "b8a8dd30c75d6676bb3c65193cd6a7223b908ea5" }
+nethernet = { git = "https://github.com/cinnabar-mc/nethernet", rev = "a55d5196bfa0844ac45fa9e4acec544eafd82693" }
+nethernet-tokio = { git = "https://github.com/cinnabar-mc/nethernet", rev = "a55d5196bfa0844ac45fa9e4acec544eafd82693" }
+bedrock-net = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "3948f878ac2c22570c9f6347c37a55f91b285330" }
+bedrock-client = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "3948f878ac2c22570c9f6347c37a55f91b285330" }
+bedrock-packs = { git = "https://github.com/cinnabar-mc/bedrock-net", rev = "3948f878ac2c22570c9f6347c37a55f91b285330" }
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
 # One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
 # wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
