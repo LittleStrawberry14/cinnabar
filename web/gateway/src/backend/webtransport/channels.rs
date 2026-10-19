@@ -89,16 +89,16 @@ async fn plays(
     let mut queued = None;
     let mut playing: Option<Playing<'_>> = None;
     loop {
-        if playing.is_none() {
-            if let Some(stream) = queued.take() {
-                // Keep the actual future, including its upstream cleanup, until completion.
-                playing = Some(Box::pin(play::run_bound(
-                    registry,
-                    stream,
-                    controller,
-                    Arc::clone(&transport),
-                )));
-            }
+        if playing.is_none()
+            && let Some(stream) = queued.take()
+        {
+            // Keep the actual future, including its upstream cleanup, until completion.
+            playing = Some(Box::pin(play::run_bound(
+                registry,
+                stream,
+                controller,
+                Arc::clone(&transport),
+            )));
         }
         tokio::select! { biased;
             () = controller.cancel.cancelled() => {
