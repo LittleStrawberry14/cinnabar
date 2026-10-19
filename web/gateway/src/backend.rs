@@ -152,7 +152,7 @@ impl Gateway {
             .map(|item| item.map(Accepted::Tcp))
             .chain(futures::stream::once(async { Ok(Accepted::End) }));
         let quic = quic
-            .map(|item| item.map(Accepted::Quic))
+            .map(|item| item.map(|incoming| Accepted::Quic(Box::new(incoming))))
             .chain(futures::stream::once(async { Ok(Accepted::End) }));
         self.run_accepted(Box::pin(futures::stream::select(tcp, quic)))
             .await
@@ -197,6 +197,7 @@ impl Gateway {
                         }
                         #[cfg(feature = "webtransport")]
                         Some(Ok(Accepted::Quic(incoming))) => {
+                            let incoming = *incoming;
                             let now = Instant::now();
                             let peer = incoming.remote_address().ip();
                             let Ok(permit) = self.registry.admit(peer, now) else {
@@ -232,7 +233,7 @@ impl Gateway {
 enum Accepted {
     Tcp(TcpStream),
     #[cfg(feature = "webtransport")]
-    Quic(quinn::Incoming),
+    Quic(Box<quinn::Incoming>),
     #[cfg(feature = "webtransport")]
     End,
 }
