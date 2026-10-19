@@ -63,7 +63,11 @@ impl<P> NetworkHandle<P> {
     /// Returns this exact session/actor's native full RTT in rounded-up milliseconds.
     /// Unknown, retired and Core observations remain absent; this never performs I/O.
     pub fn round_trip_ms(&self, session: u64, local_runtime_id: u64) -> Option<u32> {
-        if session == 0 || session != self.session_generation || *self.shutdown.borrow() {
+        if session == 0
+            || local_runtime_id == 0
+            || session != self.session_generation
+            || *self.shutdown.borrow()
+        {
             return None;
         }
         self.connection_observation.round_trip_ms(local_runtime_id)

@@ -4,6 +4,16 @@ use super::*;
 #[test]
 fn native_rtt_is_unknown_or_scoped_to_original_session_and_actor() {
     let (mut handle, channels) = network_channels::<()>(SessionGeneration::new(7));
+    let (_zero_publisher, zero_receiver) = watch::channel(Some(Duration::from_millis(30)));
+    let zero_actor = channels
+        .connection_observation
+        .install(0, Some(zero_receiver));
+    assert_eq!(
+        handle.round_trip_ms(7, 0),
+        None,
+        "an absent local actor is never measured"
+    );
+    drop(zero_actor);
     let (publisher, receiver) = watch::channel(None);
     let observation = channels.connection_observation.install(42, Some(receiver));
     assert_eq!(handle.round_trip_ms(7, 42), None);
