@@ -109,10 +109,11 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
                 algorithm: CompressionAlgorithm::Deflate,
                 threshold: u16::MAX,
             });
-            assert!(matches!(
-                &*receive(&mut peer, &codec).await[0].data,
-                packets::Packet::Login(_)
-            ));
+            let login_packets = receive(&mut peer, &codec).await;
+            let packets::Packet::Login(login) = &*login_packets[0].data else {
+                panic!("the real client must send Login");
+            };
+            let identity = offline_login_identity(login);
             send(
                 &peer,
                 &codec,
@@ -169,6 +170,28 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
                     .count(),
                 1
             );
+            let outgoing = receive(&mut peer, &codec).await;
+            let mut expected = identity_packets();
+            let packets::Packet::PlayerSkin(skin) = &mut *expected[0].data else {
+                unreachable!();
+            };
+            skin.uuid = identity;
+            assert_eq!(outgoing.len(), 1);
+            let packets::Packet::PlayerSkin(actual) = &*outgoing[0].data else {
+                panic!("expected the original skin update");
+            };
+            assert_eq!(actual.uuid, identity, "skin UUID must match actual Login");
+            assert!(outgoing == expected[..1], "skin metadata, pixels and headers must survive");
+            let outgoing = receive(&mut peer, &codec).await;
+            let packets::Packet::Text(chat) = &mut *expected[1].data else {
+                unreachable!();
+            };
+            let bedrock_protocol_1_26_51::types::TextData::AuthorAndMessage { player_name, .. } = &mut chat.body else {
+                unreachable!();
+            };
+            *player_name = "Fixture".into();
+            chat.sender_xuid = Default::default();
+            assert_eq!(outgoing, expected[1..], "chat identity changes without changing siblings or headers");
             peer.session.closed().await;
         };
         let client = async {
@@ -197,6 +220,9 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
             }
             play.finish_loading().await.unwrap();
             play.finish_loading().await.unwrap();
+            let mut outgoing = identity_packets();
+            play.send(outgoing.remove(0)).await.unwrap();
+            play.outbound().unwrap().send_batch(outgoing, None).await.unwrap();
             play.close().await.unwrap();
         };
         tokio::join!(server, client);
@@ -204,4 +230,59 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
     })
     .await
     .expect("finite actual native pack/startup fixture stalled");
+}
+
+/// Observes the UUID in this real offline Login without treating the fixture token as authority.
+fn offline_login_identity(login: &packets::Login) -> uuid::Uuid {
+    use base64::Engine;
+    let bytes = &login.connection_request;
+    let length = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+    let envelope: serde_json::Value = serde_json::from_slice(&bytes[4..4 + length]).unwrap();
+    let token = envelope["Token"].as_str().unwrap();
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(token.split('.').nth(1).unwrap())
+        .unwrap();
+    let claims: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    uuid::Uuid::parse_str(claims["leguuid"].as_str().unwrap()).unwrap()
+}
+
+/// Exercises the synthetic local skin identity, chat correction, and unchanged nonchat/FIFO headers.
+fn identity_packets() -> Vec<crate::Packet> {
+    use bedrock_protocol_1_26_51::enums::TextPacketType;
+    use bedrock_protocol_1_26_51::types::{SerializedSkinRef, SkinImage, TextData};
+    let mut skin = crate::Packet::new(packets::PlayerSkin {
+        uuid: uuid::Uuid::nil(),
+        serialized_skin: SerializedSkinRef {
+            image_data: SkinImage {
+                width: wire::U32LE(render_api::CLASSIC_SKIN_SIDE as u32),
+                height: wire::U32LE(render_api::CLASSIC_SKIN_SIDE as u32),
+                image_bytes: vec![
+                    255;
+                    render_api::CLASSIC_SKIN_SIDE * render_api::CLASSIC_SKIN_SIDE * 4
+                ]
+                .into(),
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    skin.header.from_subclient = 1;
+    skin.header.to_subclient = 2;
+    let chat = crate::chat_text_packet("Synthetic", "123", "same message").unwrap();
+    let system = crate::Packet::new(packets::Text {
+        body: TextData::MessageOnly {
+            message_type: TextPacketType::Systemmessage,
+            message: "unchanged".into(),
+        },
+        sender_xuid: "456".into(),
+        ..Default::default()
+    });
+    vec![
+        skin,
+        chat,
+        system,
+        crate::Packet::new(packets::SetTime {
+            time: wire::ZigZag32(9),
+        }),
+    ]
 }

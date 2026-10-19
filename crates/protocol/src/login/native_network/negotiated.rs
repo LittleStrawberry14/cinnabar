@@ -242,6 +242,7 @@ pub(super) async fn negotiate_connected(
     }
     let offer = receive_offer(connection, handshake).await?;
     let packs = packs::acquire(connection, offer, acquisition).await?;
+    connection.identity = Some(identity.clone());
     Ok((packs, identity))
 }
 
