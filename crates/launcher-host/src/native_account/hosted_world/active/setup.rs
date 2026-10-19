@@ -6,13 +6,13 @@ use super::*;
 /// A failed/canceled health check never retries setup or authorizes an uncertain publication.
 pub(in crate::native_account::hosted_world) async fn recover(
     world: &mut NativeHostedWorld,
-    process: &NativeHostedProcess,
+    process: &HostedBackend,
     error: io::Error,
 ) -> io::Result<()> {
     let deadline = operation_deadline();
     let healthy = async {
         loop {
-            world.check_bridge(process, deadline).await?;
+            world.check_backend(process, deadline).await?;
             let opening = match world.directory_ref()?.opening() {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
                 result => result?,

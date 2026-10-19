@@ -1,7 +1,7 @@
 //! An opaque identity for the actual running server opening, without owning or stopping it.
 
 use super::*;
-use std::{io, sync::Weak, time::Instant};
+use std::{io, net::SocketAddr, sync::Weak, time::Instant};
 
 /// Holds weak ownership so retained remote cleanup cannot keep its local server manager alive.
 #[derive(Clone)]
@@ -108,6 +108,66 @@ impl HostOpening {
         self.max_players
     }
 
+    /// Projects only the original still-running local route, shared by player and friend serving.
+    pub(crate) fn native_connection_target(&self) -> io::Result<protocol::NativeConnectionTarget> {
+        self.validate()?;
+        let local = self.target();
+        if (self.world().backend, local.transport) == (Backend::Bds, Transport::NetherNetLan) {
+            let address = local
+                .lan_address
+                .as_deref()
+                .and_then(|value| value.parse::<SocketAddr>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local world returned an invalid LAN endpoint",
+                    )
+                })?;
+            let level = local
+                .level_name
+                .as_deref()
+                .filter(|level| *level == self.world().id.as_str())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local world returned another LAN level",
+                    )
+                })?;
+            return protocol::NativeConnectionTarget::local_lan(
+                address,
+                level.to_owned(),
+                std::time::Duration::from_millis(u64::from(
+                    bridge::contract::LOCAL_LAN_DISCOVERY_TIMEOUT_MS,
+                )),
+            );
+        }
+        let transport = match (self.world().backend, local.transport) {
+            (Backend::Dragonfly, Transport::RakNet) => protocol::NativeTransport::RakNet,
+            (Backend::Bds, Transport::NetherNet) => protocol::NativeTransport::LocalNetherNetHttp,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "local world advertises an unsupported native transport",
+                ));
+            }
+        };
+        let address = local
+            .address
+            .parse::<SocketAddr>()
+            .ok()
+            .filter(|address| address.ip().is_loopback() && address.port() != 0)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "local world returned an invalid loopback endpoint",
+                )
+            })?;
+        Ok(protocol::NativeConnectionTarget::new(
+            address.to_string(),
+            transport,
+        ))
+    }
+
     /// Uses only the captured original child; callers dispatch this pipe write on the existing worlds worker.
     pub(crate) fn request_bridge(
         &self,
@@ -159,7 +219,7 @@ fn unavailable() -> io::Error {
     )
 }
 
-/// User intent tied to one actual Dragonfly opening, never a mutable latest-world locator.
+/// User intent tied to one actual original opening, never a mutable latest-world locator.
 #[derive(Clone)]
 pub struct NativeHostIntent {
     manager: Manager,
@@ -201,15 +261,17 @@ impl NativeHostIntent {
 }
 
 impl Manager {
-    /// Captures only the user-opened backend supported by the existing native process bridge.
-    /// Go's existing advertiser owns BDS; this path never creates a second advertiser for it.
+    /// Captures a supported original backend for the sole selected native hosting owner.
     pub fn native_host_intent(&self) -> io::Result<NativeHostIntent> {
         let opening = HostOpening::capture(self)?;
-        if opening.world().backend != bridge::Backend::Dragonfly || opening.max_players() < 2 {
+        if opening.max_players() < 2 {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "native hosting requires a Dragonfly visitor slot",
+                "native hosting requires an original visitor slot",
             ));
+        }
+        if opening.world().backend == bridge::Backend::Bds {
+            opening.native_connection_target()?;
         }
         Ok(NativeHostIntent {
             manager: self.clone(),

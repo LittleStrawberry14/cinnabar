@@ -317,6 +317,10 @@ async fn original_upstream(route: Route) {
             .await
             .unwrap();
         assert!(
+            upstream.release_received().is_err(),
+            "uninitialized upstream released a play cursor"
+        );
+        assert!(
             upstream
                 .prepare_raw(
                     raw_packet(
@@ -446,6 +450,10 @@ async fn original_upstream(route: Route) {
         finish_send(pair.wire.prepare_raw(raw, deadline).unwrap()).await;
         assert!(
             matches!(client_receive(&mut pair.client, &codec).await.remove(0), packets::Packet::SetTime(value) if value.time.0 == 12)
+        );
+        assert!(
+            !upstream.release_received().unwrap(),
+            "ordinary actual output became a terminal"
         );
         upstream.begin_close(deadline).finish_close().await.unwrap();
         assert!(

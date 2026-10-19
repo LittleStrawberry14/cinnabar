@@ -619,6 +619,57 @@ fn native_local_bds_lan_selection_uses_the_original_process_discovery_endpoint()
     );
 }
 
+/// BDS intent shares the exact original player route and cannot survive a replacement generation.
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+#[test]
+fn native_bds_host_intent_keeps_the_original_http_or_lan_opening() {
+    for lan in [None, Some("127.0.0.1:7552".to_owned())] {
+        let runner = Arc::new(FakeRunner {
+            lan,
+            ..Default::default()
+        });
+        let fixture = fixture(|parts, dir| {
+            let process: Arc<dyn Runner> = runner.clone();
+            parts.runners.bds = Some(process);
+            parts.setup = Some(provisioner(dir, LINUX));
+        });
+        let manager = &fixture.manager;
+        let world = manager
+            .create(&NewWorld {
+                name: "original-host-bds".into(),
+                backend: Some(Backend::Bds),
+                ..Default::default()
+            })
+            .unwrap();
+        manager.accept_eula().unwrap();
+        manager.open(&world.id, None).unwrap();
+        wait_for(manager, WorldState::Running);
+        let intent = manager.native_host_intent().unwrap();
+        let selection = manager.native_local_world(&world.id).unwrap();
+        let selected = selection.connection_target().unwrap();
+        let captured = HostOpening::capture(manager)
+            .unwrap()
+            .native_connection_target()
+            .unwrap();
+        assert_eq!(selected.address, captured.address);
+        assert_eq!(selected.transport, captured.transport);
+        assert_eq!(selected.local_lan_route(), captured.local_lan_route());
+        manager.close();
+        wait_for(manager, WorldState::Idle);
+        manager.open(&world.id, None).unwrap();
+        wait_for(manager, WorldState::Running);
+        assert!(!intent.same(&manager.native_host_intent().unwrap()));
+        assert_eq!(
+            selection.validate().unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
+        assert!(
+            !runner.last().stopped(),
+            "old host intent stopped the replacement process"
+        );
+    }
+}
+
 /// The unavailable reason reaches the status, and a Retry that finds Docker flips the default.
 #[test]
 fn a_redetect_that_finds_docker_flips_the_default_backend() {

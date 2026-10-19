@@ -5,7 +5,7 @@ pub(super) mod peers;
 mod renewal;
 pub(super) mod setup;
 
-use super::{ClosingHostedPeer, NativeHostedProcess, NativeHostedWorld};
+use super::{ClosingHostedPeer, NativeHostedWorld, serve::HostedBackend};
 use bedrock_net::messaging::server::{ClosingMessagingServer, MessagingServer};
 use std::{future::Future, io, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -29,7 +29,7 @@ struct Invite {
 pub struct ActiveHostedWorld {
     world: NativeHostedWorld,
     server: MessagingServer,
-    process: NativeHostedProcess,
+    process: HostedBackend,
     identity: protocol::NativeHostingIdentity,
     expires: Instant,
     phase_started: bool,
@@ -47,7 +47,7 @@ pub struct ActiveHostedWorld {
 pub struct ClosingHostedWorld {
     world: NativeHostedWorld,
     server: ClosingMessagingServer,
-    process: NativeHostedProcess,
+    process: HostedBackend,
     deadline: Instant,
     peers: peers::Peers,
 }
@@ -69,7 +69,7 @@ impl NativeHostedWorld {
             .configure_acceptor(&server, messaging_id, visitor_limit)?;
         driving(&mut server, self.advance()).await?;
         driving(&mut server, self.publish_approvals(deadline)).await?;
-        let process = driving(&mut server, self.prepare_dragonfly_bridge(deadline)).await?;
+        let process = driving(&mut server, self.prepare_backend(deadline)).await?;
         driving(
             &mut server,
             self.directory_mut()?.publish_activity(deadline),
@@ -267,7 +267,7 @@ impl ActiveHostedWorld {
 async fn serve(
     world: &mut NativeHostedWorld,
     server: &mut MessagingServer,
-    process: &mut NativeHostedProcess,
+    process: &mut HostedBackend,
     identity: &protocol::NativeHostingIdentity,
     accepted: nethernet_tokio::AcceptedSession,
 ) -> io::Result<()> {
@@ -275,7 +275,7 @@ async fn serve(
     driving(server, world.publish_approvals(deadline)).await?;
     let peer = driving(server, async {
         Ok(world
-            .accept_dragonfly_peer(
+            .accept_backend_peer(
                 process,
                 accepted,
                 identity.signing_key(),

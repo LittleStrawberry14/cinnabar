@@ -314,6 +314,11 @@ server/Realm/friend-world joins, transfers, reconnect/disconnect, account switch
 presence, invites and required-pack failures. Preserve transport/session identity
 and keep actual account details out of captures and reports published with PRs.
 
+Native friend serving has separate Dragonfly and BDS HTTP/LAN backend owners.
+BDS hosting acceptance remains incomplete until the original process, authenticated
+guests, pack delivery, initialization, live traffic and retirement pass together;
+the source implementation alone does not qualify the route or its UI/default gates.
+
 Cosmetics require live authenticated multi-account acceptance, catalog/motion envelope
 coverage, supported slot/ownership enforcement, player-preview acceptance and hardware
 qualification. Payments and moderation remain incomplete; rollout must respect API/client

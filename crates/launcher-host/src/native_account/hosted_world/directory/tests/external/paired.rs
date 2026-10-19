@@ -1,6 +1,7 @@
 //! One complete production accepting path into the actual Dragonfly process, with real client IO.
 
 mod authority;
+mod bds;
 mod multiple;
 pub(in crate::native_account::hosted_world) mod provider;
 
