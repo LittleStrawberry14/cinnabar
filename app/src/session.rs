@@ -376,7 +376,7 @@ impl SessionController {
         self.connecting = connecting;
     }
 
-    #[cfg(all(test, unix))]
+    /// Borrows the original process owner for cleanup when initial worker startup fails.
     pub(crate) fn core_mut(&mut self) -> &mut CoreProcessGuard {
         &mut self.core
     }

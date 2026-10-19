@@ -558,6 +558,16 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     if initial_trust.is_some() {
         menu.show_connecting();
     }
+    let mut session_controller = SessionController::new(core_process)
+        .with_native_transport(args.native_transport)
+        .with_parallel_resource_pack_urls(args.parallel_resource_pack_urls)
+        .with_client_random_id(client_random_id)
+        .with_address(args.address.as_deref())
+        .with_initial_trust(initial_trust);
+    #[cfg(feature = "native-networking")]
+    let native_account = session_controller
+        .native_startup_account(&mut menu, endpoint.as_ref())
+        .context("capture the initial native account selection")?;
     crate::runtime::network::await_overlay_texture_device();
     let network = if let Some(endpoint) = endpoint {
         match spawn_network(
@@ -569,7 +579,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
                 session_generation: simulation_clock::identity::SessionGeneration::new(1),
                 endpoint,
                 #[cfg(feature = "native-networking")]
-                native_account: None,
+                native_account,
                 #[cfg(feature = "native-networking")]
                 native_friend: None,
                 #[cfg(feature = "native-networking")]
@@ -597,7 +607,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         {
             Ok(network) => network,
             Err(error) => {
-                launcher_host::core_process::stop_core_then(&mut core_process, |_| ());
+                launcher_host::core_process::stop_core_then(session_controller.core_mut(), |_| ());
                 return Err(error);
             }
         }
@@ -700,14 +710,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     .insert_resource(shutdown_watchdog.clone())
     .insert_resource(TeardownWatchdog(shutdown_watchdog.clone()))
     .insert_resource(present_mode_runtime)
-    .insert_resource(
-        SessionController::new(core_process)
-            .with_native_transport(args.native_transport)
-            .with_parallel_resource_pack_urls(args.parallel_resource_pack_urls)
-            .with_client_random_id(client_random_id)
-            .with_address(args.address.as_deref())
-            .with_initial_trust(initial_trust),
-    )
+    .insert_resource(session_controller)
     .insert_resource(ui_catalog)
     .insert_resource(client_blob_cache)
     .insert_resource(network)
