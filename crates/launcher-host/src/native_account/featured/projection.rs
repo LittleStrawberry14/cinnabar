@@ -76,7 +76,7 @@ pub(super) fn rows(items: Vec<CatalogItem>) -> Vec<(FeaturedServer, Option<Uuid>
         };
         rows.push((properties.rank, server, selected));
     }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
     let creators = rows.partition_point(|row| row.0.is_some());
     rows[creators..].shuffle(&mut rand::rng());
     rows.into_iter()
