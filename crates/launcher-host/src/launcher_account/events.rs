@@ -91,8 +91,8 @@ async fn control(
                 let native = shared
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .title_presence_owner
-                    == crate::launcher_core::TitlePresenceOwner::Native;
+                    .account_source
+                    == AccountSource::Native;
                 if native {
                     lifetime.retire();
                     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -112,10 +112,10 @@ async fn control(
                         return;
                     }
                 }
-                let _ = bridge::sign_out(socket_dir).await;
                 if native {
                     return;
                 }
+                let _ = bridge::sign_out(socket_dir).await;
             }
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
                 lifetime.retire();
@@ -150,32 +150,47 @@ async fn control(
                 presence_failed = true;
             }
         }
-        let cinnabar = shared
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .cinnabar_api
-            .clone();
+        let (cinnabar, account_source, generation) = {
+            let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+            (
+                snapshot.cinnabar_api.clone(),
+                snapshot.account_source,
+                snapshot.auth_generation,
+            )
+        };
         #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        let native_api = shared
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .native_product_api
-            .clone();
-        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        if let Some(api) = &native_api {
-            if let Some(config) = &cinnabar {
-                api.configure(config.clone());
-            }
-            if let Some(release) = api.take_release()
-                && let Some(release) = new_release(&mut seen_release, Some(&release))
-            {
-                crate::lifecycle::update::release_published(release);
+        {
+            let announced = {
+                let snapshot = shared.lock().unwrap_or_else(|p| p.into_inner());
+                if snapshot.same_account_source(generation, account_source)
+                    && account_source == AccountSource::Native
+                    && let Some(api) = &snapshot.native_product_api
+                {
+                    if let Some(config) = &cinnabar {
+                        api.configure(config.clone());
+                    }
+                    let release = api.take_release();
+                    if new_release(&mut seen_release, release.as_ref()).is_some() {
+                        release
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(release) = announced {
+                crate::lifecycle::update::release_published(&release);
             }
         }
-        #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-        let core_api = core_presence && native_api.is_none();
-        #[cfg(not(all(feature = "native-networking", not(target_arch = "wasm32"))))]
-        let core_api = true;
+        let current = shared
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .same_account_source(generation, account_source);
+        if !current {
+            continue;
+        }
+        let core_api = account_source == AccountSource::Core;
         if let Some(config) = &cinnabar
             && core_api
             && sent_cinnabar.as_ref() != Some(config)
@@ -185,7 +200,12 @@ async fn control(
                 bridge::configure_cinnabar_api(socket_dir, config),
             )
             .await;
-            if matches!(sent, Ok(Ok(()))) {
+            if matches!(sent, Ok(Ok(())))
+                && shared
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .same_account_source(generation, account_source)
+            {
                 sent_cinnabar = Some(config.clone());
             }
         }
@@ -233,14 +253,14 @@ async fn poll_core_events(
 ) {
     let (generation, source) = {
         let snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        (snapshot.auth_generation, snapshot.title_presence_owner)
+        (snapshot.auth_generation, snapshot.account_source)
     };
     let Ok(events) = bridge::poll_events(socket_dir).await else {
         return;
     };
     let announced = {
         let mut snapshot = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        if snapshot.auth_generation != generation || snapshot.title_presence_owner != source {
+        if !snapshot.same_account_source(generation, source) {
             return;
         }
         if let Some(disconnect) = events.disconnect
@@ -257,11 +277,11 @@ async fn poll_core_events(
         snapshot.last_disconnect.get_or_insert(0);
         snapshot.connect = events.connect;
         snapshot.server_trust = events.server_trust;
-        if source == crate::launcher_core::TitlePresenceOwner::Core {
+        if source == AccountSource::Core {
             snapshot.set_account(events.auth);
         }
         core_api
-            && source == crate::launcher_core::TitlePresenceOwner::Core
+            && source == AccountSource::Core
             && new_release(seen_release, events.cinnabar_release.as_ref()).is_some()
     };
     if announced {

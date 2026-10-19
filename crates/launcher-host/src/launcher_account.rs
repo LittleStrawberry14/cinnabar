@@ -76,8 +76,17 @@ pub const ARTWORK_BUDGET: Duration = Duration::from_secs(40);
 /// How often shown server rows are pinged.
 const PING_INTERVAL: Duration = Duration::from_secs(15);
 
+/// The concrete account constructor owns authentication independently of session/presence routes.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum AccountSource {
+    #[default]
+    Core,
+    Native,
+}
+
 #[derive(Default)]
 struct Snapshot {
+    account_source: AccountSource,
     auth_generation: u64,
     /// Wakes the catalog worker when its account identity changes.
     catalog_wake: Option<Sender<()>>,
@@ -154,10 +163,16 @@ struct Snapshot {
 }
 
 impl Snapshot {
+    /// An asynchronous account reply belongs only to the exact source and generation that began it.
+    fn same_account_source(&self, generation: u64, source: AccountSource) -> bool {
+        self.auth_generation == generation && self.account_source == source
+    }
+
     /// The concrete native account-service source shared by its original constructor and owner.
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     fn native(account: Option<Arc<crate::native_account::NativeAccount>>, language: &str) -> Self {
         Snapshot {
+            account_source: AccountSource::Native,
             title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
             profile_source: profile_worker::Source::Native(account.clone()),
             people_source: invites::Source::Native(account.clone()),

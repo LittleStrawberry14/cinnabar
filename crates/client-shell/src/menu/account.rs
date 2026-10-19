@@ -244,6 +244,13 @@ impl MenuRuntime {
         if self.external.is_some() {
             return self.intents.join.take();
         }
+        if self.sign_out_requested {
+            self.intents.join = None;
+            return None;
+        }
+        if self.account_operation_pending() {
+            return None;
+        }
         let helper_outlives_join = match self.settle_join_sign_in(std::time::Instant::now()) {
             JoinSignIn::Waiting => return None,
             JoinSignIn::Settled => false,

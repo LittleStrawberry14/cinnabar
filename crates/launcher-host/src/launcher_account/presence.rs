@@ -1,7 +1,7 @@
 //! One account worker's explicit title-presence retirement proof.
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use tokio::sync::Notify;
 
@@ -21,6 +21,7 @@ pub enum TitlePresenceRetirement {
 
 struct Shared {
     state: AtomicU8,
+    worker_finished: AtomicBool,
     changed: Notify,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
     original: std::sync::Mutex<Option<OriginalAccount>>,
@@ -42,6 +43,7 @@ impl TitlePresenceLifetime {
     pub(super) fn new() -> Self {
         Self(Arc::new(Shared {
             state: AtomicU8::new(ACTIVE),
+            worker_finished: AtomicBool::new(false),
             changed: Notify::new(),
             #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
             original: std::sync::Mutex::new(None),
@@ -69,6 +71,12 @@ impl TitlePresenceLifetime {
             UNCONFIRMED => Some(TitlePresenceRetirement::Unconfirmed),
             _ => None,
         }
+    }
+
+    /// The original event owner has dropped its control, publisher and Product futures.
+    /// Presence cleanup alone does not prove that this enclosing worker has finished.
+    pub fn worker_finished(&self) -> bool {
+        self.0.worker_finished.load(Ordering::Acquire)
     }
 
     /// Wakes both the coalesced-state reader and the control lifetime without storing payloads.
@@ -147,6 +155,8 @@ impl Drop for WorkerGuard {
         if self.0.retirement().is_none() {
             self.0.complete(false);
         }
+        self.0.0.worker_finished.store(true, Ordering::Release);
+        self.0.wake();
     }
 }
 
@@ -169,6 +179,26 @@ mod tests {
         assert_eq!(
             lifetime.retirement(),
             Some(TitlePresenceRetirement::Unconfirmed)
+        );
+    }
+
+    /// A completed publisher cannot substitute for the enclosing original event owner's exit.
+    #[test]
+    fn completed_presence_still_waits_for_the_original_worker_guard() {
+        let lifetime = TitlePresenceLifetime::new();
+        let worker = lifetime.worker_guard();
+        lifetime.retire();
+        lifetime.complete(true);
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Complete)
+        );
+        assert!(!lifetime.worker_finished());
+        drop(worker);
+        assert!(lifetime.worker_finished());
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Complete)
         );
     }
 }

@@ -373,6 +373,7 @@ impl MenuRuntime {
         self.intents.join = None;
         #[cfg(feature = "native-networking")]
         {
+            self.native_catalog.cancel_join();
             self.intents.gathering = None;
             self.intents.native_world = None;
         }

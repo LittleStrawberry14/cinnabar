@@ -182,7 +182,8 @@ impl MenuRuntime {
                 }
             }
         }
-        if std::mem::take(&mut self.sign_out_requested) {
+        if self.sign_out_requested && self.account_session_retired() {
+            self.sign_out_requested = false;
             control.sign_out();
             self.finish_sign_out();
         }
@@ -192,7 +193,8 @@ impl MenuRuntime {
 
     /// Queues sign-out without a launcher core; its storage worker owns every credential lease.
     pub fn sign_out_locally(&mut self) {
-        if std::mem::take(&mut self.sign_out_requested) {
+        if self.sign_out_requested && self.account_session_retired() {
+            self.sign_out_requested = false;
             self.finish_sign_out();
         }
     }
@@ -201,6 +203,7 @@ impl MenuRuntime {
     /// launcher core then restarts offline and signing in again runs the
     /// device-code helper.
     fn finish_sign_out(&mut self) {
+        self.cancel_join();
         self.retry_target = None;
         self.accounts.operation = Some(launcher_host::accounts::Operation::SignOut);
         self.feeds.account_active_id = None;

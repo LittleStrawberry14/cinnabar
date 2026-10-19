@@ -15,6 +15,7 @@ const PRESENTATION_ACCOUNTS: [(&str, &str); 4] = [
 
 #[derive(Debug, Default)]
 pub(super) struct Manager {
+    session_core_exit: Option<launcher_host::core_process::CoreExitBarrier>,
     pub operation: Option<Operation>,
     remembered: Option<(String, Option<String>)>,
     pub pending_ready: bool,
@@ -35,11 +36,38 @@ impl MenuRuntime {
 
     /// Whether account storage is about to change, so a native acquisition must be cancelled first.
     pub fn account_operation_pending(&self) -> bool {
-        self.accounts.operation.is_some() || self.accounts.work.is_some()
+        self.sign_out_requested || self.accounts.operation.is_some() || self.accounts.work.is_some()
+    }
+
+    /// Retains exit evidence from the application's actual session Core owner before services run.
+    pub fn observe_session_core_exit(
+        &mut self,
+        exit: launcher_host::core_process::CoreExitBarrier,
+    ) {
+        self.accounts.session_core_exit = Some(exit);
+    }
+
+    /// A detached stop attempt is not authority to mutate the original credential cache.
+    pub(super) fn account_session_retired(&mut self) -> bool {
+        use launcher_host::core_process::CoreExitState;
+        match self
+            .accounts
+            .session_core_exit
+            .as_ref()
+            .map(|exit| exit.state())
+        {
+            None | Some(CoreExitState::Confirmed) => true,
+            Some(CoreExitState::Pending) => false,
+            Some(CoreExitState::Unconfirmed) => {
+                self.feeds.account_error = Some("The previous game process has not confirmed exit. Restart before changing accounts.".into());
+                false
+            }
+        }
     }
 
     pub(super) fn account_change_pending(&self) -> bool {
         self.feeds.account_adding
+            || self.sign_out_requested
             || self.accounts.operation.is_some()
             || self.accounts.work.is_some()
     }
@@ -409,6 +437,31 @@ mod tests {
         launcher::menu::auth::AuthState,
         launcher::menu::{MenuAction, MenuDialog},
     };
+
+    /// Storage work retains a held authenticated join; explicit signout revokes that old intent.
+    #[test]
+    fn account_storage_wait_retains_the_original_join_but_signout_cancels_it() {
+        let mut menu = MenuRuntime::new(true, 2, "Fixture".into());
+        let intent = client_state::JoinIntent {
+            address: "fixture.invalid:19132".into(),
+            auth_cache: None,
+            local_world: false,
+        };
+        menu.intents.join = Some(intent);
+        menu.accounts.operation = Some(Operation::Restore);
+        assert!(menu.take_join_intent().is_none());
+        assert!(menu.intents.join.is_some());
+        menu.accounts.operation = None;
+        let original = menu
+            .take_join_intent()
+            .expect("storage completion retains the held join");
+        assert_eq!(original.address, "fixture.invalid:19132");
+        menu.intents.join = Some(original);
+        menu.activate(MenuAction::SignOut);
+        assert!(menu.account_operation_pending());
+        assert!(menu.take_join_intent().is_none());
+        assert!(menu.intents.join.is_none());
+    }
 
     #[test]
     fn presentation_accounts_never_sign_in_or_queue_store_changes() {

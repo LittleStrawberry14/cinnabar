@@ -66,10 +66,11 @@ impl LauncherCoreSlot {
         lifetime.retire();
         match lifetime.retirement() {
             None => false,
-            Some(TitlePresenceRetirement::Complete) => {
+            Some(TitlePresenceRetirement::Complete) if lifetime.worker_finished() => {
                 self.presence_lifetime = None;
                 true
             }
+            Some(TitlePresenceRetirement::Complete) => false,
             Some(TitlePresenceRetirement::Unconfirmed) => {
                 self.retirement_blocked = true;
                 bevy::log::warn!(

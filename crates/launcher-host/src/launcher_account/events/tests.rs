@@ -56,6 +56,89 @@ async fn native_signout_retires_the_original_worker_without_a_core_signout_reque
     .expect("native signout owner did not retire");
 }
 
+/// Presence policy cannot replace the actual Core account's signout request and response.
+#[tokio::test]
+async fn legacy_signout_preserves_core_auth_independently_of_presence_policy() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = UnixListener::bind(bridge::control_endpoint_path(directory.path())).unwrap();
+        let shared = Mutex::new(Snapshot {
+            title_presence_owner: TitlePresenceOwner::Native,
+            ..Default::default()
+        });
+        let lifetime = TitlePresenceLifetime::new();
+        let (requests, receive) = bounded(1);
+        requests.send(()).unwrap();
+        let server = async {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut framed = tokio_util::codec::Framed::new(
+                stream,
+                bridge::BridgeCodec::with_max(bridge::MAX_FRAME_LEN),
+            );
+            let request = framed.next().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
+            assert_eq!(request["method"], bridge::contract::METHOD_SIGN_OUT);
+            let reply = serde_json::json!({
+                "jsonrpc":bridge::contract::JSON_RPC_VERSION,
+                "id":request["id"],
+                "result":{
+                    "schema_version":bridge::contract::CONTROL_SCHEMA_VERSION,
+                    "account":{"state":"signed_out"},
+                },
+            });
+            framed
+                .send(Bytes::from(serde_json::to_vec(&reply).unwrap()))
+                .await
+                .unwrap();
+            lifetime.retire();
+        };
+        tokio::join!(
+            server,
+            control(directory.path(), &shared, &receive, &lifetime),
+            native_presence::run(&shared, &lifetime),
+        );
+        assert_eq!(
+            lifetime.retirement(),
+            Some(TitlePresenceRetirement::Complete)
+        );
+    })
+    .await
+    .expect("legacy signout control did not retire");
+}
+
+/// Native presence leaves the original Core account reply and legacy route observations intact.
+#[tokio::test]
+async fn core_account_auth_survives_native_presence_selection() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = UnixListener::bind(bridge::control_endpoint_path(directory.path())).unwrap();
+        let shared = Arc::new(Mutex::new(Snapshot {
+            title_presence_owner: TitlePresenceOwner::Native,
+            last_disconnect: Some(1),
+            ..Default::default()
+        }));
+        let mut peer = core_peer(
+            listener,
+            Arc::clone(&shared),
+            AtReply::FinishRound(TitlePresenceLifetime::new()),
+        );
+        poll_core_events(directory.path(), &shared, true, &mut None).await;
+        assert_eq!(peer.finish().await, [bridge::contract::METHOD_EVENTS]);
+        let snapshot = shared.lock().unwrap();
+        assert_eq!(
+            snapshot.account.as_ref().unwrap().gamertag.as_deref(),
+            Some("ForeignCore")
+        );
+        assert!(snapshot.connect.is_some() && snapshot.server_trust.is_some());
+        assert!(matches!(
+            snapshot.events.as_slice(),
+            [AccountEvent::Disconnected { .. }]
+        ));
+    })
+    .await
+    .expect("original Core authentication reply did not complete");
+}
+
 /// One finite real control peer; cancellation keeps its original task abortable.
 struct CorePeer(Option<JoinHandle<Vec<String>>>);
 
@@ -97,6 +180,7 @@ fn core_peer(listener: UnixListener, shared: Arc<Mutex<Snapshot>>, at_reply: AtR
                     AtReply::ReplaceAccount => {
                         let mut snapshot = shared.lock().unwrap();
                         snapshot.auth_generation += 1;
+                        snapshot.account_source = AccountSource::Native;
                         snapshot.title_presence_owner = TitlePresenceOwner::Native;
                     }
                 }
@@ -131,7 +215,7 @@ async fn native_account_auth_and_product_do_not_fall_back_to_core() {
         let directory = tempfile::tempdir().unwrap();
         let listener = UnixListener::bind(bridge::control_endpoint_path(directory.path())).unwrap();
         let shared = Arc::new(Mutex::new(Snapshot {
-            title_presence_owner: TitlePresenceOwner::Native,
+            native_product_api: None,
             cinnabar_api: Some(bridge::CinnabarApiConfig {
                 client_version: env!("CARGO_PKG_VERSION").into(),
                 client_build: 1,
@@ -139,7 +223,7 @@ async fn native_account_auth_and_product_do_not_fall_back_to_core() {
                 visible: true,
             }),
             last_disconnect: Some(1),
-            ..Default::default()
+            ..Snapshot::native(None, bridge::contract::DEFAULT_SERVICE_LANGUAGE)
         }));
         let lifetime = TitlePresenceLifetime::new();
         let mut peer = core_peer(
