@@ -23,7 +23,10 @@ impl Client {
             state.live = Some(Live {
                 visible: config.visible,
                 next_id: 0,
-                players: Players::default(),
+                players: Players::welcomed(
+                    message.xuid,
+                    message.owned_cosmetics.unwrap_or_default(),
+                ),
                 pending: BTreeMap::new(),
             });
             true
@@ -128,7 +131,7 @@ impl Client {
                     };
                     let _ = pending.reply.send(result);
                 }
-                "emote" | "loadout" => live.players.receive(message, now),
+                "emote" | "loadout" | "cosmetic_ownership" => live.players.receive(message, now),
                 _ => {}
             }
         });

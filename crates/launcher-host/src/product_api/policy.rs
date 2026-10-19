@@ -131,22 +131,32 @@ pub(super) fn valid_slots(slots: &[CinnabarCosmeticSlot]) -> bool {
             Some((namespace, name)) => slot_chars(namespace) && slot_chars(name),
             None => slot_chars(&slot.slot),
         };
-        let valid_item = slot
-            .item_id
-            .split_once(':')
-            .is_some_and(|(namespace, name)| {
-                slot_chars(namespace)
-                    && !name.is_empty()
-                    && name.bytes().all(|b| {
-                        b.is_ascii_lowercase() || b.is_ascii_digit() || b"_./-".contains(&b)
-                    })
-            });
-        slot.slot.len() <= 48
-            && slot.item_id.len() <= 128
-            && valid_slot
-            && valid_item
-            && seen.insert(&slot.slot)
+        slot.slot.len() <= 48 && valid_slot && valid_item(&slot.item_id) && seen.insert(&slot.slot)
     })
+}
+
+/// Validates the shared cosmetic identifier, including nested catalog paths.
+fn valid_item(id: &str) -> bool {
+    let valid = |part: &str, punctuation: &[u8]| {
+        !part.is_empty()
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || punctuation.contains(&byte)
+            })
+    };
+    id.len() <= 128
+        && id
+            .split_once(':')
+            .is_some_and(|(namespace, path)| valid(namespace, b"_.-") && valid(path, b"_./-"))
+}
+
+/// Admits one whole ownership snapshot, preserving first occurrence order and clearing invalid grants.
+pub(super) fn admitted_ownership(mut ids: Vec<String>) -> Vec<String> {
+    if ids.len() > cosmetics::MAX_ITEMS || ids.iter().any(|id| !valid_item(id)) {
+        return Vec::new();
+    }
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    ids
 }
 
 /// Matches the product's version spelling without permitting an arbitrary User-Agent/header value.

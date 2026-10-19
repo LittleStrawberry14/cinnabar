@@ -78,6 +78,7 @@ async fn signed_bds_peer_uses_the_original_http_or_lan_world_and_retires() {
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    relay: None,
                     target: None,
                 },
                 |packs, game| (packs.into_archives(), game),

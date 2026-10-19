@@ -178,6 +178,7 @@ async fn initialized_world_peer_survives_same_key_mint_and_fresh_turn_on_origina
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    relay: None,
                     target: None,
                 },
                 |packs, game| (packs.into_archives(), game),

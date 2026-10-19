@@ -31,6 +31,7 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
         api.configure(initial.clone());
         let (pending_seen,pending_ready)=oneshot::channel();
         let (welcome_seen,welcome_ready)=oneshot::channel();
+        let (ownership_seen,ownership_ready)=oneshot::channel();
         let uuid="00112233-4455-6677-8899-aabbccddeeff";
         let server=async {
             let (stream,_)=listener.accept().await.unwrap();
@@ -57,7 +58,7 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             let signature=Signature::from_slice(&URL_SAFE_NO_PAD.decode(proof["signature"].as_str().unwrap()).unwrap()).unwrap();
             let prefix=schema["$defs"]["Proof"]["properties"]["signature"]["description"].as_str().unwrap().split('"').nth(1).unwrap();
             key.verify(format!("{prefix}{nonce}").as_bytes(),&signature).unwrap();
-            socket.send(Message::text(json!({"type":"welcome","xuid":identity.xuid(),"lookup_batch_max":2,"lookup_bucket_capacity":4,"cache_ttl_ms":500,"loadout_revision":30}).to_string())).await.unwrap();
+            socket.send(Message::text(json!({"type":"welcome","xuid":identity.xuid(),"lookup_batch_max":2,"lookup_bucket_capacity":4,"cache_ttl_ms":500,"loadout_revision":30,"owned_cosmetics":["fixture:paid"]}).to_string())).await.unwrap();
             welcome_ready.await.unwrap();
             socket.send(Message::text(json!({"type":"release","channel":initial.channel,"version":"1.0.1","build":43,"published_at":"2026-10-19T00:00:00.000Z"}).to_string())).await.unwrap();
             let first:Value=serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
@@ -76,10 +77,13 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
                 }
             }
             for message in [
+                json!({"type":"cosmetic_ownership","owned_cosmetics":["fixture:replacement"]}),
                 json!({"type":"emote","xuid":"11","uuid":uuid,"emote_id":"fixture:remote","elapsed_ms":42,"valid_for_ms":15000}),
                 json!({"type":"loadout","xuid":"11","uuid":uuid,"revision":3,"slots":{"head":"fixture:remote-item"}}),
                 json!({"type":"release","channel":initial.channel,"version":"2.0.0","build":99,"published_at":"2026-10-19T00:00:00.000Z"}),
             ] {socket.send(Message::text(message.to_string())).await.unwrap();}
+            ownership_ready.await.unwrap();
+            socket.send(Message::text(json!({"type":"cosmetic_ownership","owned_cosmetics":[]}).to_string())).await.unwrap();
             let mut resends = 0;
             let second = loop {
                 let message: Value = serde_json::from_str(
@@ -129,11 +133,30 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             assert_eq!(answer.cache_ttl_ms,500);
             let mut invisible=initial.clone();invisible.visible=false;api.configure(invisible);
             let local=CinnabarPlayerState{xuids:vec!["11".into()],uuids:vec![uuid.into()],emote_id:"fixture:clip".into(),elapsed_ms:12,playback_id:1,slots:vec![CinnabarCosmeticSlot{slot:"head".into(),item_id:"fixture:item".into()}]};
+            let PlayerSync::Current(granted)=api.sync(local.clone()) else {panic!("welcomed ownership unavailable");};
+            assert_eq!(granted.ownership_xuid,identity.xuid());
+            assert_eq!(granted.owned_cosmetics,["fixture:paid"]);
+            let lease=store.try_native_lease().unwrap();
+            assert!(matches!(api.sync(local.clone()),PlayerSync::Pending));
+            drop(lease);
+            let epoch=api.with(|state| state.epoch);
+            api.receive(epoch.wrapping_add(1),Inbound::parse(r#"{"type":"cosmetic_ownership","owned_cosmetics":["fixture:stale"]}"#).unwrap(),Instant::now());
+            let PlayerSync::Current(unchanged)=api.sync(local.clone()) else {panic!("ownership lost after ordinary lease contention");};
+            assert_eq!(unchanged.owned_cosmetics,["fixture:paid"]);
             let remote=loop {
-                if let Some(remote)=api.sync(local.clone()) && !remote.emotes.is_empty() && !remote.loadouts.is_empty() {break remote;}
+                if let PlayerSync::Current(remote)=api.sync(local.clone()) && !remote.emotes.is_empty() && !remote.loadouts.is_empty() && remote.owned_cosmetics==["fixture:replacement"] {break remote;}
                 // Drive the actual nonblocking exchange while the original socket delivers its finite frames.
                 tokio::task::yield_now().await;
             };
+            assert_eq!(remote.ownership_xuid,identity.xuid());
+            ownership_seen.send(()).unwrap();
+            loop {
+                if let PlayerSync::Current(snapshot)=api.sync(local.clone()) && snapshot.owned_cosmetics.is_empty() {
+                    assert_eq!(snapshot.ownership_xuid,identity.xuid());
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
             let release=loop {
                 if let Some(release)=api.take_release() {break release;}
                 tokio::task::yield_now().await;
@@ -147,6 +170,8 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
             store.sign_out().unwrap();
             let retired=pending.await.is_err();
             api.finished().await;
+            api.receive(epoch,Inbound::parse(r#"{"type":"cosmetic_ownership","owned_cosmetics":["fixture:late"]}"#).unwrap(),Instant::now());
+            assert!(matches!(api.sync(CinnabarPlayerState::default()),PlayerSync::Unavailable));
             (remote,release,retired)
         };
         let owner=async {api.run_at(Arc::clone(&account),&url).await;api.finish();};

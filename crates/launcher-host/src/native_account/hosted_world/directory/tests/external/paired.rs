@@ -83,6 +83,7 @@ async fn signed_hosted_peer_reaches_the_actual_dragonfly_world_and_retires() {
                     skin: None,
                     settings: &settings,
                     tap: None,
+                    relay: None,
                     target: None,
                 },
                 |packs, game| (packs.into_archives(), game),

@@ -14,6 +14,8 @@ use std::{
 #[derive(Default)]
 pub(super) struct Players {
     local: CinnabarPlayerState,
+    ownership_xuid: String,
+    owned_cosmetics: Vec<String>,
     queued: Option<Instant>,
     watch_sent: Option<Instant>,
     sent_xuids: Vec<String>,
@@ -28,6 +30,18 @@ pub(super) struct Players {
 }
 
 impl Players {
+    /// Binds grants to the account authenticated by this original socket's welcome.
+    pub(super) fn welcomed(xuid: String, ids: Vec<String>) -> Self {
+        if !bridge::valid_cinnabar_xuid(&xuid) {
+            return Self::default();
+        }
+        Self {
+            ownership_xuid: xuid,
+            owned_cosmetics: admitted_ownership(ids),
+            ..Self::default()
+        }
+    }
+
     /// Replaces the latest bounded local intent and snapshots only currently watched remote identities.
     pub(super) fn sync(
         &mut self,
@@ -110,8 +124,12 @@ impl Players {
         Some(message)
     }
 
-    /// Retains only bounded, authenticated, currently watched playback and same/newer loadout revisions.
+    /// Replaces local grants or retains bounded, watched playback and same/newer remote loadout revisions.
     pub(super) fn receive(&mut self, msg: Inbound, now: Instant) {
+        if msg.kind == "cosmetic_ownership" {
+            self.owned_cosmetics = admitted_ownership(msg.owned_cosmetics.unwrap_or_default());
+            return;
+        }
         if !bridge::valid_cinnabar_xuid(&msg.xuid)
             || !bridge::valid_cinnabar_uuid(&msg.uuid)
             || !self.watches(&msg.xuid, &msg.uuid)
@@ -204,6 +222,8 @@ impl Players {
         self.loadouts
             .retain(|_, value| watches(&value.xuid, &value.uuid));
         CinnabarPlayerUpdates {
+            ownership_xuid: self.ownership_xuid.clone(),
+            owned_cosmetics: self.owned_cosmetics.clone(),
             emotes: self
                 .emotes
                 .values()

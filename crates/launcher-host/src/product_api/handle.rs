@@ -154,10 +154,19 @@ impl Client {
     }
 
     /// Coalesces the newest local player intent and reads aged, watched remote state without socket I/O.
-    pub(crate) fn sync(&self, local: CinnabarPlayerState) -> Option<CinnabarPlayerUpdates> {
-        let scope = self.with(|state| state.scope.clone())?;
-        if scope.current() != Some(true) {
-            return None;
+    pub(crate) fn sync(&self, local: CinnabarPlayerState) -> PlayerSync {
+        let Some((epoch, scope)) = self.with(|state| {
+            if state.stopped || state.live.is_none() {
+                return None;
+            }
+            Some((state.epoch, state.scope.clone()?))
+        }) else {
+            return PlayerSync::Unavailable;
+        };
+        match scope.current() {
+            None => return PlayerSync::Pending,
+            Some(false) => return PlayerSync::Unavailable,
+            Some(true) => {}
         }
         let now = Instant::now();
         let unix_ms = SystemTime::now()
@@ -166,12 +175,15 @@ impl Client {
             .and_then(|d| u64::try_from(d.as_millis()).ok())
             .unwrap_or_default();
         let result = self.with(|state| {
+            if state.stopped || state.epoch != epoch {
+                return None;
+            }
             let State { live, revision, .. } = state;
             live.as_mut()
                 .map(|live| live.players.sync(local, now, unix_ms, revision))
         });
         self.0.changed.notify_waiters();
-        result
+        result.map_or(PlayerSync::Unavailable, PlayerSync::Current)
     }
 
     /// Delivers only the latest accepted announcement through the launcher's existing release path.
