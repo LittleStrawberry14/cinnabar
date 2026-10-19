@@ -64,7 +64,17 @@ fn a_version_120_program_becomes_vulkan_glsl_naga_validates() {
         .iter()
         .map(|(_, n)| n.as_str())
         .collect();
-    assert_eq!(inputs, ["iris_Vertex", "iris_Color", "iris_MultiTexCoord0"]);
+    // `ftransform()` reads the position, so the raw packed-position parts follow the inputs.
+    assert_eq!(
+        inputs,
+        [
+            "iris_Vertex",
+            "iris_Color",
+            "iris_MultiTexCoord0",
+            "iris_PackedPosition",
+            "iris_DrawOrigin",
+        ]
+    );
     assert_eq!(fragment.0.frag_outputs, [(0, "iris_FragData0".to_owned())]);
     assert!(
         fragment
