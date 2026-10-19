@@ -80,8 +80,20 @@ async fn acquired_account_drives_product_wire_and_retires_its_pending_lookup() {
                 json!({"type":"loadout","xuid":"11","uuid":uuid,"revision":3,"slots":{"head":"fixture:remote-item"}}),
                 json!({"type":"release","channel":initial.channel,"version":"2.0.0","build":99,"published_at":"2026-10-19T00:00:00.000Z"}),
             ] {socket.send(Message::text(message.to_string())).await.unwrap();}
-            let second:Value=serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
-            assert_eq!(second["type"],"lookup");
+            let mut resends = 0;
+            let second = loop {
+                let message: Value = serde_json::from_str(
+                    socket.next().await.unwrap().unwrap().as_text().unwrap(),
+                ).unwrap();
+                if message["type"] == "lookup" {
+                    break message;
+                }
+                assert_eq!(message["type"], "loadout");
+                assert_eq!(message["slots"]["head"], "fixture:item");
+                assert!(message["revision"].as_u64().unwrap() > 30);
+                resends += 1;
+                assert!(resends <= 1, "visibility produced repeated unchanged loadouts");
+            };
             assert_eq!(second["xuids"],json!(["22"]));
             pending_seen.send(()).unwrap();
             let terminal=socket.next().await;
