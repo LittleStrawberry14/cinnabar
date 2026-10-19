@@ -31,7 +31,7 @@ pub(in crate::native_account::hosted_world) struct Peers {
 
 impl Peers {
     /// Uses only the capacity admitted by the actual opening and retained accepting transport.
-    pub(super) fn new(limit: usize) -> Self {
+    pub(in crate::native_account::hosted_world) fn new(limit: usize) -> Self {
         Self {
             limit,
             ..Self::default()
@@ -39,12 +39,12 @@ impl Peers {
     }
 
     /// Counts initialized peers through their actual closing owner, including a checked-out close.
-    pub(super) fn occupied(&self) -> usize {
+    pub(in crate::native_account::hosted_world) fn occupied(&self) -> usize {
         self.occupied
     }
 
     /// Captures a coalesced state wake; the notification carries neither authority nor packet data.
-    pub(super) fn wake(&self) -> Arc<Notify> {
+    pub(in crate::native_account::hosted_world) fn wake(&self) -> Arc<Notify> {
         Arc::clone(&self.wake)
     }
 
@@ -54,7 +54,10 @@ impl Peers {
     }
 
     /// Retains a peer only after actual typed Initialized and its original backend handoff.
-    pub(super) fn admit(&mut self, peer: NativeHostedPeer) -> io::Result<()> {
+    pub(in crate::native_account::hosted_world) fn admit(
+        &mut self,
+        peer: NativeHostedPeer,
+    ) -> io::Result<()> {
         if self.deadline.is_some() || self.occupied >= self.limit {
             return Err(unavailable());
         }
@@ -168,7 +171,9 @@ impl Peers {
     }
 
     /// Checks out one original closing owner without releasing its occupied capacity.
-    pub(super) fn take_closing(&mut self) -> Option<ClosingHostedPeer> {
+    pub(in crate::native_account::hosted_world) fn take_closing(
+        &mut self,
+    ) -> Option<ClosingHostedPeer> {
         self.closing.pop()
     }
 
@@ -178,7 +183,7 @@ impl Peers {
     }
 
     /// Releases only a peer whose actual consuming close has completed.
-    pub(super) fn retired(&mut self) {
+    pub(in crate::native_account::hosted_world) fn retired(&mut self) {
         self.occupied = self
             .occupied
             .checked_sub(1)

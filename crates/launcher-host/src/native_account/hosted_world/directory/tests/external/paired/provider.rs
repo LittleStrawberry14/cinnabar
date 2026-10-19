@@ -47,6 +47,25 @@ impl Provider {
         observed: Instant,
         claims: Value,
     ) -> protocol::NativeAuthentication {
+        self.authentication_for(
+            key,
+            service_time,
+            observed,
+            claims,
+            (VISITOR_XUID, VISITOR_NAME),
+        )
+    }
+
+    /// Verifies each actual visitor's distinct identity against its own connection proof.
+    pub(super) fn authentication_for(
+        &self,
+        key: SigningKey,
+        service_time: SystemTime,
+        observed: Instant,
+        claims: Value,
+        visitor: (&str, &str),
+    ) -> protocol::NativeAuthentication {
+        let (xuid, name) = visitor;
         let now = Instant::now();
         let seconds = service_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
         let expires = service_time + Duration::from_secs(300);
@@ -54,7 +73,7 @@ impl Provider {
         let claims = serde_json::value::to_raw_value(&claims).unwrap();
         let payload = json!({"iss":HOSTED_WORLD_ISSUER,
             "aud":nethernet::identity::MINECRAFT_AUDIENCE, "sub":"paired-world-visitor",
-            "xid":VISITOR_XUID, "xname":VISITOR_NAME, "iat":seconds, "exp":expires_seconds,
+            "xid":xuid, "xname":name, "iat":seconds, "exp":expires_seconds,
             "cpk":STANDARD.encode(key.verifying_key().to_public_key_der().unwrap().as_bytes())});
         let header = URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(&json!({"alg":"RS256","kid":KEY_ID})).unwrap());
@@ -70,7 +89,6 @@ impl Provider {
             &self.jwks,
         )
         .unwrap();
-        protocol::NativeAuthentication::new(key, credential, &claims, &verifier, VISITOR_XUID, now)
-            .unwrap()
+        protocol::NativeAuthentication::new(key, credential, &claims, &verifier, xuid, now).unwrap()
     }
 }

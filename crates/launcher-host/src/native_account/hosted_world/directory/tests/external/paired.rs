@@ -1,6 +1,7 @@
 //! One complete production accepting path into the actual Dragonfly process, with real client IO.
 
 mod authority;
+mod multiple;
 mod provider;
 
 use super::*;
