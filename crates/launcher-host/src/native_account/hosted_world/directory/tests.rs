@@ -9,6 +9,7 @@ use bedrock_services::{
 };
 use launcher::accounts::{AccountProfile, AccountStore};
 
+mod contention;
 mod dispatch;
 mod external;
 
