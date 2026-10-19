@@ -85,6 +85,8 @@ pub(super) async fn dial(
         identity: Some(Arc::clone(&identity.identity)),
         server_trust: Some(identity.trust.clone()),
         client_ice: Some(ClientIceConfig {
+            turn_streams: Vec::new(),
+            turn_tls: None,
             ice: Default::default(),
             bind_addr: bind,
         }),

@@ -333,6 +333,8 @@ async fn signed_pair() -> Pair {
                 ServerIdentity::from_key((*key).clone(), SERVER, now, Some(TIMEOUT)).unwrap(),
             )),
             server_ice: Some(ServerIceConfig {
+                turn_streams: Vec::new(),
+                turn_tls: None,
                 ice: Default::default(),
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
@@ -351,6 +353,8 @@ async fn signed_pair() -> Pair {
             )),
             server_trust: Some(trust(*key.verifying_key(), Some(SERVER))),
             client_ice: Some(ClientIceConfig {
+                turn_streams: Vec::new(),
+                turn_tls: None,
                 ice: Default::default(),
                 bind_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
             }),

@@ -57,6 +57,8 @@ async fn local_http_ready_connection_preserves_original_proof_and_bidirectional_
                 )),
                 token_trust: Some(proof),
                 server_ice: Some(ServerIceConfig {
+                    turn_streams: Vec::new(),
+                    turn_tls: None,
                     ice: Default::default(),
                     bind_addr: "127.0.0.1:0".parse().unwrap(),
                 }),

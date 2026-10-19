@@ -66,7 +66,7 @@ pub(in crate::native_account::hosted_world::active) async fn renew(
     let resolved = driving(
         server,
         world.peer_io(Some(deadline), async {
-            nethernet_tokio::resolve_ice_servers(&servers, bind_addr, credential_expiry, deadline)
+            nethernet_tokio::resolve_ice_targets(&servers, bind_addr, credential_expiry, deadline)
                 .await
                 .map_err(|_| unavailable())
         }),
@@ -78,8 +78,10 @@ pub(in crate::native_account::hosted_world::active) async fn renew(
     let mut ice = ServerIceConfig {
         ice: Default::default(),
         bind_addr,
+        turn_streams: resolved.turn_streams,
+        turn_tls: None,
     };
-    ice.ice.servers = resolved;
+    ice.ice.servers = resolved.datagrams;
     Ok(Renewed {
         identity,
         ice,

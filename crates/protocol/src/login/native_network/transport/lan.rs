@@ -178,6 +178,8 @@ impl LanTransport {
             config.server_trust = Some(super::super::authentication::offline_answer_trust());
             config.allow_anonymous_answers = true;
             config.client_ice = Some(ClientIceConfig {
+                turn_streams: Vec::new(),
+                turn_tls: None,
                 ice: Default::default(),
                 bind_addr: Some(local),
             });

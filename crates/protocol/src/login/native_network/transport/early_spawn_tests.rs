@@ -304,6 +304,8 @@ async fn fixture_route(route: Route) -> FixtureRoute {
             ConnectionConfig {
                 identity: Some(identity.clone()),
                 server_ice: Some(nethernet_tokio::ServerIceConfig {
+                    turn_streams: Vec::new(),
+                    turn_tls: None,
                     ice: Default::default(),
                     bind_addr: "127.0.0.1:0".parse().unwrap(),
                 }),

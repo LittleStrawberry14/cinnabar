@@ -82,7 +82,7 @@ pub(super) async fn acceptor(
     let servers = service_ice_servers(credentials);
     // The current native default is an explicit IPv4 socket; mixed-family qualification remains separate.
     let bind_addr = bind_address();
-    let resolving = nethernet_tokio::resolve_ice_servers(&servers, bind_addr, expires, deadline);
+    let resolving = nethernet_tokio::resolve_ice_targets(&servers, bind_addr, expires, deadline);
     tokio::pin!(resolving);
     let resolved = loop {
         tokio::select! {
@@ -94,8 +94,10 @@ pub(super) async fn acceptor(
     let mut server_ice = ServerIceConfig {
         ice: Default::default(),
         bind_addr,
+        turn_streams: resolved.turn_streams,
+        turn_tls: None,
     };
-    server_ice.ice.servers = resolved;
+    server_ice.ice.servers = resolved.datagrams;
     let config = ConnectionConfig {
         identity: Some(identity.sdp_identity()),
         token_trust: Some(identity.offer_trust()),
