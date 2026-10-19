@@ -94,6 +94,7 @@ canonical = ('bedrock-protocol-1-26-51 = { git = "https://github.com/cinnabar-mc
              f'rev = "{sys.argv[2]}" }}')
 renamed = ('"wire" = { package = "bedrock-protocol-1-26-51", '
            f'git = "https://github.com/cinnabar-mc/protocolgen", rev = "{sys.argv[2]}" }}')
+text = text.replace('bedrock-protocol-1-26-51.workspace = true', canonical, 1)
 if canonical not in text:
     raise SystemExit("protocol fixture did not find the canonical Git dependency")
 text = text.replace(canonical, renamed, 1)

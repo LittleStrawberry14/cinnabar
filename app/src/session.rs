@@ -36,6 +36,8 @@ pub(crate) mod destination;
 mod native_account;
 #[cfg(feature = "native-networking")]
 mod native_friend;
+#[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
+mod native_transfer_tests;
 mod url_policy;
 
 use client_session::MAX_TRANSFER_CHAIN_HOPS;
@@ -853,6 +855,11 @@ fn follow_transfer(
             ),
         );
         return;
+    }
+    #[cfg(feature = "native-networking")]
+    if session.controller.native_transport.is_some() {
+        // Transfer names an addressed server while retaining the selected native backend.
+        session.controller.native_transport = Some(protocol::NativeTransport::RakNet);
     }
     // The shared replacement path tears down old transport and world/UI state
     // before provisioning, so every early failure leaves no stale session.

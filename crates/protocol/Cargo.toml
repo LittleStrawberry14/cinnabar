@@ -79,7 +79,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"], opti
 [dev-dependencies]
 rsa.workspace = true
 resource-pack = { path = "../resource-pack", features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "process"] }
 test-alloc = { path = "../test-alloc" }
 tempfile = "3"
 test-time = { path = "../test-time" }

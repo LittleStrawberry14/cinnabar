@@ -34,7 +34,7 @@ pub(super) fn start(
     sender
 }
 
-/// Retains a failed report until accepted, preserving read/delete order without a hot loop.
+/// Retains a failed report until completion or retirement, preserving read/delete order without a hot loop.
 fn run<T>(
     requests: &Receiver<T>,
     stop: &Receiver<()>,

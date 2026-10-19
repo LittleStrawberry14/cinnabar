@@ -142,9 +142,10 @@ async fn native_join<P: Send + 'static>(
     authentication: Option<NativeAuthentication>,
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
-    tokio::time::timeout(
-        crate::NATIVE_JOIN_TIMEOUT,
-        connect(target, login, authentication, prepare),
+    let deadline = tokio::time::Instant::now() + crate::NATIVE_JOIN_TIMEOUT;
+    tokio::time::timeout_at(
+        deadline,
+        connect(target, login, authentication, deadline, prepare),
     )
     .await
     .map_err(|_| {
@@ -160,9 +161,10 @@ async fn connect<P: Send + 'static>(
     target: &NativeConnectionTarget,
     login: SessionLogin<'_>,
     authentication: Option<NativeAuthentication>,
+    deadline: tokio::time::Instant,
     prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
 ) -> Result<(PlaySession, P), ProtocolError> {
-    let negotiated = negotiated::negotiate(target, &login, authentication).await?;
+    let negotiated = negotiated::negotiate(target, &login, authentication, deadline).await?;
     spawn::continue_join(negotiated, login, prepare).await
 }
 

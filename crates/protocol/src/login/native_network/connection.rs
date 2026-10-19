@@ -10,6 +10,7 @@ use bytes::{Bytes, BytesMut};
 use std::{collections::VecDeque, io};
 
 mod codec;
+mod identity;
 use codec::Codec;
 pub(super) mod send;
 use send::{PendingSend, SendRetirement};
@@ -44,6 +45,7 @@ pub(crate) struct Connection {
     send_retirement: Option<SendRetirement>,
     send_sealed: bool,
     negotiation_skips: u64,
+    pub(super) identity: Option<crate::session_wire::SessionIdentity>,
     #[cfg(test)]
     observed_batches: Option<BatchLifetimes>,
 }
@@ -100,6 +102,7 @@ impl Connection {
             send_retirement: None,
             send_sealed: false,
             negotiation_skips: 0,
+            identity: None,
             #[cfg(test)]
             observed_batches: None,
         }
@@ -244,9 +247,7 @@ impl Connection {
         let entries = wire::Frames::new(body, self.limits.max_packets)
             .map(|frame| {
                 let frame = frame.map_err(io::Error::other)?;
-                let mut reader = wire::Reader::from_shared(frame.frame());
-                reader.read_var_u32().map_err(io::Error::other)?;
-                Ok(frame.frame().slice(reader.position()..))
+                identity::entry(frame, self.identity.as_ref())
             })
             .collect::<io::Result<Vec<_>>>()?;
         self.codec().encode(&entries).map_err(io::Error::other)

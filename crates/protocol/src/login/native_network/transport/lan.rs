@@ -1,9 +1,11 @@
 //! The actual ready LAN client and its same receiver queues after local retirement.
 
-use super::Inbox;
+use super::{Inbox, LAN_CONNECTION_TYPE};
 use bytes::Bytes;
-use nethernet_tokio::{AcceptedSession, NetherClient, Retired};
-use std::{io, time::Instant};
+use nethernet_tokio::{
+    AcceptedSession, ConnectionConfig, LanConfig, LanSignaling, NetherClient, Retired,
+};
+use std::{io, net::SocketAddr, time::Instant};
 
 pub(in crate::login::native_network) struct LanTransport {
     connection: Option<Connection>,
@@ -17,6 +19,65 @@ enum Connection {
 }
 
 impl LanTransport {
+    /// Discovers and connects one compatible IPv4 endpoint under the selection owner's cutoff.
+    pub(super) async fn connect(address: SocketAddr) -> io::Result<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let route = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        route.connect(address).await?;
+        let local = SocketAddr::new(route.local_addr()?.ip(), 0);
+        drop(route);
+        let signaling = LanSignaling::with_config(
+            rand::random(),
+            local,
+            LanConfig {
+                broadcast_address: Some(address),
+                ..LanConfig::default()
+            },
+        )
+        .await
+        .map_err(io::Error::other)?;
+        let mut polls = tokio::time::interval(std::time::Duration::from_millis(50));
+        let (id, data) = loop {
+            polls.tick().await;
+            let mut found = None;
+            for (id, data) in signaling.discover().await {
+                if signaling.get_address(id).await == Some(address) {
+                    found = Some((id, data));
+                    break;
+                }
+            }
+            if let Some(found) = found {
+                break found;
+            }
+        };
+        if !data.flag_b || data.session_id.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "LAN peer does not advertise self-signed admission with a nonce",
+            ));
+        }
+        if data.connection_type != LAN_CONNECTION_TYPE
+            || data.protocol_version != crate::PROTOCOL_VERSION as u32
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "LAN peer advertises an incompatible transport or protocol",
+            ));
+        }
+        let connection = NetherClient::connect_with(
+            signaling,
+            id.to_string(),
+            ConnectionConfig {
+                allow_unsigned_answers: true,
+                attempts: 1,
+                ..ConnectionConfig::default()
+            },
+        )
+        .await
+        .map_err(io::Error::other)?;
+        Ok(Self::new(connection, data.session_id))
+    }
+
     /// Retains only an actual ready client and its discovery challenge on the same owner.
     pub(super) fn new(connection: NetherClient, nonce: String) -> Self {
         Self {
