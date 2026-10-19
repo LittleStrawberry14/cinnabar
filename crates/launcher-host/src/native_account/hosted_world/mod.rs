@@ -56,6 +56,7 @@ impl NativeHostedWorld {
 
     /// Checks acknowledged title nonce policy for an already authenticated Login identity.
     /// The caller must cryptographically authenticate authenticated_xuid before invoking this method.
+    /// WouldBlock means another operation temporarily owns the account; retain the original Login.
     pub fn check_approval(
         &self,
         authenticated_xuid: &str,
@@ -66,6 +67,7 @@ impl NativeHostedWorld {
     }
 
     /// Rechecks the same opening/account/reference/member/nonce revision before final transport admission.
+    /// WouldBlock denies new admission while retaining the original approval for an explicit retry.
     pub fn recheck_approval(&self, approval: &HostedApproval) -> io::Result<()> {
         self.directory_ref()?.recheck_approval(approval)
     }

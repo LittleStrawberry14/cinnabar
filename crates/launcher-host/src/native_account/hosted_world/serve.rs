@@ -32,10 +32,10 @@ impl NativeHostedWorld {
         self.directory_mut()?
             .service_barrier(Some(deadline))
             .await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         let backend = backend.begin_attach(deadline)?;
         let backend = self.peer_io(Some(deadline), backend.finish()).await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         Ok(backend)
     }
 
@@ -52,10 +52,10 @@ impl NativeHostedWorld {
         self.directory_mut()?
             .service_barrier(Some(deadline))
             .await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         let backend = backend.begin_initialized(cache_enabled, radius, deadline)?;
         let backend = self.peer_io(Some(deadline), backend.finish()).await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         Ok(backend)
     }
 
@@ -69,7 +69,7 @@ impl NativeHostedWorld {
         client_data: Box<serde_json::value::RawValue>,
         deadline: Instant,
     ) -> io::Result<PendingBackendPeer> {
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         let prepared = self
             .peer_io(
                 Some(deadline),
@@ -79,10 +79,10 @@ impl NativeHostedWorld {
         self.directory_mut()?
             .service_barrier(Some(deadline))
             .await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         let opening = prepared.begin_open()?;
         let backend = self.peer_io(Some(deadline), opening.finish()).await?;
-        self.recheck_approval(approval)?;
+        self.wait_approval(approval, Some(deadline)).await?;
         Ok(backend)
     }
 
@@ -100,7 +100,7 @@ impl NativeHostedWorld {
         options: ServerHandshakeOptions,
         deadline: Instant,
     ) -> io::Result<NativeHostedPeer> {
-        self.check_bridge(process)?;
+        self.check_bridge(process, deadline).await?;
         let policy = self.login_policy(deadline).await?;
         let (mut wire, handshake) = self
             .peer_io(
@@ -110,7 +110,8 @@ impl NativeHostedWorld {
             .await?;
         let result = async {
             let ready = self.login(&mut wire, handshake, &policy, deadline).await?;
-            self.recheck_login(ready.login(), &policy, ready.grant())?;
+            self.wait_login(ready.login(), &policy, ready.grant())
+                .await?;
             let player = ready.login().player_identity().ok_or_else(rejected)?;
             let identity = Identity {
                 xuid: ready.login().xuid().into(),
@@ -130,8 +131,9 @@ impl NativeHostedWorld {
                     deadline,
                 )
                 .await?;
-            self.recheck_login(ready.login(), &policy, ready.grant())?;
-            self.check_bridge(process)?;
+            self.wait_login(ready.login(), &policy, ready.grant())
+                .await?;
+            self.check_bridge(process, deadline).await?;
             self.packs_and_world(
                 &mut wire,
                 ready,
@@ -173,7 +175,7 @@ impl NativeHostedWorld {
     ) -> io::Result<ServerPacksReady<HostedLoginApproval>> {
         let mut login = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.directory_ref()?.check_login_policy(policy)?;
+            self.wait_policy(policy).await?;
             match handshake
                 .receive(
                     packet,
@@ -189,7 +191,7 @@ impl NativeHostedWorld {
                         SendAuthority::Policy(policy),
                     )
                     .await?;
-                    self.directory_ref()?.check_login_policy(policy)?;
+                    self.wait_policy(policy).await?;
                     wire.compression_flushed(pending.compression())?;
                     break pending.flushed(Instant::now()).map_err(|_| rejected())?;
                 }
@@ -212,7 +214,7 @@ impl NativeHostedWorld {
         };
         let verified = loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.directory_ref()?.check_login_policy(policy)?;
+            self.wait_policy(policy).await?;
             match login
                 .receive(
                     packet,
@@ -232,10 +234,12 @@ impl NativeHostedWorld {
                 }
             }
         };
+        let grant = self.wait_approve_login(verified.login(), policy).await?;
         let approved = verified
-            .authorize(|login| self.approve_login(login, policy))
+            .authorize(|_| Ok::<_, io::Error>(grant))
             .map_err(|_| rejected())?;
-        self.recheck_login(approved.login(), policy, approved.grant())?;
+        self.wait_login(approved.login(), policy, approved.grant())
+            .await?;
         let approval = approved
             .accept(
                 policy,
@@ -247,13 +251,13 @@ impl NativeHostedWorld {
         let mut acknowledgment = match approval {
             ServerApprovalEvent::Ready(ready) => return Ok(ready),
             ServerApprovalEvent::KeyExchange(pending) => {
-                self.recheck_login_grant(policy, pending.grant())?;
+                self.wait_login_grant(policy, pending.grant()).await?;
                 self.send_setup(
                     wire.prepare_packets(vec![pending.packet().clone().into()], deadline)?,
                     SendAuthority::KeyExchange(policy, pending.grant()),
                 )
                 .await?;
-                self.recheck_login_grant(policy, pending.grant())?;
+                self.wait_login_grant(policy, pending.grant()).await?;
                 let (acknowledgment, ciphers) =
                     pending.flushed(Instant::now()).map_err(|_| rejected())?;
                 wire.encryption_flushed(*ciphers)?;
@@ -262,7 +266,8 @@ impl NativeHostedWorld {
         };
         loop {
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.recheck_login_grant(policy, acknowledgment.grant())?;
+            self.wait_login_grant(policy, acknowledgment.grant())
+                .await?;
             match acknowledgment
                 .receive(
                     packet,
@@ -294,7 +299,8 @@ impl NativeHostedWorld {
         policy: NativeHostedLoginPolicy,
         deadline: Instant,
     ) -> io::Result<(ActiveBackendPeer, AcceptedSession<HostedLoginApproval>)> {
-        self.recheck_login(ready.login(), &policy, ready.grant())?;
+        self.wait_login(ready.login(), &policy, ready.grant())
+            .await?;
         let snapshot = native_host_packs(process.snapshot())?;
         let delivery = ServerPackDelivery {
             chunk_size: bridge::host_world::contract::MAX_PACK_READ_BYTES,
@@ -315,9 +321,11 @@ impl NativeHostedWorld {
         )
         .await?;
         let ready = loop {
-            self.recheck_login(session.login(), &policy, session.grant())?;
+            self.wait_login(session.login(), &policy, session.grant())
+                .await?;
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.recheck_login(session.login(), &policy, session.grant())?;
+            self.wait_login(session.login(), &policy, session.grant())
+                .await?;
             match session
                 .receive(packet, Instant::now())
                 .map_err(|_| rejected())?
@@ -326,7 +334,8 @@ impl NativeHostedWorld {
                     session: retained,
                     packets,
                 } => {
-                    self.recheck_login(retained.login(), &policy, retained.grant())?;
+                    self.wait_login(retained.login(), &policy, retained.grant())
+                        .await?;
                     self.send_setup(
                         wire.prepare_packets(packets, deadline)?,
                         SendAuthority::Login(retained.login(), &policy, retained.grant()),
@@ -335,7 +344,7 @@ impl NativeHostedWorld {
                     session = retained;
                 }
                 ServerPackEvent::ReadChunk(read) => {
-                    self.recheck_login(read.login(), &policy, read.grant())?;
+                    self.wait_login(read.login(), &policy, read.grant()).await?;
                     let archive = u32::try_from(read.archive_index()).map_err(|_| rejected())?;
                     let length = u32::try_from(read.byte_len()).map_err(|_| rejected())?;
                     let bytes = self
@@ -344,17 +353,19 @@ impl NativeHostedWorld {
                             backend.read_pack(archive, read.offset(), length, deadline),
                         )
                         .await?;
-                    self.recheck_login(read.login(), &policy, read.grant())?;
+                    self.wait_login(read.login(), &policy, read.grant()).await?;
                     let pending = read
                         .supply(bytes.to_vec(), Instant::now())
                         .map_err(|_| rejected())?;
-                    self.recheck_login(pending.login(), &policy, pending.grant())?;
+                    self.wait_login(pending.login(), &policy, pending.grant())
+                        .await?;
                     self.send_setup(
                         wire.prepare_packets(vec![pending.packet().clone().into()], deadline)?,
                         SendAuthority::Login(pending.login(), &policy, pending.grant()),
                     )
                     .await?;
-                    self.recheck_login(pending.login(), &policy, pending.grant())?;
+                    self.wait_login(pending.login(), &policy, pending.grant())
+                        .await?;
                     let (retained, packets) =
                         pending.flushed(Instant::now()).map_err(|_| rejected())?;
                     self.send_setup(
@@ -365,13 +376,15 @@ impl NativeHostedWorld {
                     session = retained;
                 }
                 ServerPackEvent::Chunk(pending) => {
-                    self.recheck_login(pending.login(), &policy, pending.grant())?;
+                    self.wait_login(pending.login(), &policy, pending.grant())
+                        .await?;
                     self.send_setup(
                         wire.prepare_packets(vec![pending.packet().clone().into()], deadline)?,
                         SendAuthority::Login(pending.login(), &policy, pending.grant()),
                     )
                     .await?;
-                    self.recheck_login(pending.login(), &policy, pending.grant())?;
+                    self.wait_login(pending.login(), &policy, pending.grant())
+                        .await?;
                     let (retained, packets) =
                         pending.flushed(Instant::now()).map_err(|_| rejected())?;
                     self.send_setup(
@@ -391,11 +404,13 @@ impl NativeHostedWorld {
                 }
             }
         };
-        self.recheck_login(ready.login(), &policy, ready.grant())?;
+        self.wait_login(ready.login(), &policy, ready.grant())
+            .await?;
         let backend = self
             .attach_backend(&ready.grant().approval, backend, deadline)
             .await?;
-        self.recheck_login(ready.login(), &policy, ready.grant())?;
+        self.wait_login(ready.login(), &policy, ready.grant())
+            .await?;
         let (mut packets, world) = NativeHostWorld::parse(backend.world())?.into_parts();
         let (mut spawning, startup) = ready
             .start_world(
@@ -412,15 +427,18 @@ impl NativeHostedWorld {
         )
         .await?;
         let initialized = loop {
-            self.recheck_login(spawning.login(), &policy, spawning.grant())?;
+            self.wait_login(spawning.login(), &policy, spawning.grant())
+                .await?;
             let packet = self.peer_io(Some(deadline), wire.receive(deadline)).await?;
-            self.recheck_login(spawning.login(), &policy, spawning.grant())?;
+            self.wait_login(spawning.login(), &policy, spawning.grant())
+                .await?;
             match spawning
                 .receive(packet, Instant::now())
                 .map_err(|_| rejected())?
             {
                 ServerSpawnEvent::Send { session, packets } => {
-                    self.recheck_login(session.login(), &policy, session.grant())?;
+                    self.wait_login(session.login(), &policy, session.grant())
+                        .await?;
                     self.send_setup(
                         wire.prepare_packets(packets, deadline)?,
                         SendAuthority::Login(session.login(), &policy, session.grant()),
@@ -435,7 +453,8 @@ impl NativeHostedWorld {
                 }
             }
         };
-        self.recheck_login(initialized.login(), &policy, initialized.grant())?;
+        self.wait_login(initialized.login(), &policy, initialized.grant())
+            .await?;
         let accepted = initialized
             .finish(
                 &policy,
@@ -453,7 +472,8 @@ impl NativeHostedWorld {
                 deadline,
             )
             .await?;
-        self.recheck_login(accepted.login(), &policy, accepted.grant())?;
+        self.wait_login(accepted.login(), &policy, accepted.grant())
+            .await?;
         Ok((backend, accepted))
     }
 }

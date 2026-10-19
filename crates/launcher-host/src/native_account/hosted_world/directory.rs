@@ -18,6 +18,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+mod authority;
+use authority::Authority;
+
 struct ApprovalWrite {
     revision: u64,
     document: Value,
@@ -66,6 +69,7 @@ impl HostDirectory {
         future: impl std::future::Future<Output = io::Result<T>>,
     ) -> io::Result<T> {
         tokio::pin!(future);
+        let mut completed = None;
         loop {
             self.active()?;
             if let Some(deadline) = deadline {
@@ -84,6 +88,7 @@ impl HostDirectory {
                 self.refresh_deadline = None;
             }
             self.validate_session()?;
+            let busy = matches!(self.account_authority()?, Authority::Busy);
             let socket = self
                 .socket
                 .as_mut()
@@ -98,29 +103,28 @@ impl HostDirectory {
                         .ok_or_else(|| invalid("host subscription is unavailable"))?,
                         &self.reference, &mut self.changed)?;
                 }
-                result = &mut future => {
-                    self.current()?;
-                    if let Some(deadline) = deadline { check_deadline(deadline)?; }
-                    return result;
+                _ = tokio::time::sleep(super::super::LEASE_RETRY), if busy || completed.is_some() => {}
+                result = &mut future, if completed.is_none() => { completed = Some(result); }
+                _ = std::future::ready(()), if !busy && completed.is_some() => {
+                    match self.current() {
+                        Ok(()) => {
+                            if let Some(deadline) = deadline { check_deadline(deadline)?; }
+                            return completed.take().expect("one actual completed IO result");
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(error) => return Err(error),
+                    }
                 }
             }
         }
     }
 
-    /// Keeps pipe authority on this actual current account/directory/opening owner.
-    pub(super) fn request_bridge(
-        &self,
-        bootstrap: &bridge::host_world::contract::Bootstrap,
-    ) -> io::Result<()> {
-        self.current()?;
-        self.opening.request_bridge(bootstrap)
-    }
     /// Acquires only public provider metadata under the original account lease and live RTA lifetime.
     pub(super) async fn login_policy(
         &mut self,
         deadline: Instant,
     ) -> io::Result<super::NativeHostedLoginPolicy> {
-        self.current()?;
+        self.service_barrier(Some(deadline)).await?;
         check_deadline(deadline)?;
         let mut operation = self.operation(deadline).await?;
         let acquire = async {
@@ -179,7 +183,7 @@ impl HostDirectory {
         operation.persist()?;
         drop(operation);
         check_deadline(deadline)?;
-        self.current()?;
+        self.service_barrier(Some(deadline)).await?;
         Ok(super::NativeHostedLoginPolicy::new(
             verifier,
             clock,
@@ -859,52 +863,6 @@ impl HostDirectory {
             return Err(super::closed());
         }
         self.opening.validate()
-    }
-
-    /// Checks the live account and original RTA proof without credential, file or HTTP work.
-    fn current(&self) -> io::Result<()> {
-        self.active()?;
-        self.validate_session()?;
-        if self.changed || self.pending.is_some() {
-            return Err(invalid("host approval publication is unresolved"));
-        }
-        let scope = self
-            .scope
-            .as_ref()
-            .ok_or_else(|| invalid("host account scope is unavailable"))?;
-        let state = self
-            .account
-            .state
-            .try_lock()
-            .map_err(|_| invalid("host account operation is active"))?;
-        let cached = state
-            .cached
-            .as_ref()
-            .ok_or_else(|| invalid("host account owner is unavailable"))?;
-        if state.busy
-            || cached.generation != scope.generation
-            || cached
-                .identity
-                .as_ref()
-                .is_none_or(|identity| !identity.current_credential || identity.xuid != scope.xuid)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "host account generation changed",
-            ));
-        }
-        let socket = self
-            .socket
-            .as_ref()
-            .ok_or_else(|| invalid("host RTA is unavailable"))?;
-        if !matches!(&cached.owner, Owner::Minecraft(account) if account.owns_rta(socket.connection()))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "host RTA proof owner changed",
-            ));
-        }
-        Ok(())
     }
 }
 
