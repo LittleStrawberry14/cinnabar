@@ -43,6 +43,19 @@ pub(crate) fn from_environment() -> PacketMods {
 }
 
 impl PacketMods {
+    /// Whether snapshot construction is needed for this live packet session.
+    pub(super) fn native_frame_available(&self) -> bool {
+        self.loader.native_frame_available()
+    }
+
+    /// Exchanges native input and local effects without waiting for the packet worker.
+    pub(super) fn native_frame(
+        &self,
+        frame: Option<mod_api::native_frame::Frame>,
+    ) -> Option<mod_host::CameraDelta> {
+        self.loader.native_frame(frame)
+    }
+
     /// Whether this packet session owns input or its closing animation.
     pub(super) fn menu_owns_panel(&self) -> bool {
         self.menu.owned

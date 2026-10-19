@@ -9,6 +9,7 @@ mod component;
 mod core;
 mod limits;
 pub(crate) mod native_capabilities;
+mod native_frame;
 pub mod native_menu;
 mod wasi;
 
@@ -54,6 +55,14 @@ trait Guest: Send {
     ) -> Result<Result<Option<Vec<u8>>, String>>;
     fn tick(&mut self) -> Result<Result<Outbound, String>>;
     fn stop(&mut self) -> Result<()>;
+    /// Whether startup negotiated the optional input-owned native frame capability.
+    fn has_native_frame(&self) -> bool {
+        false
+    }
+    /// Runs the optional core native callback with bounded UTF-8 JSON.
+    fn frame(&mut self, _json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        Ok(Ok(None))
+    }
     /// Whether startup negotiated the optional focused menu capability.
     fn has_native_menu(&self) -> bool {
         false

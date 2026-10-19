@@ -6,7 +6,7 @@ use super::{
     Direction, Guest, Outbound, PACKET_MOD_LOAD_DEADLINE, PACKET_MOD_TRANSFER_BYTES,
     SessionIdentity, SessionPack,
     limits::PacketLimits,
-    native_capabilities::{MENU, NATIVE_INIT, NativeExports},
+    native_capabilities::{FRAME, MENU, NATIVE_INIT, NativeExports},
     wasi,
 };
 use crate::{ModGrants, execution};
@@ -132,7 +132,18 @@ impl Program {
                 None => Ok(None),
             }
         };
-        let posts = [post(START)?, post(ON_BATCH)?, post(TICK)?, post(MENU)?];
+        let posts = [
+            post(START)?,
+            post(ON_BATCH)?,
+            post(TICK)?,
+            post(FRAME)?,
+            post(MENU)?,
+        ];
+        let frame = if self.native_capabilities & mod_api::native_frame::CAMERA_PLAYERS != 0 {
+            Some(instance.get_typed_func(&mut store, FRAME)?)
+        } else {
+            None
+        };
         let menu = if self.native_capabilities & mod_api::native_menu::CONTROLS != 0 {
             Some(instance.get_typed_func(&mut store, MENU)?)
         } else {
@@ -144,6 +155,7 @@ impl Program {
             on_batch: instance.get_typed_func(&mut store, ON_BATCH)?,
             tick: instance.get_typed_func(&mut store, TICK)?,
             stop: instance.get_typed_func(&mut store, STOP)?,
+            frame,
             menu,
             posts,
         };
@@ -163,9 +175,10 @@ struct Calls {
     on_batch: TypedFunc<(i32, i32, i32), i32>,
     tick: TypedFunc<(), i32>,
     stop: TypedFunc<(), ()>,
+    frame: Option<TypedFunc<(i32, i32), i32>>,
     menu: Option<TypedFunc<(i32, i32), i32>>,
-    /// Post-return functions of `start`, `on-batch`, `tick` and optional `menu`.
-    posts: [Option<TypedFunc<i32, ()>>; 4],
+    /// Post-return functions of `start`, `on-batch`, `tick` and optional `frame` and `menu`.
+    posts: [Option<TypedFunc<i32, ()>>; 5],
 }
 
 struct CoreGuest {
@@ -297,6 +310,23 @@ impl Guest for CoreGuest {
             .run(self.calls.stop.call_async(&mut self.store, ()))
     }
 
+    fn has_native_frame(&self) -> bool {
+        self.calls.frame.is_some()
+    }
+
+    fn frame(&mut self, json: &[u8]) -> Result<Result<Option<Vec<u8>>, String>> {
+        let Some(frame) = self.calls.frame.clone() else {
+            return Ok(Ok(None));
+        };
+        let input = self.lower(json)?;
+        let result = self
+            .deadline
+            .run(frame.call_async(&mut self.store, input))?;
+        self.lift_bounded(3, result, mod_api::native_frame::MAX_BYTES, |reader, at| {
+            reader.result(at, |reader, at| reader.list(at).map(Some))
+        })
+    }
+
     fn has_native_menu(&self) -> bool {
         self.calls.menu.is_some()
     }
@@ -308,7 +338,7 @@ impl Guest for CoreGuest {
         let input = self.lower(json)?;
         let result = self.deadline.run(menu.call_async(&mut self.store, input))?;
         self.lift_bounded(
-            3,
+            4,
             result,
             mod_api::native_menu::MAX_OUTPUT_BYTES,
             |reader, at| reader.result(at, |reader, at| reader.list(at).map(Some)),

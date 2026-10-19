@@ -9,6 +9,7 @@ use wasmparser::{
 use wasmtime::{ExternType, Module};
 
 pub(super) const NATIVE_INIT: &str = "native-init";
+pub(super) const FRAME: &str = "frame";
 pub(super) const MENU: &str = "menu";
 
 struct Export {
@@ -20,13 +21,24 @@ struct Export {
 }
 
 /// Every native export's ABI and authority live together; discovery never grants authority.
-const EXPORTS: [Export; 2] = [
+const EXPORTS: [Export; 3] = [
     Export {
         name: NATIVE_INIT,
         params: 1,
         results: 0,
         capability: 0,
         required: ModGrants::default,
+    },
+    Export {
+        name: FRAME,
+        params: 2,
+        results: 1,
+        capability: mod_api::native_frame::CAMERA_PLAYERS,
+        required: || ModGrants {
+            players: true,
+            camera: true,
+            ..Default::default()
+        },
     },
     Export {
         name: MENU,
@@ -97,7 +109,10 @@ impl NativeExports {
             .iter()
             .zip(&self.signatures)
             .any(|(export, signature)| export.capability != 0 && signature.is_some());
-        ensure!(init == callback, "native-init requires a menu export");
+        ensure!(
+            init == callback,
+            "native-init requires frame or menu exports"
+        );
         for (export, signature) in EXPORTS.iter().zip(&self.signatures) {
             ensure!(
                 *signature != Some(false),
@@ -251,33 +266,53 @@ mod tests {
         let module = Module::new(
             &wasmtime::Engine::default(),
             r#"(module
-            (func (export "native-init") (param i32))
-            (func (export "menu") (param i32 i32) (result i32) i32.const 0))"#,
+                (func (export "native-init") (param i32))
+                (func (export "frame") (param i32 i32) (result i32) i32.const 0)
+                (func (export "menu") (param i32 i32) (result i32) i32.const 0))"#,
         )
         .unwrap();
         let exports = NativeExports::from_module(&module);
+        let requested = exports.requested();
         assert_eq!(
-            exports.requested(),
+            requested,
             ModGrants {
+                players: true,
+                camera: true,
                 controls: true,
                 ..Default::default()
             }
         );
-        for controls in [false, true] {
-            let grants = ModGrants {
+        for (players, camera, controls) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+            (true, true, false),
+            (true, true, true),
+        ] {
+            let granted = ModGrants {
+                players,
+                camera,
                 controls,
                 ..Default::default()
             };
-            let saved = grants.clone();
+            let saved = granted.clone();
             assert_eq!(
-                exports.negotiate(&grants).unwrap(),
-                if controls {
+                exports.negotiate(&granted).unwrap(),
+                if players && camera {
+                    mod_api::native_frame::CAMERA_PLAYERS
+                } else {
+                    0
+                } | if controls {
                     mod_api::native_menu::CONTROLS
                 } else {
                     0
                 }
             );
-            assert_eq!(grants, saved);
+            assert_eq!(
+                granted, saved,
+                "discovery and negotiation never grant authority"
+            );
         }
     }
 

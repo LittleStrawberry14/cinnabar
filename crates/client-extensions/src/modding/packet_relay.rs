@@ -17,7 +17,9 @@ use std::{
     time::Duration,
 };
 
+mod native_frame;
 mod native_menu;
+use native_frame::{FrameLink, NativeFrames};
 pub use native_menu::MenuOutput;
 use native_menu::{MenuLink, NativeMenu};
 
@@ -42,6 +44,7 @@ pub struct PacketModLoader {
 struct Inner {
     state: Mutex<LoaderState>,
     ready: Condvar,
+    native_frame: Mutex<std::sync::Weak<FrameLink>>,
     native_menu: Mutex<std::sync::Weak<MenuLink>>,
     next_native_menu: AtomicU64,
 }
@@ -109,6 +112,11 @@ impl PacketModLoader {
             PacketModRelay::spawn(self.clone(), state.generation, Arc::clone(&state.authority));
         *self
             .inner
+            .native_frame
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(&relay.native_frame);
+        *self
+            .inner
             .native_menu
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(&relay.native_menu);
@@ -160,6 +168,28 @@ impl PacketModLoader {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Replaces obsolete native input and consumes a recent result without waiting for WASI.
+    pub fn native_frame(
+        &self,
+        frame: Option<mod_api::native_frame::Frame>,
+    ) -> Option<mod_host::CameraDelta> {
+        self.inner
+            .native_frame
+            .try_lock()
+            .ok()?
+            .upgrade()?
+            .exchange(frame)
+    }
+
+    /// Avoids building player observations when no capable live packet session exists.
+    pub fn native_frame_available(&self) -> bool {
+        self.inner
+            .native_frame
+            .try_lock()
+            .ok()
+            .and_then(|link| link.upgrade())
+            .is_some_and(|link| link.available())
+    }
     /// Exchanges focused menu input without waiting for packet-mod code on the frame thread.
     pub fn native_menu(&self, input: mod_api::native_menu::Input) -> Option<Arc<MenuOutput>> {
         self.inner
@@ -200,6 +230,7 @@ enum Request {
         reply: SyncSender<RelayOutput>,
     },
     Stop,
+    NativeFrame,
     NativeMenu,
 }
 
@@ -207,6 +238,7 @@ enum Request {
 /// async runtime and every call is serialized; a failed instance passes everything through.
 struct PacketModRelay {
     requests: Sender<Request>,
+    native_frame: Arc<FrameLink>,
     native_menu: Arc<MenuLink>,
 }
 
@@ -214,6 +246,8 @@ impl PacketModRelay {
     /// Starts the instance thread; it instantiates the packet mod when the session starts.
     fn spawn(loader: PacketModLoader, generation: u64, authority: Arc<AtomicBool>) -> Self {
         let (requests, receive) = mpsc::channel();
+        let frames = Arc::new(NativeFrames::new(Arc::clone(&authority)));
+        let native_frame = Arc::new(FrameLink::new(requests.clone(), Arc::clone(&frames)));
         let menu = Arc::new(NativeMenu::new(Arc::clone(&authority)));
         let identity = loader
             .inner
@@ -223,12 +257,13 @@ impl PacketModRelay {
         let native_menu = Arc::new(MenuLink::new(requests.clone(), Arc::clone(&menu), identity));
         if let Err(error) = thread::Builder::new()
             .name("packet-mod".into())
-            .spawn(move || serve(&loader, receive, generation, &authority, &menu))
+            .spawn(move || serve(&loader, receive, generation, &authority, &frames, &menu))
         {
             tracing::warn!(%error, "packet mod thread unavailable; packets pass through");
         }
         Self {
             requests,
+            native_frame,
             native_menu,
         }
     }
@@ -297,6 +332,7 @@ impl PacketRelay for PacketModRelay {
     }
 
     fn stop(&self) {
+        self.native_frame.deactivate();
         self.native_menu.deactivate();
         let _ = self.requests.send(Request::Stop);
     }
@@ -308,14 +344,17 @@ fn serve(
     requests: Receiver<Request>,
     generation: u64,
     authority: &AtomicBool,
+    frames: &NativeFrames,
     menu: &NativeMenu,
 ) {
     let mut instance: Option<PacketMod> = None;
+    let mut frame_epoch = None;
     let mut menu_output = None;
     for request in requests {
         if !authority.load(Ordering::Acquire)
             && let Some(mut old) = instance.take()
         {
+            frames.deactivate();
             menu.deactivate();
             old.stop();
         }
@@ -335,6 +374,7 @@ fn serve(
                         .start(&identity, &client_data, &startup)
                         .unwrap_or_default()
                 });
+                frames.activate(instance.as_ref().is_some_and(PacketMod::has_native_frame));
                 menu.activate(instance.as_ref().is_some_and(PacketMod::has_native_menu));
                 let packs = packs
                     .into_iter()
@@ -352,6 +392,7 @@ fn serve(
                 body,
                 reply,
             } => {
+                frames.fence_guest_state();
                 let replaced = instance.as_mut().and_then(|instance| {
                     if startup {
                         instance.on_startup_batch(&body)
@@ -365,11 +406,13 @@ fn serve(
                     .as_ref()
                     .is_some_and(|instance| !instance.is_active())
                 {
+                    frames.deactivate();
                     menu.deactivate();
                 }
                 let _ = reply.send(replaced.filter(|_| authority.load(Ordering::Acquire)));
             }
             Request::Tick { reply } => {
+                frames.fence_guest_state();
                 let output = instance
                     .as_mut()
                     .and_then(|instance| instance.tick().ok())
@@ -381,6 +424,7 @@ fn serve(
                     .as_ref()
                     .is_some_and(|instance| !instance.is_active())
                 {
+                    frames.deactivate();
                     menu.deactivate();
                 }
                 let _ = reply.send(if authority.load(Ordering::Acquire) {
@@ -398,7 +442,12 @@ fn serve(
                     let Some(instance) = instance.as_mut() else {
                         break;
                     };
-
+                    if !input.input.events.is_empty()
+                        || !input.input.keys.is_empty()
+                        || input.input.pointer_cancelled
+                    {
+                        frames.fence_guest_state();
+                    }
                     let output = match instance.menu(&input.input) {
                         Ok(Some(output)) => match native_menu::prepare(output, &mut menu_output) {
                             Ok(output) => Some(output),
@@ -414,12 +463,30 @@ fn serve(
                     if instance.is_active() {
                         menu.complete(&input, output);
                     } else {
+                        frames.deactivate();
+                        menu.deactivate();
+                    }
+                }
+            }
+            Request::NativeFrame => {
+                if let Some(input) = frames.take_input()
+                    && let Some(instance) = instance.as_mut()
+                {
+                    let output = input
+                        .dispatch(&mut frame_epoch, |frame| instance.frame(frame))
+                        .ok()
+                        .flatten();
+                    if instance.is_active() {
+                        frames.complete(input, output);
+                    } else {
+                        frames.deactivate();
                         menu.deactivate();
                     }
                 }
             }
         }
     }
+    frames.deactivate();
     menu.deactivate();
     if let Some(instance) = instance.as_mut() {
         instance.stop();

@@ -2,8 +2,9 @@
 
 A WASI preview 1 packet reactor may export `menu(i32, i32) -> i32` alongside
 `native-init(i32)`. The host sets capability bit `2` only when the mod has the
-controls grant. Reactors without these optional exports retain their existing
-packet ABI. Export discovery requests permissions but never grants them.
+controls grant. [Native camera frames](native-frame.md) use bit `1` independently.
+Reactors without optional callbacks retain their existing packet ABI.
+Export discovery requests permissions but never grants them.
 
 `menu` receives UTF-8 JSON bytes. Its return uses the same canonical
 `result<list<u8>, string>` layout as other packet callbacks: a four-byte

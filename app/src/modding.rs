@@ -557,9 +557,21 @@ fn drive_mod(
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
     else {
+        if let Some(delta) = packets
+            .as_ref()
+            .filter(|packets| packets.native_frame_available())
+            .and_then(|packets| {
+                packets.native_frame(gameplay.native_frame(captured && !absorbed, &ui))
+            })
+        {
+            gameplay.apply(delta);
+        }
         return;
     };
     if extension.suspended {
+        if let Some(packets) = packets.as_ref() {
+            packets.native_frame(None);
+        }
         return;
     }
     drawing_policy::bind(&mut extension.hosts, &gameplay);
@@ -674,7 +686,18 @@ fn drive_mod(
     gameplay.pulse_jump(merged.jump_pulse && !merged.jump_cancel, &ui);
     interaction.attack_reach = merged.attack_reach;
     interaction.attack_pulse = merged.attack_pulse && gameplay.pulse_attack();
-    if let Some(delta) = merged.delta {
+    let regular_camera = (0..extension.hosts.host_count()).any(|index| {
+        let host = extension.hosts.host(index);
+        host.is_active() && host.has_camera_output()
+    });
+    let native_delta = packets
+        .as_ref()
+        .filter(|packets| packets.native_frame_available())
+        .and_then(|packets| {
+            packets
+                .native_frame(gameplay.native_frame(captured && !absorbed && !regular_camera, &ui))
+        });
+    if let Some(delta) = merged.delta.or(native_delta) {
         gameplay.apply(delta);
     }
     send_commands(network.as_deref(), ui.session_id(), merged.commands);

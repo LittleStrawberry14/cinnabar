@@ -1731,6 +1731,11 @@ literal = "frame"
 reason = "Required WebAssembly callback export name in the checked mod WIT contract."
 
 [[identifier_literal_exceptions]]
+path = "crates/mod-host/src/packet_mod/native_capabilities.rs"
+literal = "frame"
+reason = "Optional WebAssembly native callback export name shared by packet-mod discovery and execution."
+
+[[identifier_literal_exceptions]]
 path = "crates/mod-render/src/shader.rs"
 literal = "frame"
 reason = "Shader resource-binding name validated against the mod rendering contract."

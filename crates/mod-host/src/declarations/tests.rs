@@ -180,23 +180,67 @@ fn requests_are_optional_validated_and_never_hide_metadata() {
 fn raw_core_requests_follow_valid_top_level_native_exports() {
     let init = r#"(func (export "native-init") (param i32))"#;
     let menu = r#"(func (export "menu") (param i32 i32) (result i32) i32.const 0)"#;
-    for (exports, controls) in [
-        (String::new(), false),
-        (format!("{init} {menu}"), true),
-        (menu.to_owned(), false),
-        (init.to_owned(), false),
+    let frame = r#"(func (export "frame") (param i32 i32) (result i32) i32.const 0)"#;
+    for (name, exports, controls, camera) in [
+        ("none", String::new(), false, false),
+        ("menu", format!("{init} {menu}"), true, false),
+        ("frame", format!("{init} {frame}"), false, true),
+        ("both", format!("{init} {menu} {frame}"), true, true),
+        ("missing init", menu.to_owned(), false, false),
+        ("init only", init.to_owned(), false, false),
+        (
+            "non-function init",
+            format!(r#"(global (export "native-init") i32 (i32.const 0)) {menu}"#),
+            false,
+            false,
+        ),
+        (
+            "non-function menu",
+            format!(r#"{init} (global (export "menu") i32 (i32.const 0))"#),
+            false,
+            false,
+        ),
+        (
+            "wrong init signature",
+            format!(r#"(func (export "native-init")) {menu}"#),
+            false,
+            false,
+        ),
+        (
+            "wrong parameter type",
+            format!(r#"{init} (func (export "menu") (param i32 i64) (result i32) i32.const 0)"#),
+            false,
+            false,
+        ),
+        (
+            "wrong return count",
+            format!(r#"{init} (func (export "frame") (param i32 i32))"#),
+            false,
+            false,
+        ),
+        (
+            "invalid companion callback",
+            format!(r#"{init} {menu} (func (export "frame"))"#),
+            false,
+            false,
+        ),
     ] {
         let bytes = wat::parse_str(format!("(module {exports})")).unwrap();
+        let requested = read(&bytes).requested.unwrap().unwrap();
         assert_eq!(
-            read(&bytes).requested.unwrap().unwrap(),
+            requested,
             ModGrants {
                 packets: true,
                 controls,
+                players: camera,
+                camera,
                 ..Default::default()
-            }
+            },
+            "{name}"
         );
     }
-    let nested = wat::parse_str(format!("(component (core module {init} {menu}))")).unwrap();
+    let nested =
+        wat::parse_str(format!("(component (core module {init} {menu} {frame}))")).unwrap();
     assert!(read(&nested).requested.unwrap().is_none());
 }
 

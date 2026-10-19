@@ -173,6 +173,7 @@ mod tests {
         let output = output();
         let mut guest = instance(&output, output.len(), true);
         assert!(guest.has_native_menu());
+        assert!(!guest.has_native_frame());
         let menu = guest.menu(&Input::default()).unwrap().unwrap();
         assert!(menu.open);
         assert_eq!(menu.keys, ["KeyR"]);
@@ -342,11 +343,11 @@ mod tests {
     #[test]
     fn real_go_reactor_opens_edits_and_closes_a_native_menu_with_only_controls_granted() {
         let (Some(wasm), Some(capture)) = (
-            std::env::var_os("LUNAR_NATIVE_WASM"),
-            std::env::var_os("LUNAR_NATIVE_CAPTURE"),
+            std::env::var_os("PACKET_MOD_NATIVE_WASM"),
+            std::env::var_os("PACKET_MOD_NATIVE_CAPTURE"),
         ) else {
             eprintln!(
-                "missing fixture: LUNAR_NATIVE_WASM and LUNAR_NATIVE_CAPTURE; skipping real Go native menu integration"
+                "missing fixture: PACKET_MOD_NATIVE_WASM and PACKET_MOD_NATIVE_CAPTURE; skipping real Go native menu integration"
             );
             return;
         };
@@ -378,6 +379,10 @@ mod tests {
         .instantiate()
         .unwrap();
         assert!(guest.has_native_menu());
+        assert!(
+            !guest.has_native_frame(),
+            "camera support is independently denied"
+        );
         guest.start(identity, client_data, startup).unwrap();
         if let Some(initial) = guest.menu(&Input::default()).unwrap() {
             assert!(!initial.open);
@@ -429,7 +434,7 @@ mod tests {
             .unwrap()
             .expect("second Escape closes the launcher");
         assert!(!closed.open);
-        if let Some(command) = std::env::var_os("LUNAR_NATIVE_OPEN_COMMAND") {
+        if let Some(command) = std::env::var_os("PACKET_MOD_NATIVE_OPEN_COMMAND") {
             let command = std::fs::read(command).expect("read encoded native menu command fixture");
             guest
                 .on_batch(crate::packet_mod::Direction::FromClient, &command)
