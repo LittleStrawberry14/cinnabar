@@ -539,7 +539,6 @@ async fn client_receive<S: bedrock_net::BatchPhase>(
         panic!("actual relay sent no packets")
     };
     packets
-        .into_iter()
         .map(|raw| {
             let mut reader = wire::Reader::from_shared(&raw);
             let header = wire::PacketHeader::from_raw(reader.read_var_u32().unwrap());

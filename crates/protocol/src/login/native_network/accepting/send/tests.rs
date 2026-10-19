@@ -38,6 +38,39 @@ const SERVER: &str = "synthetic-prepared-send-server";
 const MARKER: &[u8] = b"prepared-send-reliable-marker";
 
 #[tokio::test]
+async fn actual_accepting_owner_keeps_the_original_incoming_packet_count_policy() {
+    tokio::time::timeout(TIMEOUT, async {
+        let mut pair = signed_pair().await;
+        let limits = BatchLimits::default();
+        let count = limits.max_packets + 1;
+        let packets = vec![raw_packet(1); count];
+        let mut messages = BatchCodec::new(
+            BatchHeader::NetherNet,
+            BatchLimits {
+                max_packets: count,
+                ..limits
+            },
+        )
+        .encode(&packets)
+        .unwrap();
+        assert_eq!(messages.len(), 1);
+        pair.client.send(messages.remove(0)).await.unwrap();
+        let received = pair
+            .wire
+            .receive_raw(tokio::time::Instant::now().into_std() + TIMEOUT)
+            .await;
+        assert!(pair.finish().await, "original signed accepting owners leaked");
+        let error = received.expect_err("the serving role lost its original incoming count policy");
+        assert!(matches!(
+            error.get_ref().and_then(|error| error.downcast_ref::<bedrock_net::BatchError>()),
+            Some(bedrock_net::BatchError::TooManyPackets { maximum }) if *maximum == limits.max_packets
+        ));
+    })
+    .await
+    .expect("finite actual accepting count policy fixture stalled");
+}
+
+#[tokio::test]
 async fn cancelled_borrows_retain_reservation_permit_receipt_and_cipher_order() {
     tokio::time::timeout(TIMEOUT, async {
         let mut pair = signed_pair().await;
@@ -462,7 +495,7 @@ fn decode_ciphertext(decryptor: &mut BatchDecryptor, message: Bytes) -> Vec<Byte
         .decode(plaintext)
         .unwrap()
     {
-        DecodeOutcome::Packets { packets, .. } => packets,
+        DecodeOutcome::Packets { packets, .. } => packets.collect(),
         DecodeOutcome::Dropped(_) => panic!("plaintext fixture message was dropped"),
     }
 }

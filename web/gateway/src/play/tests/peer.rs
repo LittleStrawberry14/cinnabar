@@ -162,11 +162,12 @@ impl Peer {
         let Input::Message(message) = self.next().await else {
             panic!("peer retired before the native negotiation completed")
         };
-        let DecodeOutcome::Packets { packets, .. } = codec.decode(message).unwrap() else {
+        let DecodeOutcome::Packets { mut packets, .. } = codec.decode(message).unwrap() else {
             panic!("expected an actual client batch")
         };
         assert_eq!(packets.len(), 1);
-        let mut reader = wire::Reader::from_shared(&packets[0]);
+        let packet = packets.next().unwrap();
+        let mut reader = wire::Reader::from_shared(&packet);
         let header = wire::PacketHeader::from_raw(reader.read_var_u32().unwrap());
         let id = packets::PacketId::from_raw(header.id).unwrap();
         let packet = Packet::decode_body(id, &mut reader).unwrap();

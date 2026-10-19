@@ -441,7 +441,7 @@ fn raw_packet(radius: i32) -> Bytes {
         panic!("a plaintext fixture packet was dropped");
     };
     assert_eq!(packets.len(), 1);
-    packets.pop().unwrap()
+    packets.next().unwrap()
 }
 
 /// Decodes the same uncompressed Nether envelope before any application settings are installed.
@@ -450,7 +450,7 @@ fn decode(message: Bytes) -> Vec<Bytes> {
         .decode(message)
         .unwrap()
     {
-        DecodeOutcome::Packets { packets, .. } => packets,
+        DecodeOutcome::Packets { packets, .. } => packets.collect(),
         DecodeOutcome::Dropped(_) => panic!("an original plaintext message was dropped"),
     }
 }

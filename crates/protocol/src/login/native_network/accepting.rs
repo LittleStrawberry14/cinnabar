@@ -12,8 +12,8 @@ pub use world::NativeHostWorld;
 
 use super::{Connection, PacketConnection, transport::Transport};
 use bedrock_client::server::{ServerHandshake, ServerHandshakeOptions};
-use bedrock_net::CompressionSettings;
 use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
+use bedrock_net::{BatchLimits, CompressionSettings};
 use bedrock_protocol_1_26_51::{packets, wire};
 use bytes::Bytes;
 use p384::ecdsa::SigningKey;
@@ -52,9 +52,12 @@ impl NativeAcceptingIo {
         let handshake =
             ServerHandshake::new(key, Some(transport_key), options, deadline, Instant::now())
                 .map_err(|_| denied())?;
+        let mut limits = BatchLimits::default();
+        // The actual Go friend listener retains its incoming count limit.
+        limits.max_incoming_packets = Some(limits.max_packets);
         Ok((
             Self {
-                connection: Connection::new(Transport::from_accepted(accepted)),
+                connection: Connection::with_limits(Transport::from_accepted(accepted), limits),
                 skipped: 0,
             },
             handshake,

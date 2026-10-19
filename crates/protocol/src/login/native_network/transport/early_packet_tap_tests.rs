@@ -34,7 +34,6 @@ async fn receive<S: bedrock_net::BatchPhase>(
         panic!("native response must be a valid batch");
     };
     packets
-        .into_iter()
         .map(|bytes| {
             let mut reader = wire::Reader::from_shared(&bytes);
             let header = wire::PacketHeader::from_raw(reader.read_var_u32().unwrap());

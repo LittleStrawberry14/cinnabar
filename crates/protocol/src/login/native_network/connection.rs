@@ -7,11 +7,13 @@ use bedrock_net::encryption::{BatchDecryptor, BatchEncryptor};
 use bedrock_net::{BatchCodec, BatchError, BatchLimits, CompressionSettings, DecodeOutcome};
 use bedrock_protocol_1_26_51::{packets, wire};
 use bytes::{Bytes, BytesMut};
-use std::{collections::VecDeque, io};
+use std::io;
 
 mod codec;
 mod identity;
+mod pending;
 use codec::Codec;
+use pending::PendingPackets;
 pub(super) mod send;
 use send::{PendingSend, SendRetirement};
 
@@ -41,7 +43,7 @@ pub(crate) struct Connection {
     pub(super) transport: Transport,
     codec: Option<Codec>,
     limits: BatchLimits,
-    pending: VecDeque<Bytes>,
+    pending: PendingPackets,
     current: Option<Bytes>,
     deferred: DeferredPackets,
     ciphers: Option<(BatchEncryptor, BatchDecryptor)>,
@@ -100,12 +102,16 @@ impl Connection {
     }
     /// Starts an uncompressed session and retains all later state on this same owner.
     pub(super) fn new(transport: Transport) -> Self {
-        let limits = BatchLimits::default();
+        Self::with_limits(transport, BatchLimits::default())
+    }
+
+    /// Binds the original role's count policy before any bytes or codec transition.
+    pub(super) fn with_limits(transport: Transport, limits: BatchLimits) -> Self {
         Self {
             codec: Some(Codec::Plain(BatchCodec::new(transport.header(), limits))),
             transport,
             limits,
-            pending: VecDeque::new(),
+            pending: PendingPackets::default(),
             current: None,
             deferred: DeferredPackets::default(),
             ciphers: None,
@@ -320,7 +326,7 @@ impl Connection {
 
     /// Reads a complete batch, retaining decoded siblings across every protocol transition.
     async fn fill(&mut self) -> io::Result<()> {
-        while self.pending.is_empty() {
+        while !self.pending_ready()? {
             let mut message = self.transport.recv().await?;
             self.check_wire_size(&message)?;
             if let Some((_, decryptor)) = &mut self.ciphers {
@@ -352,30 +358,34 @@ impl Connection {
                             "skipped empty native batch entries"
                         );
                     }
-                    if self.primary_only {
-                        for packet in packets {
-                            let mut reader = wire::Reader::from_shared(&packet);
-                            let header = wire::PacketHeader::from_raw(
-                                reader.read_var_u32().map_err(io::Error::other)?,
-                            );
-                            if header.sender_subclient != 0 || header.target_subclient != 0 {
-                                self.negotiation_skips = self.negotiation_skips.saturating_add(1);
-                                tracing::debug!(
-                                    skipped = self.negotiation_skips,
-                                    "skipped unused local relay subclient"
-                                );
-                                continue;
-                            }
-                            self.pending.push_back(packet);
-                        }
-                    } else {
-                        self.pending.extend(packets);
-                    }
+                    self.pending.push_batch(packets);
                 }
                 DecodeOutcome::Dropped(reason) => tracing::debug!(?reason, "dropped native batch"),
             }
         }
         Ok(())
+    }
+
+    /// Filters only the actual FIFO front, keeping one lazy cursor behind every replayed prefix.
+    fn pending_ready(&mut self) -> io::Result<bool> {
+        while let Some(packet) = self.pending.front() {
+            if !self.primary_only {
+                return Ok(true);
+            }
+            let mut reader = wire::Reader::from_shared(packet);
+            let header =
+                wire::PacketHeader::from_raw(reader.read_var_u32().map_err(io::Error::other)?);
+            if header.sender_subclient == 0 && header.target_subclient == 0 {
+                return Ok(true);
+            }
+            drop(self.pending.pop_front());
+            self.negotiation_skips = self.negotiation_skips.saturating_add(1);
+            tracing::debug!(
+                skipped = self.negotiation_skips,
+                "skipped unused local relay subclient"
+            );
+        }
+        Ok(false)
     }
 
     /// Restores early raw frames ahead of unread siblings on this same FIFO.
@@ -550,7 +560,15 @@ impl PacketConnection for Connection {
         self.fill().await?;
         let mut body = Vec::new();
         let mut accepted = 0;
-        for packet in self.pending.iter().take(self.limits.max_packets) {
+        while accepted < self.limits.max_packets {
+            match self.pending_ready() {
+                Ok(true) => {}
+                Ok(false) => break,
+                // The original malformed front remains pending after this accepted prefix.
+                Err(_) if accepted != 0 => break,
+                Err(error) => return Err(error),
+            }
+            let packet = self.pending.front().expect("validated original front");
             let checkpoint = body.len();
             let remaining = self.limits.max_decoded_bytes.saturating_sub(checkpoint);
             let result = wire::Writer::with_limit(&mut body, remaining).write_byte_slice(packet);
@@ -561,9 +579,9 @@ impl PacketConnection for Connection {
                 }
                 break;
             }
+            drop(self.pending.pop_front());
             accepted += 1;
         }
-        self.pending.drain(..accepted).for_each(drop);
         Ok(Bytes::from(body))
     }
 

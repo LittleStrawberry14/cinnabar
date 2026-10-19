@@ -224,4 +224,6 @@ mod consumed;
 
 mod composite;
 
+mod cursor;
+
 mod cdn;
