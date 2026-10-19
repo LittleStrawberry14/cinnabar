@@ -70,8 +70,8 @@ Native mode uses the existing account menu for Microsoft device-code sign-in and
 validation. Pending sign-in leaves the active account unchanged until identity verification and
 account commit finish. Account changes, cancellation and expired credentials stop the original
 join; they do not trigger a signed-out retry. Refresh rotation and private derived-service
-checkpoints share the existing account-cache leases. Xbox profile creation still requires the
-default Go mode.
+checkpoints share the existing account-cache leases. Native sign-in can present the Xbox profile
+setup page and resume the same pending sign-in.
 
 Native account services include Realms and invitations, Xbox people and profiles, presence,
 featured-server discovery and world signaling. Realms can resolve RakNet or authenticated
