@@ -185,7 +185,7 @@ async fn native_pack_deferred_spawn_reaches_startup_once_with_siblings() {
                 unreachable!();
             };
             *player_name = "Fixture".into();
-            chat.sender_xuid.clear();
+            chat.sender_xuid = Default::default();
             assert_eq!(outgoing, expected[1..], "chat identity changes without changing siblings or headers");
             peer.session.closed().await;
         };
