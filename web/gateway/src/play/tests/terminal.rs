@@ -1,10 +1,7 @@
 //! Original join cutoff while a genuine pre-handoff terminal is blocked in FrameQueue.
 
 use super::*;
-use std::{
-    future::{Future, poll_fn},
-    task::Poll,
-};
+use std::task::Poll;
 use tokio::io::AsyncWrite;
 
 struct Observation {
@@ -102,12 +99,17 @@ async fn forward(expire: bool) -> Observation {
                 let remaining =
                     deadline.saturating_duration_since(tokio::time::Instant::now().into_std());
                 tokio::time::advance(remaining + Duration::from_nanos(1)).await;
-                let completed = poll_fn(|cx| Poll::Ready(negotiating.as_mut().poll(cx))).await;
+                // Advancing paused time alone does not guarantee expired timers were dispatched.
+                let completed = tokio::time::timeout_at(
+                    tokio::time::Instant::from_std(deadline) + Duration::from_secs(1),
+                    &mut negotiating,
+                )
+                .await;
                 tokio::time::resume();
                 let completed = match completed {
-                    Poll::Ready(Err(error)) => Some(error.kind()),
-                    Poll::Ready(Ok(())) => panic!("refused Login completed successfully"),
-                    Poll::Pending => None,
+                    Ok(Err(error)) => Some(error.kind()),
+                    Ok(Ok(())) => panic!("refused Login completed successfully"),
+                    Err(_) => None,
                 };
                 (completed, false)
             } else {
