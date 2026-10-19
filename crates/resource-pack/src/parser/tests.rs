@@ -98,6 +98,79 @@ fn opaque_identity_keeps_skin_archives_separate_from_rendering() {
     verify_opaque_identity("skin_pack");
 }
 
+/// Reuses the original matching manifest and ZIP writer with one explicit modules shape.
+fn archive_with_modules(modules: Option<serde_json::Value>) -> Vec<u8> {
+    let mut root: serde_json::Value =
+        bedrock_packs::jsonc::parse_jsonc_lenient(manifest("").as_bytes()).unwrap();
+    let object = root.as_object_mut().expect("fixture manifest object");
+    if let Some(modules) = modules {
+        let _ = object.insert("modules".into(), modules);
+    } else {
+        let _ = object.remove("modules");
+    }
+    let bytes = serde_json::to_vec(&root).unwrap();
+    zip_files(&[("manifest.json", &bytes)])
+}
+
+#[test]
+fn opaque_module_shapes_preserve_null_defaults_and_unknown_strings() {
+    use serde_json::json;
+    for (modules, expected) in [
+        (None, ArchiveKind::Skins),
+        (Some(json!(null)), ArchiveKind::Skins),
+        (Some(json!([])), ArchiveKind::Skins),
+        (Some(json!([null])), ArchiveKind::Skins),
+        (Some(json!([{}])), ArchiveKind::Skins),
+        (Some(json!([{"type": null}])), ArchiveKind::Skins),
+        (
+            Some(json!([{"type": "future_module", "unused": {"value": true}}])),
+            ArchiveKind::Skins,
+        ),
+        (Some(json!([null, {"type": "data"}])), ArchiveKind::Behavior),
+    ] {
+        let archive = archive_with_modules(modules.clone());
+        assert_eq!(
+            validate_fixture(archive.clone(), "").err(),
+            Some(AdmissionError::InvalidModules)
+        );
+        assert_eq!(
+            verify_archive_identity(&archive, PACK_ID, "1.2.3"),
+            Ok(expected),
+            "valid module defaults were rejected: {modules:?}"
+        );
+    }
+}
+
+#[test]
+fn opaque_module_shapes_reject_wrong_containers_elements_and_types() {
+    use serde_json::json;
+    for modules in [
+        json!("bad"),
+        json!({}),
+        json!(false),
+        json!(1),
+        json!(["bad"]),
+        json!([[]]),
+        json!([false]),
+        json!([1]),
+        json!([{"type": false}]),
+        json!([{"type": 1}]),
+        json!([{"type": []}]),
+        json!([{"type": {}}]),
+        json!([{"type": "data"}, {"type": false}]),
+    ] {
+        let archive = archive_with_modules(Some(modules.clone()));
+        assert_eq!(
+            validate_fixture(archive.clone(), "").err(),
+            Some(AdmissionError::InvalidModules)
+        );
+        assert!(
+            verify_archive_identity(&archive, PACK_ID, "1.2.3").is_err(),
+            "malformed modules reached opaque delivery classification: {modules}"
+        );
+    }
+}
+
 #[test]
 fn archive_delivery_kind_uses_the_same_admitted_manifest_and_member_priority() {
     for (module, member, expected) in [
