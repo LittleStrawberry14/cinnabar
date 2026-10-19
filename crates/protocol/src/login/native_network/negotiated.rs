@@ -47,7 +47,15 @@ pub(super) async fn negotiate(
         )));
     }
     let mut credentials = Credentials::new(authentication)?;
-    let (transport, address) = if target.transport == crate::NativeTransport::LocalNetherNetLan {
+    let (transport, address) = if target.transport == crate::NativeTransport::Addressed {
+        let identity = credentials
+            .http_identity()
+            .map_err(ProtocolError::Authentication)?;
+        match transport::addressed::connect(target, identity, deadline).await {
+            Ok((transport, address)) => (Ok(transport), address),
+            Err(error) => (Err(error), target.address.clone()),
+        }
+    } else if target.transport == crate::NativeTransport::LocalNetherNetLan {
         let (address, level, budget) = target.local_lan_route().map_err(failure)?;
         let connected =
             transport::lan::LanTransport::connect_local(address, level, budget, deadline).await;
@@ -61,7 +69,7 @@ pub(super) async fn negotiate(
     } else if target.transport == crate::NativeTransport::LocalNetherNetHttp {
         let address = target.local_http_address().map_err(failure)?;
         let identity = credentials
-            .local_http_identity()
+            .http_identity()
             .map_err(ProtocolError::Authentication)?;
         let transport = transport::http::connect(address, identity, deadline).await;
         (transport, format!("http://{address}:{}", address.port()))

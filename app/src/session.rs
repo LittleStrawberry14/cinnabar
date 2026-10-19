@@ -42,6 +42,8 @@ mod native_gathering;
 mod native_local_world;
 #[cfg(all(test, feature = "native-networking", not(target_arch = "wasm32")))]
 mod native_transfer_tests;
+#[cfg(feature = "native-networking")]
+pub(crate) mod native_trust;
 mod network;
 mod url_policy;
 
@@ -50,6 +52,7 @@ use client_session::MAX_TRANSFER_CHAIN_HOPS;
 type BlobCache = client_runtime::blob_cache::ClientBlobCacheOwner;
 type JoinAttempt = client_session::connection::JoinAttempt<SessionDirectoryGuard>;
 pub(crate) type JoinStage = client_session::connection::JoinStage<SessionDirectoryGuard>;
+pub(crate) type TrustOwner = Box<dyn launcher_host::server_trust::TrustSource + Send + Sync>;
 
 use client_state::{JoinIntent, SessionStatus};
 
@@ -88,8 +91,8 @@ pub(crate) struct SessionController {
         Option<crate::runtime::network::session::local_world::WorldConnectionRequest>,
     #[cfg(feature = "native-networking")]
     friend_cleanup: crate::runtime::network::session::friend::FriendCleanupOwner,
-    /// Polls the per-session core this join started for its server trust question.
-    trust: Option<SessionTrust>,
+    /// Retains this join's original Core or native server trust question and answer lifetime.
+    trust: Option<TrustOwner>,
     /// Server packs recent joins compiled; released once no join follows.
     kept_packs: &'static CompiledStacks,
 }
@@ -182,6 +185,13 @@ impl SessionController {
         self
     }
 
+    /// Retains a direct startup join's original trust source while the same network worker connects.
+    pub(crate) fn with_initial_trust(mut self, trust: Option<TrustOwner>) -> Self {
+        self.connecting |= trust.is_some();
+        self.trust = trust;
+        self
+    }
+
     /// Whether the trusted launcher selected a local world for this connection.
     pub(crate) fn is_local_world(&self) -> bool {
         self.local_world
@@ -262,7 +272,7 @@ impl SessionController {
         generation: u64,
     ) -> Result<JoinStage, String> {
         #[cfg(feature = "native-networking")]
-        if let Some(target) = self
+        if let Some(mut target) = self
             .native_transport
             .and_then(|transport| destination::native_target(address, transport, self.local_world))
         {
@@ -274,8 +284,21 @@ impl SessionController {
             if service && auth_cache.is_none() {
                 return Err("Joining this service requires a verified native account.".into());
             }
-            if auth_cache.is_some() && target.transport != protocol::NativeTransport::RakNet {
-                return Err("Authenticated native joins currently require RakNet.".into());
+            if auth_cache.is_some()
+                && !matches!(
+                    target.transport,
+                    protocol::NativeTransport::RakNet | protocol::NativeTransport::Addressed
+                )
+            {
+                return Err(
+                    "The selected native transport does not support account preparation.".into(),
+                );
+            }
+            if target.transport == protocol::NativeTransport::Addressed {
+                let (selected, trust) = native_trust::bind(target, menu.layout())
+                    .map_err(|_| "Could not prepare native server trust.".to_owned())?;
+                target = selected;
+                self.trust = Some(Box::new(trust));
             }
             return Ok(JoinStage::Native(target));
         }
@@ -304,7 +327,7 @@ impl SessionController {
         )
         .map_err(|error| format!("Could not start {address}: {error}"))?;
         self.core.replace(child);
-        self.trust = Some(SessionTrust::watch(socket_dir.clone()));
+        self.trust = Some(Box::new(SessionTrust::watch(socket_dir.clone())));
         Ok(JoinStage::Core {
             socket_dir,
             directory,
@@ -552,7 +575,7 @@ pub(crate) fn drive_session(
     session.controller.publish(&mut menu);
     // A queued answer reaches its core before a decline below retires that core.
     if let Some(trust) = session.controller.trust.as_ref() {
-        menu.sync_session_trust(trust);
+        menu.sync_session_trust(trust.as_ref());
     }
     drive_intents(
         &mut commands,
@@ -566,7 +589,7 @@ pub(crate) fn drive_session(
         session.controller.trust = None;
     }
     match session.controller.trust.as_ref() {
-        Some(trust) => menu.sync_session_trust(trust),
+        Some(trust) => menu.sync_session_trust(trust.as_ref()),
         None => menu.forget_session_trust(),
     }
 }
@@ -719,7 +742,7 @@ fn follow_transfer(
     #[cfg(feature = "native-networking")]
     if session.controller.native_transport.is_some() {
         // Transfer names an addressed server while retaining the selected native backend.
-        session.controller.native_transport = Some(protocol::NativeTransport::RakNet);
+        session.controller.native_transport = Some(protocol::NativeTransport::Addressed);
     }
     // The shared replacement path tears down old transport and world/UI state
     // before provisioning, so every early failure leaves no stale session.

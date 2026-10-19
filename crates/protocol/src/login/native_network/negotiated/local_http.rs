@@ -1,16 +1,16 @@
-//! The original Login proof and credential policy used for local HTTP SDP.
+//! The original Login proof and credential policy used for HTTP SDP.
 
 use super::*;
-use crate::login::native_network::transport::http::LocalIdentity;
+use crate::login::native_network::transport::http::HttpIdentity;
 use nethernet::identity::{SelfSignedIdentity, TokenTrust};
 
 impl Credentials {
     /// Retains one proof key for both SDP and Login without acquiring another account credential.
-    pub(super) fn local_http_identity(&self) -> io::Result<LocalIdentity> {
+    pub(super) fn http_identity(&self) -> io::Result<HttpIdentity> {
         if self.messaging.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "local HTTP cannot consume a Messaging handoff",
+                "HTTP cannot consume a Messaging handoff",
             ));
         }
         match (&self.authentication, &self.sdp) {
@@ -25,13 +25,13 @@ impl Credentials {
                 let TokenTrust::Provider(provider) = trust else {
                     unreachable!("qualified identity policy retains its configured provider");
                 };
-                Ok(LocalIdentity {
+                Ok(HttpIdentity {
                     identity,
                     trust: TokenTrust::ServerAnswer(provider),
                     expires: Some(*expires),
                 })
             }
-            (None, None) => Ok(LocalIdentity {
+            (None, None) => Ok(HttpIdentity {
                 identity: Arc::new(
                     SelfSignedIdentity::from_key(
                         Arc::clone(&self.key),
@@ -43,9 +43,7 @@ impl Credentials {
                 trust: authentication::offline_answer_trust(),
                 expires: None,
             }),
-            _ => Err(io::Error::other(
-                "local HTTP credential policy is unavailable",
-            )),
+            _ => Err(io::Error::other("HTTP credential policy is unavailable")),
         }
     }
 }

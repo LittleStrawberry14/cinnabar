@@ -16,7 +16,7 @@ Usage: cinnabar [OPTIONS] [PACK.mcpack|PACK.mcaddon|PACK.zip]...
 
 Options:
   --address <HOST:PORT>       Directly join a server (Go backend by default)
-  --native-networking <KIND>  Opt in to Rust networking: raknet or nethernet-lan
+  --native-networking <KIND>  Opt in to Rust networking: addressed, raknet or nethernet-lan
   --parallel-resource-pack-urls
                                Opt native pack URL downloads into bounded parallel reads
   --socket-dir <PATH>          Override the platform runtime socket directory
@@ -184,7 +184,7 @@ pub enum ArgsError {
         "native networking requires --features native-networking and no --socket-dir; direct sessions also require --address"
     )]
     NativeNetworkingUnavailable,
-    #[error("--native-networking must be raknet or nethernet-lan")]
+    #[error("--native-networking must be addressed, raknet or nethernet-lan")]
     InvalidNativeTransport,
     #[error("--parallel-resource-pack-urls requires --native-networking")]
     ParallelPackUrlsRequireNativeNetworking,
@@ -299,6 +299,7 @@ impl ClientArgs {
                 Some("--native-networking") => {
                     let value = next_value(&mut arguments, "--native-networking")?;
                     parsed.native_transport = Some(match value.to_str() {
+                        Some("addressed") => protocol::NativeTransport::Addressed,
                         Some("raknet") => protocol::NativeTransport::RakNet,
                         Some("nethernet-lan") => protocol::NativeTransport::NetherNetLan,
                         _ => return Err(ArgsError::InvalidNativeTransport),

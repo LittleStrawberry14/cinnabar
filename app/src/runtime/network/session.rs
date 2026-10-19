@@ -116,11 +116,11 @@ pub fn spawn_network(
     #[cfg(feature = "native-networking")]
     let native_preparation = if config.native_account.is_some() || config.native_gathering.is_some()
     {
-        if !matches!(&config.endpoint, protocol::SessionEndpoint::Native(target) if target.transport == protocol::NativeTransport::RakNet)
+        if !matches!(&config.endpoint, protocol::SessionEndpoint::Native(target) if matches!(target.transport, protocol::NativeTransport::RakNet | protocol::NativeTransport::Addressed))
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "authenticated native joins currently require RakNet",
+                "selected native transport does not support account preparation",
             ));
         }
         let protocol::SessionEndpoint::Native(target) = &config.endpoint else {

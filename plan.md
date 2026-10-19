@@ -7,9 +7,21 @@ retaining the original connection key through token mint, Login and key exchange
 The working Go backend remains the default. Renderer-free Linux joins over both
 transports have loaded an original resource pack, reached spawn, received terrain
 and closed. Direct DNS alternatives share the original join cutoff; LAN skips
-unsupported IPv6 endpoints, and addressed transfers keep native I/O with RakNet.
-These selection corrections await owning regression execution. Vanilla source
+unsupported IPv6 endpoints, and addressed transfers keep native I/O with addressed-server
+selection. The addressed HTTP addition awaits owning regression execution. Vanilla source
 parity, live-account, device and wider server acceptance remain incomplete.
+
+The explicit native `addressed` selection has a Go-derived HTTP discovery and
+first-use trust source candidate. One original join cutoff includes the shared
+HTTPS/HTTP probe, selected HTTP/ICE association, verified-key decision and any
+slow-decision redial. The original proof and accepted transport continue through
+Login, packs, spawn and play. The existing session dialog and installed public-key
+file own approval; cancellation withdraws only the original question. A bounded
+atomic persistence transaction for an already approved key may finish after its
+waiter cancels. Literal IPv6 HTTP selection remains unsupported and uses RakNet;
+broader HTTP/ICE family acceptance remains unqualified. Real loopback HTTP, trust
+store, probe and production Transfer controls are authored but unrun. Verified
+public TLS, live remote-server behavior and vanilla source parity remain open.
 
 The external bedrock-client crate owns generated-packet Login, resource-pack and
 spawn negotiation. Bedrock-packs owns shared JSONC parsing, archive handoffs and
