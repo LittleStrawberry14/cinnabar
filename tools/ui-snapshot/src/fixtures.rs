@@ -3,6 +3,7 @@
 mod minecraft_import;
 mod mods;
 mod out_of_game;
+mod shader_options;
 mod updates;
 
 use std::sync::Arc;
@@ -606,6 +607,30 @@ pub const STATES: &[State] = &[
         size: TALL_SIZE,
         gui_scale: GUI_SCALE,
         fixture: mods::undeclared_permissions,
+    },
+    State {
+        name: "settings-video-shader-pack",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::renderer_row,
+    },
+    State {
+        name: "settings-shader-options",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::main_screen,
+    },
+    State {
+        name: "settings-shader-options-lighting",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::lighting,
+    },
+    State {
+        name: "settings-shader-options-rest",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_options::rest,
     },
 ];
 

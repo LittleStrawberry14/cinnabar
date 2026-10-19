@@ -17,6 +17,8 @@ reads = [
 
 [features]
 test-support = []
+# Runs shader-pack option screens on the `shaderpack` crate.
+shaderpacks = ["dep:shaderpack"]
 
 [dependencies]
 cosmetics = { path = "../cosmetics" }
@@ -27,6 +29,7 @@ render-api = { path = "../render-api" }
 resource-pack = { path = "../resource-pack", default-features = false }
 semantic-input = { path = "../input" }
 ui = { path = "../ui" }
+shaderpack = { path = "../shaderpack", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 update-manifest = { path = "../update-manifest" }

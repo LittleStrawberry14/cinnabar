@@ -95,6 +95,7 @@ impl MenuRuntime {
             join_request: self.join_request_view(),
             global_resources: self.global_resources.clone(),
             mods: self.mods.clone(),
+            shader_options: self.shader_options_view(),
             minecraft_import: self.minecraft_import.clone(),
         }
     }

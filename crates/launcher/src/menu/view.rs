@@ -473,6 +473,8 @@ pub struct MenuView {
     pub player_skin_model: crate::dressing_room::SkinModel,
     pub global_resources: std::sync::Arc<crate::global_resources::Snapshot>,
     pub mods: std::sync::Arc<crate::mods::Snapshot>,
+    /// The Shader Pack Settings screen over Video settings, while open.
+    pub shader_options: Option<std::sync::Arc<crate::shader_options::View>>,
     pub minecraft_import: std::sync::Arc<crate::minecraft_import::Snapshot>,
     /// Why the last session ended, shown until acknowledged.
     pub disconnect_message: Option<String>,
@@ -720,6 +722,7 @@ impl MenuView {
             player_skin_model: Default::default(),
             global_resources: Default::default(),
             mods: Default::default(),
+            shader_options: None,
             minecraft_import: Default::default(),
             disconnect_message: None,
             can_reconnect: false,

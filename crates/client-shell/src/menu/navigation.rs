@@ -116,6 +116,9 @@ impl MenuRuntime {
 
     /// Returns to the screen below; an in-game root closes the menu.
     pub(super) fn go_back(&mut self) {
+        if self.shader_options_back() {
+            return;
+        }
         if self.dialog == Some(launcher::menu::MenuDialog::MinecraftImport) {
             let action =
                 if self.minecraft_import.phase == launcher::minecraft_import::Phase::Offered {

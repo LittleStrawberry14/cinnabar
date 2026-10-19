@@ -26,11 +26,12 @@ use super::resources::{
 };
 use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
+use bevy::log::warn;
 use sha2::{Digest, Sha256};
 use shaderpack::{
-    BlendMode, BufferId, CustomUniform, Environment, ProgramGroup, ProgramKind, ProgramReflection,
-    ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, ShaderProperties,
-    StageKind, TranslateConfig,
+    BlendMode, BufferId, CustomUniform, Environment, OptionValues, ProgramGroup, ProgramKind,
+    ProgramReflection, ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack,
+    ShaderProperties, StageKind, TranslateConfig,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -387,10 +388,13 @@ fn planned(
     }
 }
 
-/// Opens, translates and builds `path` for `dimension` (a Java dimension id); `vanilla`
-/// answers the pack's `minecraft:` texture references.
+/// Opens, translates and builds `path` for `dimension` (a Java dimension id) with the values
+/// saved in `options` (the pack's Iris option file, if any); `vanilla` answers the pack's
+/// `minecraft:` texture references. As Iris does on every load, the file is rewritten to
+/// keep only values that name the pack's options and differ from their defaults.
 pub(crate) fn load(
     path: &Path,
+    options: Option<&Path>,
     dimension: &str,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
@@ -401,7 +405,35 @@ pub(crate) fn load(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    build(&pack, &name, dimension, cache_dir, gpu, vanilla)
+    let values = options.map_or_else(OptionValues::new, |file| saved_options(&pack, file));
+    build(&pack, &name, dimension, &values, cache_dir, gpu, vanilla)
+}
+
+/// The pack's values saved in `file`, normalized and written back when that changed them; an
+/// unreadable file loads the defaults.
+fn saved_options(pack: &ShaderPack, file: &Path) -> OptionValues {
+    let saved = match shaderpack::read_option_file(file) {
+        Ok(saved) => saved,
+        Err(error) => {
+            warn!(
+                target: "cinnabar::shaderpack",
+                file = %file.display(),
+                "shader pack options unreadable, using defaults: {error}"
+            );
+            return OptionValues::new();
+        }
+    };
+    let values = shaderpack::normalize_values(pack.options(), &saved);
+    if values != saved
+        && let Err(error) = shaderpack::write_option_file(file, pack.options(), &values)
+    {
+        warn!(
+            target: "cinnabar::shaderpack",
+            file = %file.display(),
+            "shader pack options could not be rewritten: {error}"
+        );
+    }
+    values
 }
 
 /// The enabled programs this host runs, in frame order, with their plans; an error names
@@ -431,16 +463,20 @@ pub(crate) fn runnable_programs(
     }
 }
 
-/// Translates and builds an opened pack.
+/// Translates and builds an opened pack with option `values`.
 pub(crate) fn build(
     pack: &ShaderPack,
     name: &str,
     dimension: &str,
+    values: &OptionValues,
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
 ) -> Result<PackGpu, String> {
-    let config = translate_config(pack, dimension);
+    let config = TranslateConfig {
+        options: values.clone(),
+        ..translate_config(pack, dimension)
+    };
     let started = std::time::Instant::now();
     let translation = pack.translate(&config);
     for diagnostic in &translation.properties.diagnostics {

@@ -119,6 +119,7 @@ fn drive_loader(
             loaded.0 = None;
         }
         let cache_dir = request.cache_dir.clone();
+        let options = request.options.clone();
         let vanilla = atmosphere
             .as_deref()
             .map(VanillaTextures::from_atmosphere)
@@ -128,7 +129,14 @@ fn drive_loader(
             .name("shader pack load".into())
             .spawn(move || {
                 let id = JAVA_DIMENSIONS[dimension as usize];
-                let _ = send.send(load(&path, id, cache_dir.as_deref(), &gpu, &vanilla));
+                let _ = send.send(load(
+                    &path,
+                    options.as_deref(),
+                    id,
+                    cache_dir.as_deref(),
+                    &gpu,
+                    &vanilla,
+                ));
             });
         match spawned {
             Ok(_) => loader.job = Some(Mutex::new(receive)),

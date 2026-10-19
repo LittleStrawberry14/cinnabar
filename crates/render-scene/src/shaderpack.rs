@@ -19,6 +19,8 @@ pub struct ShaderPackRequest {
     pub pack: Option<PathBuf>,
     /// Private directory for cached translations; `None` disables the cache.
     pub cache_dir: Option<PathBuf>,
+    /// The pack's saved option values (Iris's `<pack>.txt` beside it), read on every load.
+    pub options: Option<PathBuf>,
 }
 
 /// Load state of the requested pack, written by the render host.

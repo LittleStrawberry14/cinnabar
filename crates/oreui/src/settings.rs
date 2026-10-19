@@ -12,6 +12,7 @@ mod renderer;
 mod resources;
 mod sections;
 mod services;
+mod shader_options;
 mod sidebar;
 mod updates;
 
@@ -72,20 +73,33 @@ pub(super) fn draw(
     let panel = [body[0], top, body[1] - canvas.r(1.6), bottom];
     canvas.fill(panel, NEUTRAL.fill)?;
     canvas.frame(panel, EDGE, theme::BORDER)?;
+    let section =
+        SettingSection::from_index(view.settings.section).unwrap_or(SettingSection::Accessibility);
+    // The Shader Pack Settings screen replaces the Video panel and keeps a footer below it.
+    let options = view
+        .shader_options
+        .as_deref()
+        .filter(|_| section == SettingSection::Video);
+    let footer = options.map_or(0.0, |_| shader_options::footer_height(canvas));
     let viewport = [
         panel[0] + canvas.r(EDGE),
         top + canvas.r(EDGE),
         body[1],
-        bottom,
+        bottom - footer,
     ];
-    let section =
-        SettingSection::from_index(view.settings.section).unwrap_or(SettingSection::Accessibility);
     let selector = section.definition().name;
-    let key = format!("oreui_settings/{selector}");
+    let key = match options {
+        Some(options) => format!(
+            "oreui_settings/{selector}/shader_options/{}",
+            options.screen
+        ),
+        None => format!("oreui_settings/{selector}"),
+    };
     let tab = focus::tab(section.definition().index);
     let entrance =
         canvas.begin_entrance(super::motion::Surface::Settings(section.definition().index));
     let tab_focus = canvas.begin_focus_region(tab, [body[0], top, body[1], bottom], None, false)?;
+    let mut described = None;
     // A resize can shrink the scroll range. Redraw once with the new clamped offset.
     for attempt in 0..2 {
         let rollback = (
@@ -116,7 +130,10 @@ pub(super) fn draw(
             translate,
             nested: false,
         };
-        sections::draw(&mut content, section)?;
+        match options {
+            Some(options) => described = shader_options::body(&mut content, options)?,
+            None => sections::draw(&mut content, section)?,
+        }
         let height = content.y + offset - viewport[1];
         content.canvas.end_scroll(scroll, height)?;
         content.canvas.end_focus_region(body_focus);
@@ -133,6 +150,20 @@ pub(super) fn draw(
         canvas.focus_landmarks.truncate(rollback.6);
         canvas.slider_tracks.truncate(rollback.7);
         canvas.offsets.insert(key.clone(), max);
+    }
+    if let Some(options) = options {
+        shader_options::footer(
+            canvas,
+            view,
+            options,
+            [
+                panel[0] + canvas.r(EDGE),
+                bottom - footer,
+                panel[2] - canvas.r(EDGE),
+                bottom,
+            ],
+            described,
+        )?;
     }
     canvas.end_focus_region(tab_focus);
     canvas.end_focus_region(detail_focus);

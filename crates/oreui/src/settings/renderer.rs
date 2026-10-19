@@ -4,17 +4,31 @@
 use super::super::widgets;
 use super::Content;
 use launcher::menu::{MenuAction, MenuView, RendererChoice};
+use launcher::shader_options::Action;
 use ui_engine::engine::screen::PaintError;
 
 #[cfg(test)]
 mod tests;
 
-/// Draws nothing unless this build compiles an optional renderer.
+/// Draws nothing unless this build compiles an optional renderer. With a shader pack
+/// selected, a row under the picker opens the pack's options.
 pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     if !render_model::ENHANCED_RENDERING_ENABLED && !render_model::SHADER_PACKS_ENABLED {
         return Ok(());
     }
-    renderer(content)
+    renderer(content)?;
+    if render_model::SHADER_PACKS_ENABLED
+        && matches!(content.view.renderer, Some(RendererChoice::ShaderPack(_)))
+    {
+        super::services::action_row(
+            content,
+            "Shader pack settings",
+            "Change the selected pack's own options. Applying reloads the pack.",
+            "Shader options…",
+            Some(MenuAction::ShaderOptions(Action::Open)),
+        )?;
+    }
+    Ok(())
 }
 
 /// The compiled renderer choices in display order with their labels.

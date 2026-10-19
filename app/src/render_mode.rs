@@ -33,6 +33,8 @@ use {
 };
 
 pub(crate) mod authored_textures;
+#[cfg(feature = "shaderpacks")]
+mod shader_options;
 mod shader_pack;
 
 pub(crate) const RENDER_MODE_ENV: &str = "CINNABAR_RENDER_MODE";
@@ -205,6 +207,12 @@ impl Plugin for RenderModePlugin {
                     sync_enhanced_bloom,
                 )
                     .chain(),
+            );
+        #[cfg(feature = "shaderpacks")]
+        app.init_resource::<shader_options::ShaderOptionsHost>()
+            .add_systems(
+                Update,
+                shader_options::drive_shader_options.after(apply_menu_render_mode),
             );
     }
 }
