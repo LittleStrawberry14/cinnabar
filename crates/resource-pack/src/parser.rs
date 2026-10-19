@@ -27,6 +27,17 @@ use crate::{
 
 const MAX_CONTENTS_INDEX_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Archive-derived delivery kind for packs admitted by the existing resources-module policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArchiveKind {
+    /// A resources module without the selected delivery policy's behavior module kinds.
+    Resources,
+    /// Resources together with a data or client_data module.
+    Addon,
+    /// An admitted archive member has the exact basename level.dat.
+    WorldTemplate,
+}
+
 /// Validates one unencrypted archive under a nil identity; used by fuzzing.
 pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
     if bytes.len() > MAX_ARCHIVE_BYTES {
@@ -36,16 +47,18 @@ pub fn validate_archive_bytes(bytes: &[u8]) -> Result<(), AdmissionError> {
 }
 
 /// Checks an offered archive against its manifest without modifying the original bytes.
+/// Returns kind from that same bounded manifest/index pass; no wire DataInfo is inferred.
 /// Content keys and subpack selection remain owned by the eventual application handoff.
 pub fn verify_archive_identity(
     bytes: &[u8],
     pack_id: Uuid,
     version: &str,
-) -> Result<(), AdmissionError> {
+) -> Result<ArchiveKind, AdmissionError> {
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge);
     }
-    validate_archive_parts(pack_id, version, "", bytes.to_vec(), None, None).map(|_| ())
+    validate_archive_parts(pack_id, version, "", bytes.to_vec(), None, None)
+        .map(|(_, _, kind)| kind)
 }
 
 /// Admits highest-priority-first server entries, then stores layers lowest priority first.
@@ -123,7 +136,7 @@ fn admit_stack_entry<T>(
     } else {
         Some(ContentKey::new(key).ok_or(AdmissionError::InvalidContentKey)?)
     };
-    let (pack, declared) = validate_archive_parts(
+    let (pack, declared, _) = validate_archive_parts(
         archive.pack_id,
         &archive.version,
         &archive.sub_pack_name,
@@ -143,7 +156,7 @@ pub(crate) fn validate_archive_parts(
     mut archive_bytes: Vec<u8>,
     key: Option<ContentKey>,
     memory: Option<u32>,
-) -> Result<(ValidatedPack, u64), AdmissionError> {
+) -> Result<(ValidatedPack, u64, ArchiveKind), AdmissionError> {
     if archive_bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(AdmissionError::ArchiveTooLarge);
     }
@@ -193,6 +206,9 @@ pub(crate) fn validate_archive_parts(
             _ => skipped += usize::from(!file.is_dir()),
         }
     }
+    let has_world_template = physical
+        .keys()
+        .any(|path| path.rsplit('/').next() == Some("level.dat"));
     let root = pack_root(&physical);
     let mut rooted: HashMap<Box<str>, EntryIndex> = physical
         .into_iter()
@@ -231,6 +247,13 @@ pub(crate) fn validate_archive_parts(
         })?
         .ok_or(AdmissionError::MissingManifest)?;
     let manifest = read_manifest(&manifest_bytes, pack_id, version)?;
+    let kind = if has_world_template {
+        ArchiveKind::WorldTemplate
+    } else if manifest.has_behaviors {
+        ArchiveKind::Addon
+    } else {
+        ArchiveKind::Resources
+    };
     let selected = if let Some(memory) = memory {
         crate::subpacks::supported(&manifest.subpacks, sub_pack_name, memory)
     } else {
@@ -252,7 +275,7 @@ pub(crate) fn validate_archive_parts(
     let mut file_order = pack.files.keys().cloned().collect::<Vec<_>>();
     file_order.sort_unstable();
     pack.file_order = file_order.into_boxed_slice();
-    Ok((pack, declared))
+    Ok((pack, declared, kind))
 }
 
 /// Returns the directory prefix holding the manifest when an archive wraps the

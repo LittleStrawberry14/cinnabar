@@ -35,7 +35,7 @@ pub use library::{
 };
 pub use merge::{MAX_MERGED_ENTRIES, MAX_WINNING_BYTES, MAX_WINNING_FILES};
 pub use pack::{PackRejection, ValidatedPack, ValidatedPackStack};
-pub use parser::{validate_archive_bytes, verify_archive_identity};
+pub use parser::{ArchiveKind, validate_archive_bytes, verify_archive_identity};
 pub use view::LayeredPackView;
 
 /// Maximum compressed source bytes decoded for one pack texture.

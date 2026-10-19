@@ -278,7 +278,7 @@ fn read_candidate(
         .finish()
         .map_err(|_| AdmissionError::MalformedZip)?
         .into_inner();
-    let (validated, _) = validate_archive_parts(
+    let (validated, _, _) = validate_archive_parts(
         metadata.id,
         &metadata.version_text(),
         "",

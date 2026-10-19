@@ -46,6 +46,7 @@ impl Version {
 
 pub(crate) struct Manifest {
     pub(crate) subpacks: Vec<Subpack>,
+    pub(crate) has_behaviors: bool,
 }
 
 /// Validates a manifest against the server-selected identity.
@@ -98,7 +99,15 @@ pub(crate) fn read_manifest(
                 })
         })
         .collect();
-    Ok(Manifest { subpacks })
+    let has_behaviors = root["modules"].as_array().is_some_and(|modules| {
+        modules
+            .iter()
+            .any(|module| matches!(module["type"].as_str(), Some("data" | "client_data")))
+    });
+    Ok(Manifest {
+        subpacks,
+        has_behaviors,
+    })
 }
 
 #[cfg(test)]
