@@ -149,12 +149,10 @@ impl Peer {
         for _ in 0..8 {
             self.send(&codec, &text).await;
         }
-        loop {
-            match self.next().await {
-                Input::Closed => return,
-                Input::Message(_) => {
-                    panic!("empty-upload browser submitted an unexpected application message")
-                }
+        match self.next().await {
+            Input::Closed => {}
+            Input::Message(_) => {
+                panic!("empty-upload browser submitted an unexpected application message")
             }
         }
     }

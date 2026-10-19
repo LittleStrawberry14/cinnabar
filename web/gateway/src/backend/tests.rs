@@ -1,6 +1,6 @@
 //! Real accepted TCP/TLS/WebSocket owners with explicit fixture trust and finite task ownership.
 
-use super::Backend;
+use super::Gateway;
 use super::*;
 use bridge::{
     contract::*,
@@ -47,12 +47,12 @@ impl Drop for Fixture {
 }
 
 impl Fixture {
-    /// Runs the actual private backend on one explicitly trusted localhost certificate and socket.
+    /// Runs the actual gateway on one explicitly trusted localhost certificate and socket.
     async fn new() -> Self {
         Self::with_upstream(None).await
     }
 
-    /// Scopes an optional exact loopback fixture to this backend's actual serving future.
+    /// Scopes an optional exact loopback fixture to this gateway's actual serving future.
     async fn with_upstream(upstream: Option<SocketAddr>) -> Self {
         if let Some(address) = upstream {
             assert!(address.ip().is_loopback() && address.port() != 0);
@@ -61,8 +61,8 @@ impl Fixture {
             rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let certificate = cert.der().clone();
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der()));
-        let backend = Backend::new(vec![certificate.clone()], key, Vec::new()).unwrap();
-        let registry = Arc::clone(&backend.registry);
+        let gateway = Gateway::new(vec![certificate.clone()], key, Vec::new()).unwrap();
+        let registry = Arc::clone(&gateway.registry);
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let incoming = Box::pin(futures::stream::unfold(listener, |listener| async move {
@@ -72,10 +72,10 @@ impl Fixture {
         let task = tokio::spawn(async move {
             if let Some(address) = upstream {
                 crate::upstream::FIXTURE_UPSTREAM
-                    .scope(address, backend.run(incoming))
+                    .scope(address, gateway.run(incoming))
                     .await
             } else {
-                backend.run(incoming).await
+                gateway.run(incoming).await
             }
         });
         let mut roots = RootCertStore::empty();

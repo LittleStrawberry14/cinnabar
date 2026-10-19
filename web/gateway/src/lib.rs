@@ -1,4 +1,4 @@
-//! Native application ownership for a browser gateway's ephemeral account and play streams.
+#![doc = include_str!("../README.md")]
 #![cfg(not(target_arch = "wasm32"))]
 
 mod account;
@@ -13,6 +13,8 @@ mod registry;
 mod session;
 mod socket;
 mod upstream;
+
+pub use backend::Gateway;
 
 #[cfg(test)]
 mod tests;

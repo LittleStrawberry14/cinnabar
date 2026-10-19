@@ -44,6 +44,6 @@ impl Bearer {
 
     /// Copies the capability only into the bounded control frame intended for its controller.
     pub(super) fn wire(&self) -> String {
-        hex::encode(&*self.bytes)
+        hex::encode(self.bytes.as_slice())
     }
 }
