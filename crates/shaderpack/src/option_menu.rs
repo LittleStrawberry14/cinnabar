@@ -65,6 +65,15 @@ struct Layout {
     columns: Option<i32>,
 }
 
+/// A screen's resolved elements, before unlisted options fill its `*`.
+struct Resolved<'a> {
+    id: &'a str,
+    columns: Option<i32>,
+    elements: Vec<MenuElement>,
+    /// Where the screen's first `*` stands.
+    rest: Option<usize>,
+}
+
 impl OptionMenu {
     /// Builds the menu from the raw `shaders.properties` text and the pack's options. The
     /// last definition of a key wins.
@@ -123,29 +132,33 @@ impl OptionMenu {
             has_profiles: !profiles.is_empty(),
             used: BTreeSet::new(),
         };
-        let mut screens: Vec<(&str, Option<i32>, Vec<MenuElement>, Option<usize>)> =
-            std::iter::once(("", &main))
-                .chain(sub.iter().map(|(id, layout)| (id.as_str(), layout)))
-                .map(|(id, layout)| {
-                    let (elements, rest) = builder.elements(&layout.elements);
-                    (id, layout.columns, elements, rest)
-                })
-                .collect();
+        let mut screens: Vec<Resolved<'_>> = std::iter::once(("", &main))
+            .chain(sub.iter().map(|(id, layout)| (id.as_str(), layout)))
+            .map(|(id, layout)| {
+                let (elements, rest) = builder.elements(&layout.elements);
+                Resolved {
+                    id,
+                    columns: layout.columns,
+                    elements,
+                    rest,
+                }
+            })
+            .collect();
         // Iris fills only one `*` with the unlisted options (which one depends on hashing);
         // this fills the first in file order, the main screen first.
         let unused = builder.unused();
-        if let Some((_, _, elements, Some(index))) =
-            screens.iter_mut().find(|(_, _, _, rest)| rest.is_some())
-        {
-            elements.splice(*index..*index, unused);
+        if let Some(screen) = screens.iter_mut().find(|screen| screen.rest.is_some()) {
+            let index = screen.rest.unwrap_or(0);
+            screen.elements.splice(index..index, unused);
         }
-        let mut screens = screens.into_iter().map(|(id, columns, elements, _)| {
-            let columns = match columns {
+        let mut screens = screens.into_iter().map(|screen| {
+            let columns = match screen.columns {
                 Some(columns) => usize::try_from(columns).unwrap_or(0).max(1),
-                None if elements.len() > TWO_COLUMN_LIMIT => 3,
+                None if screen.elements.len() > TWO_COLUMN_LIMIT => 3,
                 None => 2,
             };
-            (id.to_owned(), MenuScreen { elements, columns })
+            let elements = screen.elements;
+            (screen.id.to_owned(), MenuScreen { elements, columns })
         });
         let main = screens.next().map(|(_, screen)| screen);
         OptionMenu {

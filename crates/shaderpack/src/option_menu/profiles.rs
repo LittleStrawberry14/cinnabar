@@ -78,7 +78,7 @@ pub(super) fn parse(tree: &[(String, Vec<String>)], options: &[PackOption]) -> V
             None => return Vec::new(),
         }
     }
-    profiles.sort_by(|a, b| b.values.len().cmp(&a.values.len()));
+    profiles.sort_by_key(|profile| std::cmp::Reverse(profile.values.len()));
     profiles
 }
 
