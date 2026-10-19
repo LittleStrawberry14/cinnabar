@@ -84,6 +84,8 @@ struct Snapshot {
     /// The invite picker uses the same selected account as native profile/presence.
     people_source: invites::Source,
     people_wake: Option<tokio::sync::watch::Sender<invites::Wake>>,
+    realm_source: realm_membership::Source,
+    realm_wake: Option<tokio::sync::watch::Sender<realm_membership::Wake>>,
     xbox_presence: bridge::XboxPresenceState,
     title_presence_owner: crate::launcher_core::TitlePresenceOwner,
     #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
@@ -120,6 +122,8 @@ struct Snapshot {
     /// The invite screen's friends list, delivered once per request.
     people: Option<Result<Vec<bridge::Person>, ()>>,
     realm_membership: Option<RealmMembershipResponse>,
+    /// The current explicit UI intent; cancellation revokes publication before waking its worker.
+    realm_ticket: Option<u64>,
 }
 
 impl Snapshot {
@@ -133,9 +137,13 @@ impl Snapshot {
         self.profile = None;
         self.people = None;
         self.realm_membership = None;
+        self.realm_ticket = None;
         self.home = None;
         if let Some(wake) = &self.people_wake {
             invites::retire(wake);
+        }
+        if let Some(wake) = &self.realm_wake {
+            realm_membership::retire(wake);
         }
         if let Some(wake) = &self.catalog_wake {
             // A queued wake already covers the newest snapshot; never block a frame.
@@ -172,7 +180,7 @@ pub struct LauncherAccount {
     profile_refresh: tokio::sync::watch::Sender<profile_worker::Wake>,
     message_reports: Sender<MessageEvent>,
     invites: invites::Requests,
-    realm_membership: tokio::sync::mpsc::UnboundedSender<realm_membership::Request>,
+    realm_membership: realm_membership::Requests,
     cinnabar_rosters: Sender<cinnabar_players::Roster>,
     /// Dropping it stops the catalog and feed workers.
     _alive: Sender<()>,
@@ -212,6 +220,7 @@ impl LauncherAccount {
                 title_presence_owner: crate::launcher_core::TitlePresenceOwner::Native,
                 profile_source: profile_worker::Source::Native(account.clone()),
                 people_source: invites::Source::Native(account.clone()),
+                realm_source: realm_membership::Source::Native(account.clone()),
                 native_presence_account: account,
                 ..Default::default()
             },
