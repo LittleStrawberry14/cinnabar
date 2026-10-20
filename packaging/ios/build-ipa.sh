@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Experimental unsigned IPA builder for iOS.
-# This currently produces a stub bundle. Real client integration is not done yet.
 set -euo pipefail
 
 here="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,38 +10,36 @@ triple=aarch64-apple-ios
 profile="${CINNABAR_IOS_PROFILE:-release}"
 out="$repo_root/target/ios"
 app="$out/Payload/Cinnabar.app"
+log="$out/build.log"
 
 rm -rf "$out"
 mkdir -p "$app"
 
-echo "Building cinnabar-ios for $triple ($profile)..."
+echo "Building cinnabar-ios for $triple ($profile)..." | tee "$log"
 
-# Don't use --locked yet — the ios crate is new and the lockfile needs to settle.
-if cargo build -p cinnabar-ios --target "$triple" --profile "$profile"; then
-  echo "Rust build succeeded"
-  built=1
+set +e
+cargo build -p cinnabar-ios --target "$triple" --profile "$profile" 2>&1 | tee -a "$log"
+status=${PIPESTATUS[0]}
+set -e
+
+if [[ "$status" -eq 0 ]]; then
+  echo "Rust build succeeded" | tee -a "$log"
 else
-  echo "Rust build failed. Continuing with stub."
-  built=0
+  echo "Rust build failed (exit $status). See build.log" | tee -a "$log"
 fi
 
-# Prefer the real staticlib if it exists
 lib_path="target/$triple/$profile/libcinnabar_ios.a"
 if [[ -f "$lib_path" ]]; then
   cp "$lib_path" "$app/libcinnabar_ios.a"
-  echo "Included static library"
+  ls -la "$lib_path" | tee -a "$log"
 fi
 
-# Minimal executable placeholder so the IPA structure is valid.
-# Real binary will replace this later.
 cat > "$app/cinnabar" << 'EOF'
 #!/bin/sh
-echo "Cinnabar iOS stub – not a real client yet"
-echo "This is only packaging scaffolding."
+echo "Cinnabar iOS – port in progress"
 EOF
 chmod +x "$app/cinnabar"
 
-# Info.plist
 cat > "$app/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,7 +75,6 @@ cat > "$app/Info.plist" << 'EOF'
 </plist>
 EOF
 
-# Package
-(cd "$out" && zip -qr cinnabar-ios-unsigned.ipa Payload)
+(cd "$out" && zip -qr cinnabar-ios-unsigned.ipa Payload build.log)
 size=$(wc -c < "$out/cinnabar-ios-unsigned.ipa" | tr -d ' ')
-echo "Wrote $out/cinnabar-ios-unsigned.ipa ($size bytes)"
+echo "Wrote $out/cinnabar-ios-unsigned.ipa ($size bytes)" | tee -a "$log"
