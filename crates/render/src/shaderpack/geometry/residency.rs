@@ -110,6 +110,8 @@ pub(crate) struct Residency {
     /// Sections that did not fit the budget and that nothing farther could make room for;
     /// they are tried again once faces are freed or the camera moves.
     waiting: HashSet<Entity>,
+    /// Requests that cannot fit any page even after evicting all its faces.
+    unplaceable: HashSet<Entity>,
     /// Faces one page may hold.
     page_faces: u32,
     /// Faces all pages together may hold.
@@ -156,6 +158,7 @@ impl Residency {
             queue: VecDeque::new(),
             queued: HashSet::new(),
             waiting: HashSet::new(),
+            unplaceable: HashSet::new(),
             page_faces,
             budget_faces: budget_bytes / face_bytes,
             face_bytes,
@@ -193,9 +196,18 @@ impl Residency {
         self.face_bytes
     }
 
-    /// Changes the memory budget; pages already open stay.
+    /// Changes the memory budget and retries waiting requests; pages already open stay.
     pub(crate) fn set_budget(&mut self, budget_bytes: u64) {
-        self.budget_faces = budget_bytes / self.face_bytes;
+        let budget_faces = budget_bytes / self.face_bytes;
+        if self.budget_faces != budget_faces {
+            self.budget_faces = budget_faces;
+            self.retry_waiting();
+        }
+    }
+
+    /// Whether any live section needs the native scene fallback until its request changes.
+    pub(crate) fn has_unplaceable(&self) -> bool {
+        !self.unplaceable.is_empty()
     }
 
     /// Undoes an uncommitted `placement` of `entity` whose new page could not be allocated:
@@ -280,6 +292,7 @@ impl Residency {
             self.revision += 1;
         }
         self.waiting.remove(&entity);
+        self.unplaceable.remove(&entity);
         if self.queued.remove(&entity) {
             self.queue.retain(|queued| *queued != entity);
         }
@@ -362,8 +375,10 @@ impl Residency {
         eviction: &mut Eviction,
     ) -> Option<Placement> {
         if !self.can_fit(plan.faces) {
+            self.unplaceable.insert(entity);
             return None;
         }
+        self.unplaceable.remove(&entity);
         loop {
             if let Some(placement) = self.place(entity, plan) {
                 return Some(placement);
@@ -396,8 +411,8 @@ impl Residency {
     pub(crate) fn can_fit(&self, faces: u32) -> bool {
         faces != 0
             && faces <= self.page_faces
-            && (u64::from(faces) <= self.budget_faces
-                || self.pages.iter().any(|page| page.faces.capacity() >= faces))
+            && (self.pages.iter().any(|page| page.faces.capacity() >= faces)
+                || u64::from(faces) <= self.budget_faces.saturating_sub(self.capacity_faces()))
     }
 
     fn allocate(&mut self, faces: u32) -> Option<Placement> {
@@ -568,6 +583,7 @@ impl Residency {
         self.queue.clear();
         self.queued.clear();
         self.waiting.clear();
+        self.unplaceable.clear();
         self.origin = None;
         self.free_slots.clear();
         self.slot_count = 0;
