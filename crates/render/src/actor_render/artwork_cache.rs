@@ -31,6 +31,20 @@ impl TextureKey {
             && self.page.layers == page.layers
             && Arc::ptr_eq(&self.page.rgba8, &page.rgba8)
     }
+
+    /// Returns the preserved layer prefix when a larger page appends identical-sized rasters.
+    pub(super) fn appended_layers(&self, page: &ActorTexturePage) -> Option<u32> {
+        (self.page.width == page.width
+            && self.page.height == page.height
+            && self.page.layers < page.layers
+            && page.rgba8.starts_with(&self.page.rgba8))
+        .then_some(self.page.layers)
+    }
+
+    /// Reports whether uploaded source layers cover the request, excluding spare capacity.
+    pub(super) fn contains_layers(&self, layers: u32) -> bool {
+        self.page.layers >= layers
+    }
 }
 
 impl PartialEq for TextureKey {
@@ -92,12 +106,9 @@ impl TextureCache {
         cache
     }
 
-    /// Releases unused textures and their source allocations before replacement uploads begin.
-    pub(super) fn retain(&mut self, keys: &[TextureKey]) {
-        let keys: std::collections::HashSet<_> = keys.iter().collect();
-        self.textures.retain(|key, _| keys.contains(key));
-        self.allocations
-            .retain(|_, key| self.textures.contains_key(key));
+    /// Finds retained source allocations without hashing pixels that no actor currently demands.
+    pub(super) fn shared(&self, page: &ActorTexturePage) -> Option<GpuArtworkPage> {
+        self.get(self.allocations.get(&AllocationKey::new(page))?)
     }
 
     /// Shared allocations avoid hashing; equal independent allocations share their texture too.
