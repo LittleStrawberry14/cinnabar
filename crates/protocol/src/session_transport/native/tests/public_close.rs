@@ -70,6 +70,7 @@ async fn cancelled_close_retry_keeps_the_original_driver_cutoff() {
         release: held,
         dropped: Some(dropped),
     });
+    let cutoff = tokio::time::Instant::now() + CLOSE_TIMEOUT;
     {
         let mut first = std::pin::pin!(transport.close());
         assert!(futures::poll!(first.as_mut()).is_pending());
@@ -81,9 +82,12 @@ async fn cancelled_close_retry_keeps_the_original_driver_cutoff() {
         let mut retry = std::pin::pin!(transport.close());
         assert!(futures::poll!(retry.as_mut()).is_pending());
         tokio::time::advance(CLOSE_TIMEOUT / 2).await;
-        match futures::poll!(retry.as_mut()) {
-            Poll::Ready(result) => Some(result),
-            Poll::Pending => None,
+        let completed =
+            tokio::time::timeout_at(cutoff + test_time::DEFAULT_TIMEOUT, retry.as_mut()).await;
+        let completed_at = tokio::time::Instant::now();
+        match completed {
+            Ok(result) if completed_at <= cutoff => Some(result),
+            _ => None,
         }
     };
 
