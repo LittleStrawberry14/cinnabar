@@ -51,6 +51,7 @@ mod physics_registry;
 mod pinned_content;
 pub mod potion;
 mod provenance;
+mod publication;
 pub mod registry;
 mod runtime;
 pub mod seasonal_foliage;
@@ -263,6 +264,7 @@ pub use provenance::{
     BlobProvenance, VANILLA_SOURCE_MANIFEST, VanillaSource, canonical_source_manifest_sha256,
     vanilla_source, vanilla_source_manifest_sha256,
 };
+pub use publication::rename_no_replace;
 pub use registry::{
     BeaconTint, BlockFlags, CollisionBox, CollisionConfidence, CollisionSeed, ContributorRole,
     ModelFamily, ModelState, ModelStateField, RegistryProvenance, RegistryRecord,

@@ -152,3 +152,65 @@ fn listing_skips_a_copy_still_being_written() {
     fs::create_dir_all(scratch.packs.join("Dusk/shaders")).unwrap();
     assert_eq!(scratch.listed(), ["Dusk"]);
 }
+
+#[test]
+fn publishing_a_completed_copy_never_replaces_an_entry_that_appeared() {
+    let scratch = Scratch::new();
+    let source = scratch.file("Dusk.zip");
+    write_zip(&source, &[("shaders/final.fsh", b"new")]);
+    fs::create_dir_all(&scratch.packs).unwrap();
+    let target = scratch.packs.join("Dusk.zip");
+    fs::write(&target, b"installed").unwrap();
+    assert!(copy_pack(&source, &target).is_err());
+    assert_eq!(fs::read(&target).unwrap(), b"installed");
+}
+
+#[test]
+fn concurrent_same_name_drops_publish_one_complete_pack() {
+    let scratch = Scratch::new();
+    let source = scratch.file("Dusk.zip");
+    write_zip(&source, &[("shaders/final.fsh", &[42; 65536])]);
+    let start = std::sync::Barrier::new(2);
+    let outcomes = std::thread::scope(|scope| {
+        let run = || {
+            start.wait();
+            add_dropped_packs(std::slice::from_ref(&source), &scratch.packs)
+        };
+        let first = scope.spawn(run);
+        let second = scope.spawn(run);
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(result, DropOutcome::Added(_)))
+            .count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(result, DropOutcome::AlreadyExists(_)))
+            .count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        fs::read(scratch.packs.join("Dusk.zip")).unwrap(),
+        fs::read(&source).unwrap()
+    );
+}
+
+#[test]
+fn a_destination_inside_the_source_is_rejected_before_creating_it() {
+    let scratch = Scratch::new();
+    let source = scratch.file("Dusk");
+    fs::create_dir_all(source.join("shaders")).unwrap();
+    let destination = source.join("shaderpacks");
+    assert!(matches!(
+        add_dropped_packs(std::slice::from_ref(&source), &destination),
+        DropOutcome::CopyFailed { .. }
+    ));
+    assert!(!destination.exists());
+}
