@@ -3,7 +3,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,7 +15,14 @@ fn main() {
     let log_path = startup_log_path();
     install_panic_logger(log_path.clone());
     log_line(&log_path, "=== Cinnabar iOS startup ===");
-    log_line(&log_path, &format!("version={} os={}", env!("CARGO_PKG_VERSION"), std::env::consts::OS));
+    log_line(
+        &log_path,
+        &format!(
+            "version={} os={}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS
+        ),
+    );
 
     let code = match run_client(&log_path) {
         Ok(()) => {
@@ -62,9 +69,15 @@ fn run_client(log_path: &Option<PathBuf>) -> Result<()> {
         layout.resource_root = bundled_resources;
         layout.compiled_assets = bundled_assets;
         layout.physics_registry = layout.compiled_assets.join(physics_name);
-        log_line(log_path, &format!("using bundled assets at {}", layout.compiled_assets.display()));
+        log_line(
+            log_path,
+            &format!("using bundled assets at {}", layout.compiled_assets.display()),
+        );
     } else {
-        log_line(log_path, &format!("WARNING: bundled assets directory missing: {}", bundled_assets.display()));
+        log_line(
+            log_path,
+            &format!("WARNING: bundled assets directory missing: {}", bundled_assets.display()),
+        );
     }
 
     log_line(log_path, "configuring iOS install layout");
