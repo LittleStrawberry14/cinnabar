@@ -356,7 +356,7 @@ pub(super) fn sample<'a>(
                     cull_view,
                     combat_visuals,
                     skin_rigs,
-                    equipment.as_deref_mut(),
+                    equipment,
                     new_geometries,
                     &mut remote_skin_layers,
                     &mut remotes,
