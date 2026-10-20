@@ -127,3 +127,33 @@ pub(super) fn storage_sizes(
     }
     Ok(sizes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_sizes_reject_alignment_overflow() {
+        let properties = format!("bufferObject.0={}\n", u64::MAX);
+        let pack = shaderpack::ShaderPack::new(shaderpack::PackSource::from_files([
+            ("shaders.properties", properties.as_str()),
+            (
+                "composite.csh",
+                "#version 430\nlayout(local_size_x=1) in;\nlayout(std430, binding=0) buffer Data { uint value; } data;\nvoid main() { data.value = 1u; }\n",
+            ),
+        ]));
+        let translation = pack.translate(&shaderpack::TranslateConfig::default());
+        let reflections: Vec<_> = translation
+            .programs
+            .iter()
+            .map(|program| {
+                program
+                    .reflection
+                    .as_ref()
+                    .expect("the storage fixture translates")
+            })
+            .collect();
+        assert_eq!(reflections.len(), 1);
+        assert!(storage_sizes(&reflections, &translation.properties).is_err());
+    }
+}
