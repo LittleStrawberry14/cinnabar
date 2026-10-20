@@ -20,13 +20,15 @@ gilrs = "0.11.2"
 launcher = { path = "../launcher" }
 launcher-host = { path = "../launcher-host" }
 minidump = "0.26"
-minidumper = "0.11"
 render-model = { path = "../render-model" }
 serde_json = "1"
 tiny-skia = { version = "0.11.4", default-features = false, features = ["std"] }
 tracing.workspace = true
 ui = { path = "../ui" }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+minidumper = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }
