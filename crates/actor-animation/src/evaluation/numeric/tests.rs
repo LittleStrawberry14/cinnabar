@@ -135,8 +135,18 @@ impl Harness {
                 );
                 let queries = take_query_work();
                 let effects = variables.finish_effects(capture);
+                let stopped_stack = result.is_err().then(|| {
+                    budget
+                        .stack
+                        .0
+                        .iter()
+                        .cloned()
+                        .map(value_bits)
+                        .collect::<Vec<_>>()
+                });
                 (
                     result.map(value_bits),
+                    stopped_stack,
                     (budget.actor_left, *budget.world_left, budget.used),
                     (
                         budget.work_left,
