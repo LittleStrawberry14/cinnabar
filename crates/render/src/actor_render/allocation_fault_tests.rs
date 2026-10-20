@@ -378,11 +378,18 @@ fn gpu_fault_matrix_pages_retain_compatible_artwork_and_recover_draws() {
             }
             let attempts = calls.borrow().len();
             let _ = draw_frame(&mut app, &next);
-            assert_eq!(
-                calls.borrow().len(),
-                attempts,
-                "exhausted publication must not spin"
-            );
+            if !first && layers == 1 {
+                assert!(
+                    calls.borrow().len() > attempts,
+                    "compatible fallbacks remain retryable while demanded"
+                );
+            } else {
+                assert_eq!(
+                    calls.borrow().len(),
+                    attempts,
+                    "exhausted publication must not spin"
+                );
+            }
             drop(fault);
             let recovered = publication(3, &[100, 120], layers);
             let drawn = draw_frame(&mut app, &recovered);

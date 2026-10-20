@@ -1,6 +1,9 @@
 //! Device-bounded immutable artwork; publications retain textures with unchanged pixels.
 use super::*;
-use std::{collections::hash_map::RandomState, sync::Arc};
+use std::{
+    collections::hash_map::RandomState,
+    sync::{Arc, Mutex},
+};
 use {
     crate::actor::gpu::ActorDrawSpan,
     render_model::{
@@ -20,6 +23,8 @@ const PAGE_BYTES_PER_FRAME: usize = 8 * 1024 * 1024;
 pub(super) struct GpuArtworkPage {
     source: TextureKey,
     _texture: Texture,
+    /// Every alias agrees which layer prefix has been initialized successfully.
+    initialized: Arc<Mutex<TextureKey>>,
     pub view: TextureView,
     pub bind_group: Option<BindGroup>,
     pub color_mask: bool,
@@ -206,7 +211,7 @@ impl GpuArtwork {
         let mut bytes = 0;
         let mut attempted = std::collections::HashSet::new();
         let first_background = self.prewarm_cursor;
-        let requests = demanded.map(|id| (id, false)).chain(
+        let requests = demanded.clone().map(|id| (id, false)).chain(
             (first_background..pages.pages.len())
                 .map(|index| ((index + 1) as ActorArtworkPageId, true)),
         );
@@ -234,7 +239,7 @@ impl GpuArtwork {
                 self.prewarm_cursor = index + 1;
             } else if self.pages[index]
                 .as_ref()
-                .is_some_and(|gpu| !changed || gpu.source.shares_pixels_with(page))
+                .is_some_and(|gpu| gpu.source.shares_pixels_with(page))
             {
                 continue;
             }
@@ -242,10 +247,20 @@ impl GpuArtwork {
                 continue;
             }
             let retained = retained.get_or_insert_with(|| {
-                TextureCache::new(self.pages.iter().flatten().cloned().collect())
+                let mut cache = TextureCache::new(self.pages.iter().flatten().cloned().collect());
+                for id in demanded.clone().collect::<std::collections::HashSet<_>>() {
+                    if let Some(page) = usize::from(id)
+                        .checked_sub(1)
+                        .and_then(|index| pages.pages.get(index))
+                    {
+                        cache.require(page, &self.source_hasher);
+                    }
+                }
+                cache
             });
             let source = retained.key(page, &self.source_hasher);
             let previous = self.pages[index].take();
+            let previous_source = previous.as_ref().map(|gpu| gpu.source.clone());
             let has_fallback = previous
                 .as_ref()
                 .is_some_and(|gpu| gpu.source.contains_layers(page.layers));
@@ -275,7 +290,7 @@ impl GpuArtwork {
                 gpu.color_mask = page.color_mask;
                 gpu.multitexture = page.multitexture;
             }
-            retained.insert(gpu.clone());
+            retained.replace(previous_source.as_ref(), gpu.clone());
             self.pages[index] = Some(gpu);
         }
         #[cfg(feature = "tracy")]
@@ -316,14 +331,22 @@ fn append_layers(
     device: &RenderDevice,
     queue: &RenderQueue,
 ) -> Option<GpuArtworkPage> {
-    let first = previous.source.appended_layers(page)?;
+    previous.source.appended_layers(page)?;
     if previous._texture.width() != u32::from(page.width)
         || previous._texture.height() != u32::from(page.height)
         || previous._texture.depth_or_array_layers() < page.layers
     {
         return None;
     }
-    write_page(device, queue, &previous._texture, page, first)?;
+    let mut initialized = previous
+        .initialized
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !initialized.covers(page) {
+        let first = initialized.appended_layers(page)?;
+        write_page(device, queue, &previous._texture, page, first)?;
+        *initialized = source.clone();
+    }
     let mut gpu = previous.clone();
     gpu.source = source;
     Some(gpu)
@@ -345,6 +368,7 @@ fn allocate_page(
         })
     })?;
     Some(GpuArtworkPage {
+        initialized: Arc::new(Mutex::new(source.clone())),
         source,
         _texture: texture,
         view,
@@ -826,3 +850,7 @@ mod work_tests;
 #[cfg(test)]
 #[path = "artwork_allocation_tests.rs"]
 mod allocation_tests;
+
+#[cfg(test)]
+#[path = "artwork_ownership_tests.rs"]
+mod ownership_tests;

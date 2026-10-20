@@ -45,6 +45,14 @@ impl TextureKey {
     pub(super) fn contains_layers(&self, layers: u32) -> bool {
         self.page.layers >= layers
     }
+
+    /// Initialized layers can serve a shorter page only when its entire prefix matches.
+    pub(super) fn covers(&self, page: &ActorTexturePage) -> bool {
+        self.page.width == page.width
+            && self.page.height == page.height
+            && self.page.layers >= page.layers
+            && self.page.rgba8.starts_with(&page.rgba8)
+    }
 }
 
 impl PartialEq for TextureKey {
@@ -66,7 +74,7 @@ impl Hash for TextureKey {
     }
 }
 use render_model::ActorTexturePage;
-use std::collections::{HashMap, hash_map::RandomState};
+use std::collections::{HashMap, HashSet, hash_map::RandomState};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct AllocationKey {
@@ -93,11 +101,17 @@ impl AllocationKey {
 #[derive(Default)]
 pub(super) struct TextureCache {
     allocations: HashMap<AllocationKey, TextureKey>,
-    textures: HashMap<TextureKey, GpuArtworkPage>,
+    textures: HashMap<TextureKey, CachedTexture>,
+    required: HashSet<TextureKey>,
+}
+
+struct CachedTexture {
+    page: GpuArtworkPage,
+    owners: usize,
 }
 
 impl TextureCache {
-    /// Retains the previous publication until every new route has found its texture.
+    /// Counts current page owners and indexes their reusable textures.
     pub(super) fn new(pages: Vec<GpuArtworkPage>) -> Self {
         let mut cache = Self::default();
         for page in pages {
@@ -112,22 +126,51 @@ impl TextureCache {
     }
 
     /// Shared allocations avoid hashing; equal independent allocations share their texture too.
-    pub(super) fn key(&self, page: &ActorTexturePage, hasher: &RandomState) -> TextureKey {
+    pub(super) fn key(&mut self, page: &ActorTexturePage, hasher: &RandomState) -> TextureKey {
         self.allocations
-            .get(&AllocationKey::new(page))
-            .cloned()
-            .unwrap_or_else(|| TextureKey::new(page, hasher))
+            .entry(AllocationKey::new(page))
+            .or_insert_with(|| TextureKey::new(page, hasher))
+            .clone()
+    }
+
+    /// Keeps exact reuse available to later demand, even after its old route is replaced.
+    pub(super) fn require(&mut self, page: &ActorTexturePage, hasher: &RandomState) {
+        let key = self.key(page, hasher);
+        self.required.insert(key);
     }
 
     /// Returns another handle to the same immutable device texture and bindings.
     pub(super) fn get(&self, key: &TextureKey) -> Option<GpuArtworkPage> {
-        self.textures.get(key).cloned()
+        self.textures.get(key).map(|entry| entry.page.clone())
     }
 
-    /// A page may occur more than once in one publication without another upload.
-    pub(super) fn insert(&mut self, page: GpuArtworkPage) {
+    /// Counts live page owners so a shared texture survives until its last route is replaced.
+    fn insert(&mut self, page: GpuArtworkPage) {
         self.allocations
             .insert(AllocationKey::new(&page.source.page), page.source.clone());
-        self.textures.insert(page.source.clone(), page);
+        let entry = self
+            .textures
+            .entry(page.source.clone())
+            .or_insert_with(|| CachedTexture {
+                page: page.clone(),
+                owners: 0,
+            });
+        entry.page = page;
+        entry.owners += 1;
+    }
+
+    /// Retires superseded allocations immediately while preserving live and future exact reuse.
+    pub(super) fn replace(&mut self, previous: Option<&TextureKey>, page: GpuArtworkPage) {
+        self.insert(page);
+        if let Some(previous) = previous {
+            let entry = self
+                .textures
+                .get_mut(previous)
+                .expect("previous page belongs to this cache");
+            entry.owners -= 1;
+            if entry.owners == 0 && !self.required.contains(previous) {
+                self.textures.remove(previous);
+            }
+        }
     }
 }
