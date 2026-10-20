@@ -144,3 +144,40 @@ fn far_settled_neighbour_publishes_before_ready_backlog() {
     );
     assert!(stream.mesh_jobs.pending.contains_key(&backlog));
 }
+
+/// Continuous arrivals between a settled retry and ready work cannot hide that retry.
+#[test]
+fn far_settled_retry_precedes_continuous_fresh_ingress() {
+    let (mut stream, view, visible, backlog) = deferred_mesh_stream();
+    stream.mark_light_dirty_exact(visible).unwrap();
+    assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 1);
+    let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(completion.key, backlog);
+    stream.accept_mesh_completion(completion);
+    stream.take_mesh_changes();
+    install_current_light(&mut stream, visible, 0, 0, false);
+    let backlog = SubChunkKey::new(1, backlog.x + 2, backlog.y, backlog.z);
+
+    let mut published = false;
+    for z in 0..8 {
+        let arriving = SubChunkKey::new(1, visible.x + 2, 0, z);
+        stream
+            .authority
+            .commit_sub_chunk(arriving, super::uniform_sub_chunk(2))
+            .unwrap();
+        install_current_light(&mut stream, arriving, 0, 0, false);
+        stream.mark_dirty_exact(arriving, Instant::now());
+        assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 1);
+        let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        published = completion.key == visible;
+        stream.accept_mesh_completion(completion);
+        if published {
+            break;
+        }
+    }
+    assert!(
+        published,
+        "fresh lower-priority ingress hid the settled retry"
+    );
+    assert!(stream.mesh_jobs.pending.contains_key(&backlog));
+}

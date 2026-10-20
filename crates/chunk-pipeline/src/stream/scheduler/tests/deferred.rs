@@ -1,156 +1,151 @@
 use super::*;
 
-/// Ordinary mesh retries have a fixed work budget and never revive superseded revisions.
+/// Repeated revisions share one queue position and completed work leaves no retry record.
 #[test]
-fn ordinary_mesh_promotion_is_bounded_and_current() {
-    let view = SchedulerView {
-        position: [8.0; 3],
-        forward: Some([1.0, 0.0, 0.0]),
-        startup_center: None,
-    };
+fn ordinary_mesh_retries_coalesce_and_remove_current_revisions() {
     let mut jobs = KeyedJobs::<PendingMesh, u64, 1>::default();
-    jobs.refresh
-        .refresh(view, &mut jobs.lanes, None, |_, _| true);
     let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
     let now = Instant::now();
-    for x in 0..=count {
-        let key = SubChunkKey::new(1, x as i32, 0, 0);
-        jobs.pending.insert(
-            key,
-            PendingMesh {
-                revision: 2,
-                since: now,
-                queued_at: now,
-                urgent: false,
-            },
-        );
-        let candidate =
-            PendingSchedulerCandidate::new(key, if x == 0 { 1 } else { 2 }, view, false);
-        if x == count {
-            jobs.lanes[0].ready.push(candidate);
-        } else {
-            jobs.lanes[0].deferred.push(candidate);
-        }
-    }
-    jobs.ingress(view, None, |_, _, _| (0, false));
-    let pending = &jobs.pending;
-    let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-    let candidates = jobs.lanes[0].take_deferred_rechecks(&mut budget, None, |key, revision| {
-        pending
-            .get(&key)
-            .is_some_and(|job| job.revision == revision)
-    });
-    for candidate in candidates {
-        jobs.lanes[0].record_deferred_recheck(candidate);
-        jobs.lanes[0].ready.push(candidate);
-    }
-    let lane = &jobs.lanes[0];
-    assert_eq!(
-        lane.deferred.len(),
-        count - MAX_PENDING_SCHEDULER_SCANS_PER_POLL
-    );
-    assert_eq!(lane.ready.len(), MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
-    assert!(lane.ready.iter().all(|candidate| candidate.revision == 2));
-    let best = lane.ready.peek().unwrap().key;
-    assert_eq!(best.x, 1);
-    assert!(jobs.lanes[0].rechecks.contains_key(&best));
-    jobs.remove_pending(&best);
-    assert!(!jobs.lanes[0].rechecks.contains_key(&best));
-    jobs.clear_queued();
-    assert!(jobs.lanes[0].is_empty());
-    assert!(jobs.lanes[0].rechecks.is_empty());
-}
-
-/// Cooling high-ranked retries cannot hide eligible work beyond one bounded scan window.
-#[test]
-fn cooling_retries_do_not_hide_deferred_work() {
-    let view = SchedulerView {
-        position: [8.0; 3],
-        forward: None,
-        startup_center: None,
-    };
-    let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
-    let eligible = SubChunkKey::new(0, count as i32, 0, 0);
-    let mut lane = Lane::default();
-    lane.ready.push(PendingSchedulerCandidate::new(
-        SubChunkKey::new(0, eligible.x + 1, 0, 0),
-        1,
-        view,
-        false,
-    ));
-    for x in 0..=count {
-        let key = SubChunkKey::new(0, x as i32, 0, 0);
-        lane.deferred
-            .push(PendingSchedulerCandidate::new(key, 1, view, false));
-        if key != eligible {
-            lane.rechecks.insert(
-                key,
-                Recheck {
-                    revision: 1,
-                    attempts: 6,
-                    not_before: u64::MAX,
+    for revision in 1..=2 {
+        for x in 0..count {
+            jobs.enqueue(
+                SubChunkKey::new(1, x as i32, 0, 0),
+                PendingMesh {
+                    revision,
+                    since: now,
+                    queued_at: now,
+                    urgent: false,
                 },
             );
         }
     }
-    let mut offered = Vec::new();
-    for _ in 0..=count / MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
-        let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-        offered.extend(lane.take_deferred_rechecks(&mut budget, None, |_, _| true));
+    let removed = SubChunkKey::new(1, 1, 0, 0);
+    jobs.remove_pending(&removed);
+    assert_eq!(jobs.retries.begin_poll(), count - 1);
+    for x in (0..count).filter(|x| *x != 1) {
+        let retry = jobs.retries.pop().unwrap();
+        assert_eq!(retry.key.x, x as i32);
+        assert_eq!(retry.revision, jobs.pending[&retry.key].revision);
+        assert_eq!(retry.revision, 2);
     }
-    assert_eq!(
-        offered
-            .iter()
-            .map(|candidate| candidate.key)
-            .collect::<Vec<_>>(),
-        [eligible]
-    );
-    assert_eq!(lane.rechecked.len(), count);
+    assert!(jobs.retries.pop().is_none());
+    jobs.retries.enqueue(removed, 3);
+    jobs.clear_queued();
+    assert!(jobs.retries.pop().is_none());
+    assert!(jobs.pending.is_empty());
 }
 
-/// Unexamined retries stay eligible when the readiness slice ends after the first candidate.
+/// Cooling retries rotate past untouched work, while fresh arrivals join behind existing waiters.
+#[test]
+fn cooling_retries_do_not_hide_deferred_work() {
+    let mut queue = rechecks::RecheckQueue::default();
+    let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
+    for x in 0..count {
+        queue.enqueue(SubChunkKey::new(0, x as i32, 0, 0), 1);
+    }
+    for _ in 0..2 {
+        let entries = queue.begin_poll();
+        for _ in 0..entries {
+            let retry = queue.pop().unwrap();
+            queue.defer(retry);
+        }
+    }
+    let eligible = SubChunkKey::new(0, count as i32, 0, 0);
+    queue.enqueue(eligible, 1);
+    let mut offered = None;
+    for poll in 0..=count / MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
+        let budget = queue.begin_poll().min(MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
+        for _ in 0..budget {
+            let retry = queue.pop().unwrap();
+            if retry.key == eligible {
+                offered = Some(retry.key);
+                break;
+            }
+            if queue.is_due(&retry) {
+                queue.defer(retry);
+            } else {
+                queue.requeue(retry);
+            }
+        }
+        if offered.is_some() {
+            break;
+        }
+        queue.enqueue(SubChunkKey::new(0, count as i32 + poll as i32 + 1, 0, 0), 1);
+    }
+    assert_eq!(offered, Some(eligible));
+}
+
+/// A slice that checks one candidate leaves the remaining retries eligible on the next poll.
 #[test]
 fn unexamined_deferred_rechecks_keep_their_eligibility() {
+    let mut queue = rechecks::RecheckQueue::default();
+    for x in 0..3 {
+        queue.enqueue(SubChunkKey::new(0, x, 0, 0), 1);
+    }
+    for _ in 0..2 {
+        let entries = queue.begin_poll();
+        for _ in 0..entries {
+            let retry = queue.pop().unwrap();
+            queue.defer(retry);
+        }
+    }
+    queue.begin_poll();
+    queue.begin_poll();
+    let checked = queue.pop().unwrap();
+    assert!(queue.is_due(&checked));
+    queue.defer(checked);
+    queue.begin_poll();
+    for x in [1, 2] {
+        let unexamined = queue.pop().unwrap();
+        assert_eq!(unexamined.key.x, x);
+        assert!(queue.is_due(&unexamined));
+    }
+}
+
+/// Camera reranking preserves the ordinary retry clock and its revision-specific cooldown.
+#[test]
+fn camera_refresh_preserves_deferred_retry_backoff() {
+    let mut jobs = KeyedJobs::<PendingMesh, u64, 1>::default();
     let view = SchedulerView {
         position: [8.0; 3],
         forward: None,
         startup_center: None,
     };
-    let mut lane = Lane::default();
-    lane.ready.push(PendingSchedulerCandidate::new(
-        SubChunkKey::new(0, 5, 0, 0),
-        1,
-        view,
-        false,
-    ));
-    for x in 0..3 {
-        let key = SubChunkKey::new(0, x, 0, 0);
-        lane.deferred
-            .push(PendingSchedulerCandidate::new(key, 1, view, false));
-        lane.rechecks.insert(
-            key,
-            Recheck {
-                revision: 1,
-                attempts: 5,
-                not_before: 0,
-            },
-        );
-    }
-    let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-    let mut candidates = lane
-        .take_deferred_rechecks(&mut budget, None, |_, _| true)
-        .into_iter();
-    // Only the first candidate reaches readiness; the rest return without an attempt.
-    let checked = candidates.next().unwrap();
-    lane.record_deferred_recheck(checked);
-    lane.rechecked.push(checked);
-    lane.deferred.extend(candidates);
-    let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-    let next = lane.take_deferred_rechecks(&mut budget, None, |_, _| true);
-    assert_eq!(
-        next.iter()
-            .map(|candidate| candidate.key.x)
-            .collect::<Vec<_>>(),
-        [1, 2]
+    let key = SubChunkKey::new(0, 12, 0, 0);
+    let now = Instant::now();
+    jobs.enqueue(
+        key,
+        PendingMesh {
+            revision: 1,
+            since: now,
+            queued_at: now,
+            urgent: false,
+        },
     );
+    jobs.ingress(view, None, |_, _, _| (0, false));
+    for _ in 0..2 {
+        jobs.retries.begin_poll();
+        let retry = jobs.retries.pop().unwrap();
+        jobs.retries.defer(retry);
+    }
+    jobs.retries.begin_poll();
+    let retry = jobs.retries.pop().unwrap();
+    assert!(!jobs.retries.is_due(&retry));
+    jobs.retries.requeue(retry);
+    jobs.refresh.refresh(
+        SchedulerView {
+            position: [40.0, 8.0, 8.0],
+            ..view
+        },
+        &mut jobs.lanes,
+        None,
+        |_, _| true,
+    );
+    let retry = jobs.retries.pop().unwrap();
+    assert!(!jobs.retries.is_due(&retry));
+    jobs.retries.requeue(retry);
+    jobs.retries.begin_poll();
+    let retry = jobs.retries.pop().unwrap();
+    assert!(jobs.retries.is_due(&retry));
+    assert_eq!(retry.revision, 1);
 }

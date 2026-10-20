@@ -99,7 +99,7 @@ impl WorldStream {
             self.mesh_jobs.refresh.requeue_woken(candidate.key);
         }
         if view.startup_center.is_none() {
-            self.promote_ready_deferred_meshes();
+            self.promote_ready_deferred_meshes(view);
         }
         let mut dispatch = workers::WORKERS.batch(workers::Lane::Mesh);
         let mut dispatched = 0;
@@ -202,6 +202,7 @@ impl WorldStream {
                 continue;
             }
             examined = true;
+            self.mesh_jobs.retries.enqueue(key, pending.revision);
             if self.mesh_neighbour_is_due(key, now) {
                 if queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
@@ -449,37 +450,69 @@ impl WorldStream {
         }
         dispatched
     }
-    /// Promotes bounded deferred retries only after their neighbour and light dependencies settle.
-    fn promote_ready_deferred_meshes(&mut self) {
-        let pending = &self.mesh_jobs.pending;
-        let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-        let candidates = self.mesh_jobs.lanes[RESIDENT_MESH_LANE].take_deferred_rechecks(
-            &mut budget,
-            self.poll_deadline,
-            |key, revision| {
-                pending
-                    .get(&key)
-                    .is_some_and(|job| job.revision == revision)
-            },
-        );
+    /// Checks bounded FIFO retries and promotes eligible work at its current camera rank.
+    fn promote_ready_deferred_meshes(&mut self, view: SchedulerView) {
+        let budget = self
+            .mesh_jobs
+            .retries
+            .begin_poll()
+            .min(MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
         let now = Instant::now();
-        for (index, candidate) in candidates.into_iter().enumerate() {
-            if index != 0 && self.poll_budget_exhausted() {
-                self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
-                    .deferred
-                    .push(candidate);
+        let mut examined = false;
+        for _ in 0..budget {
+            if examined && self.poll_budget_exhausted() {
+                break;
+            }
+            let Some(retry) = self.mesh_jobs.retries.pop() else {
+                break;
+            };
+            let Some(pending) = self
+                .mesh_jobs
+                .pending
+                .get(&retry.key)
+                .copied()
+                .filter(|pending| pending.revision == retry.revision)
+            else {
+                continue;
+            };
+            if !self.mesh_requires_geometry(retry.key) {
                 continue;
             }
-            self.mesh_jobs.lanes[RESIDENT_MESH_LANE].record_deferred_recheck(candidate);
-            let ready = self.revisions.is_current(candidate.key, candidate.revision)
-                && !self.mesh_jobs.in_flight.contains_key(&candidate.key)
-                && !self.mesh_neighbour_is_due(candidate.key, now)
-                && self.mesh_light_halo(candidate.key).is_some();
-            let lane = &mut self.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+            if !self.mesh_jobs.retries.is_due(&retry) {
+                self.mesh_jobs.retries.requeue(retry);
+                continue;
+            }
+            let candidate =
+                PendingSchedulerCandidate::new(retry.key, retry.revision, view, pending.urgent);
+            let ready_leads = self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+                .ready
+                .peek()
+                .copied()
+                .filter(|ready| {
+                    self.mesh_jobs
+                        .pending
+                        .get(&ready.key)
+                        .is_some_and(|pending| pending.revision == ready.revision)
+                })
+                .is_some_and(|mut ready| {
+                    ready.refresh_rank(view);
+                    ready >= candidate
+                });
+            if ready_leads {
+                self.mesh_jobs.retries.requeue(retry);
+                continue;
+            }
+            examined = true;
+            let ready = self.revisions.is_current(retry.key, retry.revision)
+                && !self.mesh_jobs.in_flight.contains_key(&retry.key)
+                && !self.mesh_neighbour_is_due(retry.key, now)
+                && self.mesh_light_halo(retry.key).is_some();
             if ready {
-                lane.ready.push(candidate);
+                self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+                    .ready
+                    .push(candidate);
             } else {
-                lane.rechecked.push(candidate);
+                self.mesh_jobs.retries.defer(retry);
             }
         }
     }
