@@ -363,7 +363,10 @@ fn the_shadow_camera_looks_from_the_shadow_light() {
 #[test]
 fn the_shadow_camera_snaps_to_the_interval_and_spans_the_shadow_distance() {
     let settings = PackSettings {
-        shadow_distance: 120.0,
+        shadow: ShadowCullSettings {
+            shadow_distance: 120.0,
+            ..Default::default()
+        },
         shadow_interval: 4.0,
         ..PackSettings::default()
     };

@@ -145,8 +145,6 @@ pub(crate) struct PackGpu {
     pub shadowcomp: Vec<PassStep>,
     /// Present when some shadow draw resolved.
     pub shadow: Option<ShadowMaps>,
-    /// How the shadow pass culls terrain sections.
-    pub shadow_culling: super::geometry::ShadowCullSettings,
     /// `shadowTerrain` and `shadowTranslucent`: whether the shadow pass draws opaque and
     /// translucent terrain (both by default).
     pub shadow_terrain: bool,
@@ -535,25 +533,20 @@ pub(crate) fn build(
         TextureFormat::R16Float
     };
     let all_consts = all.iter().flat_map(|p| &p.consts);
-    let settings = PackSettings::read(all_consts);
-    let shadow_culling = super::geometry::ShadowCullSettings {
-        culling: translation
-            .properties
-            .get("shadow.culling")
-            .and_then(super::geometry::ShadowCulling::parse)
-            .unwrap_or_default(),
-        // Iris takes a geometry stage on `shadow` for voxelization.
-        voxelizes: translation.programs.iter().any(|p| {
-            p.enabled
-                && p.program.name == "shadow"
-                && p.stages
-                    .iter()
-                    .any(|s| s.stage == shaderpack::StageKind::Geometry)
-        }),
-        shadow_distance: settings.shadow_distance,
-        render_mul: settings.shadow_render_mul,
-        voxel_distance: settings.voxel_distance,
-    };
+    let mut settings = PackSettings::read(all_consts);
+    settings.shadow.culling = translation
+        .properties
+        .get("shadow.culling")
+        .and_then(super::geometry::ShadowCulling::parse)
+        .unwrap_or_default();
+    // Iris takes a geometry stage on `shadow` for voxelization.
+    settings.shadow.voxelizes = translation.programs.iter().any(|p| {
+        p.enabled
+            && p.program.name == "shadow"
+            && p.stages
+                .iter()
+                .any(|s| s.stage == shaderpack::StageKind::Geometry)
+    });
 
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let key = content_key(pack, &config);
@@ -821,7 +814,7 @@ pub(crate) fn build(
         super::targets::float_depths(draws.is_empty(), depth_sampled),
         &mipmap_formats,
     );
-    let shader_storage = storage_sizes(&reflections, &translation.properties);
+    let shader_storage = storage_sizes(&reflections, &translation.properties)?;
     let max_uniform = reflections
         .iter()
         .flat_map(|r| &r.uniform_buffers)
@@ -893,7 +886,6 @@ pub(crate) fn build(
         draws,
         shadowcomp,
         shadow,
-        shadow_culling,
         shadow_terrain: translation.properties.get("shadowTerrain") != Some("false"),
         shadow_translucent: translation.properties.get("shadowTranslucent") != Some("false"),
         block_ids,
@@ -906,10 +898,11 @@ pub(crate) fn build(
 }
 
 /// Storage-buffer sizes: the reflected minimum, raised by `bufferObject.<binding>=<size>`.
+/// Resolves whole-buffer binding sizes, rejecting requests whose alignment would overflow.
 fn storage_sizes(
     reflections: &[&ProgramReflection],
     properties: &shaderpack::ShaderProperties,
-) -> Vec<(u32, u64)> {
+) -> Result<Vec<(u32, u64)>, String> {
     let mut sizes: Vec<(u32, u64)> = vec![];
     for buffer in reflections.iter().flat_map(|r| &r.storage_buffers) {
         let declared = properties
@@ -919,11 +912,12 @@ fn storage_sizes(
         let size = u64::from(buffer.min_size)
             .max(declared)
             .max(16)
-            .next_multiple_of(16);
+            .checked_next_multiple_of(16)
+            .ok_or_else(|| format!("storage binding {} size overflows", buffer.binding))?;
         match sizes.iter_mut().find(|(b, _)| *b == buffer.binding) {
             Some((_, s)) => *s = (*s).max(size),
             None => sizes.push((buffer.binding, size)),
         }
     }
-    sizes
+    Ok(sizes)
 }

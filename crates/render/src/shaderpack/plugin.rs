@@ -169,7 +169,10 @@ fn drive_loader(
 
 /// Render-world state of every view drawing through the pack.
 #[derive(Resource, Default)]
-struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
+struct ShaderPackViews {
+    states: Mutex<HashMap<Entity, ViewState>>,
+    failed: HashMap<Entity, (Arc<PackGpu>, [u32; 2])>,
+}
 
 type PreparedView = (Entity, &'static ExtractedView);
 
@@ -182,11 +185,7 @@ fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
-    (mut settings, geometry): (
-        ResMut<ShaderpackGeometrySettings>,
-        Option<Res<ShaderpackGeometry>>,
-    ),
-    mut drawn: ResMut<ShaderPackDrawnCategories>,
+    mut settings: ResMut<ShaderpackGeometrySettings>,
     memory: Option<Res<DedicatedGraphicsMemory>>,
     (mut shown, mut revisions): (Local<Option<usize>>, Local<BlockIdRevisions>),
 ) {
@@ -205,15 +204,6 @@ fn configure_geometry(
     if *settings != wanted {
         *settings = wanted;
     }
-    let draws = |kind: DrawKind| {
-        pack.as_ref()
-            .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
-    };
-    let expands_terrain = geometry.is_some_and(|geometry| geometry.supported());
-    drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: expands_terrain
-            && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
-    });
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
         return;
@@ -250,6 +240,33 @@ impl BlockIdRevisions {
     }
 }
 
+/// Replaces native queues only after every pack view and terrain category is ready.
+fn configure_replacement(
+    pack: Option<Res<LoadedShaderPack>>,
+    cameras: Query<Entity, With<ShaderPackRendering>>,
+    geometry: Option<Res<ShaderpackGeometry>>,
+    views: Res<ShaderPackViews>,
+    mut drawn: ResMut<ShaderPackDrawnCategories>,
+) {
+    let states = views.states.lock().unwrap_or_else(|e| e.into_inner());
+    let ready = pack
+        .as_ref()
+        .and_then(|pack| pack.0.as_ref())
+        .filter(|pack| {
+            !cameras.is_empty()
+                && cameras.iter().all(|entity| {
+                    states
+                        .get(&entity)
+                        .is_some_and(|state| Arc::ptr_eq(&state.pack, pack))
+                })
+        });
+    let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
+    drawn.set_if_neq(ShaderPackDrawnCategories {
+        terrain: geometry.is_some_and(|geometry| geometry.supported())
+            && super::draws::complete_terrain(draws),
+    });
+}
+
 /// Allocates or resizes view targets, writes this frame's uniforms and builds each view's
 /// shadow-pass terrain list from the pack's shadow culling.
 #[allow(clippy::too_many_arguments, reason = "one frame's view inputs")]
@@ -268,9 +285,11 @@ fn prepare_views(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::ShaderpackUniforms));
-    let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
+    let ShaderPackViews { states, failed } = &mut *views;
+    let states = states.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
         states.clear();
+        failed.clear();
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
@@ -279,17 +298,36 @@ fn prepare_views(
     if let Some(geometry) = geometry.as_deref_mut() {
         geometry.retain_shadow_views(|view| cameras.contains(view) && pack.shadow.is_some());
     }
+    failed.retain(|entity, _| cameras.contains(*entity));
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
     for (entity, view) in &cameras {
         let screen = [view.viewport.z.max(1), view.viewport.w.max(1)];
-        let state = states
-            .entry(entity)
-            .or_insert_with(|| ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen));
-        if !state.matches(&pack, screen) {
-            *state = ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen);
+        if failed
+            .get(&entity)
+            .is_some_and(|(previous, size)| Arc::ptr_eq(previous, &pack) && *size == screen)
+        {
+            continue;
         }
+        failed.remove(&entity);
+        if states
+            .get(&entity)
+            .is_none_or(|state| !state.matches(&pack, screen))
+        {
+            match ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen) {
+                Ok(state) => {
+                    states.insert(entity, state);
+                }
+                Err(error) => {
+                    states.remove(&entity);
+                    failed.insert(entity, (Arc::clone(&pack), screen));
+                    warn!(pack = %pack.name, "shader pack view could not be prepared: {error}");
+                    continue;
+                }
+            }
+        }
+        let state = states.get_mut(&entity).expect("the view was prepared");
         let (_, rotation, position) = view.world_from_view.to_scale_rotation_translation();
         let camera = ViewCamera {
             position,
@@ -325,7 +363,7 @@ fn prepare_views(
                 .inverse()
                 .transform_vector3(Vec3::Z);
             let frustum = ShadowFrustum::new(
-                &pack.shadow_culling,
+                &pack.settings.shadow,
                 render_distance,
                 position.as_dvec3(),
                 frame.projection() * frame.model_view(),
@@ -382,6 +420,9 @@ impl TerrainDraws for ViewTerrain<'_> {
 /// Vanilla scene instead (`passes::copy_scene`).
 fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
     world
+        .get_resource::<ShaderPackDrawnCategories>()
+        .filter(|drawn| drawn.terrain)?;
+    world
         .get_resource::<ShaderpackGeometry>()
         .filter(|geometry| geometry.supported() && geometry.origin().is_some())
 }
@@ -395,7 +436,7 @@ pub(crate) fn draws_world(world: &World, view: Entity) -> bool {
             .get_resource::<ShaderPackViews>()
             .is_some_and(|views| {
                 views
-                    .0
+                    .states
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&view)
@@ -415,7 +456,7 @@ fn shaderpack_post(
     let Some(views) = world.get_resource::<ShaderPackViews>() else {
         return Ok(());
     };
-    let mut states = views.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut states = views.states.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = states.get_mut(&entity) else {
         return Ok(());
     };
@@ -563,6 +604,9 @@ pub(super) fn finish(app: &mut App) {
                     .in_set(RenderSystems::PrepareResources)
                     .after(bevy::render::view::prepare_view_targets)
                     .after(super::geometry::prepare_shaderpack_geometry),
+                configure_replacement
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(prepare_views),
                 super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
             ),
         );
