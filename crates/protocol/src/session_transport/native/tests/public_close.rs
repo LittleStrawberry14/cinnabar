@@ -136,3 +136,56 @@ impl Drop for HeldClose {
         }
     }
 }
+
+/// Dropping the close borrow cannot leave its original actor alive beyond the first cutoff.
+#[tokio::test(start_paused = true)]
+async fn abandoned_close_borrow_retires_the_original_driver_without_retry() {
+    let (entered, closing) = oneshot::channel();
+    let (release, held) = oneshot::channel();
+    let (dropped, retired) = oneshot::channel();
+    let mut transport = SessionTransport::from_native(HeldClose {
+        entered: Some(entered),
+        release: held,
+        dropped: Some(dropped),
+    });
+    let cutoff = tokio::time::Instant::now() + CLOSE_TIMEOUT;
+    {
+        let mut close = std::pin::pin!(transport.close());
+        assert!(futures::poll!(close.as_mut()).is_pending());
+        closing.await.unwrap();
+    }
+    tokio::time::advance(CLOSE_TIMEOUT).await;
+    let completion = {
+        let Reader::Native(reader) = &mut transport.reader else {
+            panic!("native fixture reader")
+        };
+        tokio::time::timeout_at(
+            cutoff + test_time::DEFAULT_TIMEOUT,
+            std::future::poll_fn(|cx| reader.poll_driver(cx)),
+        )
+        .await
+    };
+    let completed_at = completion
+        .as_ref()
+        .ok()
+        .map(|_| tokio::time::Instant::now());
+
+    // Any still-held actor is released and joined before the cutoff assertion.
+    let _ = release.send(());
+    let joined = match completion {
+        Ok(joined) => joined,
+        Err(_) => {
+            let Reader::Native(reader) = &mut transport.reader else {
+                panic!("native fixture reader")
+            };
+            std::future::poll_fn(|cx| reader.poll_driver(cx)).await
+        }
+    };
+    retired.await.unwrap();
+    drop(transport);
+    assert!(joined.is_ok() || joined.is_err_and(|error| error.is_cancelled()));
+    assert!(
+        completed_at.is_some_and(|completed| completed <= cutoff),
+        "abandoned close retained the original driver past its cutoff: {completed_at:?}"
+    );
+}
