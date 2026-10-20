@@ -208,6 +208,7 @@ impl Plugin for RenderModePlugin {
                     shader_pack::reload::apply_reload,
                     apply_menu_render_mode,
                     shader_pack::sync_shader_pack_request,
+                    shader_pack::status::sync_shader_pack_status,
                     shader_pack::reload::report_reload,
                     authored_textures::update_authored_textures,
                     apply_render_mode_to_cameras,

@@ -27,6 +27,7 @@ use super::resources::{
 use super::shadow_maps::{ShadowMaps, shadow_maps};
 use super::uniforms::PackSettings;
 use bevy::log::warn;
+use render_scene::shaderpack::LoadProgress;
 use sha2::{Digest, Sha256};
 use shaderpack::{
     BlendMode, BufferId, CustomUniform, Environment, OptionValues, ProgramGroup, ProgramKind,
@@ -392,6 +393,7 @@ fn planned(
 /// saved in `options` (the pack's Iris option file, if any); `vanilla` answers the pack's
 /// `minecraft:` texture references. As Iris does on every load, the file is rewritten to
 /// keep only values that name the pack's options and differ from their defaults.
+/// Translation reports into `progress`.
 pub(crate) fn load(
     path: &Path,
     options: Option<&Path>,
@@ -399,6 +401,7 @@ pub(crate) fn load(
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let pack = ShaderPack::open(path).map_err(|e| e.to_string())?;
     let name = path.file_name().map_or_else(
@@ -406,7 +409,7 @@ pub(crate) fn load(
         |n| n.to_string_lossy().into_owned(),
     );
     let values = options.map_or_else(OptionValues::new, |file| saved_options(&pack, file));
-    build(&pack, &name, dimension, &values, cache_dir, gpu, vanilla)
+    build(&pack, &name, dimension, &values, cache_dir, gpu, vanilla, progress)
 }
 
 /// The pack's values saved in `file`, normalized and written back when that changed them; an
@@ -436,8 +439,8 @@ fn saved_options(pack: &ShaderPack, file: &Path) -> OptionValues {
     values
 }
 
-/// The enabled programs this host runs, in frame order, with their plans; an error names
-/// every such program that failed to translate.
+/// The enabled programs this host runs, in frame order, with their plans; an error has one
+/// line per such program that failed to translate, naming it with its first diagnostic.
 pub(crate) fn runnable_programs(
     translation: &shaderpack::PackTranslation,
 ) -> Result<(Vec<&ProgramTranslation>, Vec<PlannedProgram>), String> {
@@ -453,17 +456,37 @@ pub(crate) fn runnable_programs(
                 plans.push(planned(program, reflection, &translation.properties));
                 runnable.push(program);
             }
-            None => failed.push(program.program.name.clone()),
+            None => failed.push(failure_line(program)),
         }
     }
     if failed.is_empty() {
         Ok((runnable, plans))
     } else {
-        Err(format!("required programs failed: {}", failed.join(", ")))
+        Err(failed.join("\n"))
     }
 }
 
-/// Translates and builds an opened pack with option `values`.
+/// `program: first diagnostic` on one line; the log carries every diagnostic.
+fn failure_line(program: &ProgramTranslation) -> String {
+    let mut line = format!("{}:", program.program.name);
+    match program.all_diagnostics().next() {
+        Some(diagnostic) => {
+            for word in diagnostic.to_string().split_whitespace() {
+                line.push(' ');
+                line.push_str(word);
+            }
+        }
+        None => line.push_str(" failed to translate"),
+    }
+    line
+}
+
+/// Translates and builds an opened pack with option `values`; translation reports into
+/// `progress`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pack, its option values and the load's host inputs"
+)]
 pub(crate) fn build(
     pack: &ShaderPack,
     name: &str,
@@ -472,13 +495,16 @@ pub(crate) fn build(
     cache_dir: Option<&Path>,
     gpu: &GpuContext,
     vanilla: &VanillaTextures,
+    progress: &LoadProgress,
 ) -> Result<PackGpu, String> {
     let config = TranslateConfig {
         options: values.clone(),
         ..translate_config(pack, dimension)
     };
     let started = std::time::Instant::now();
-    let translation = pack.translate(&config);
+    let translation = pack.translate_reporting(&config, |translated, programs| {
+        progress.record(translated, programs);
+    });
     for diagnostic in &translation.properties.diagnostics {
         bevy::log::debug!(
             target: "cinnabar::shaderpack",

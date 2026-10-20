@@ -448,6 +448,9 @@ pub struct MenuView {
     pub shader_packs: std::sync::Arc<[String]>,
     /// The highlighted Video renderer; `None` while the selected shader pack is missing.
     pub renderer: Option<super::RendererChoice>,
+    /// Why the selected shader pack failed to load, for the Renderer row; see
+    /// [`super::shader_pack_status::failure_description`].
+    pub renderer_failure: Option<std::sync::Arc<str>>,
     /// Session VSync forced by a launch flag; the saved toggle is shown locked to it.
     pub vsync_override: Option<bool>,
     pub display_name: String,
@@ -700,6 +703,7 @@ impl MenuView {
             render_mode: ui::RenderMode::Vanilla,
             shader_packs: std::sync::Arc::from([]),
             renderer: Some(super::RendererChoice::Vanilla),
+            renderer_failure: None,
             vsync_override: None,
             display_name,
             servers: MenuList::default(),

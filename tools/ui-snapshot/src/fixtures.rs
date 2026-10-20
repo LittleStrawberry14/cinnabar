@@ -4,6 +4,7 @@ mod minecraft_import;
 mod mods;
 mod out_of_game;
 mod shader_options;
+mod shader_pack;
 mod updates;
 
 use std::sync::Arc;
@@ -45,6 +46,11 @@ pub enum Fixture {
     CraftOverlap {
         selected: bool,
     },
+    /// A client toast as the toast screen shows it once slid in.
+    Toast {
+        title: String,
+        message: String,
+    },
 }
 
 const SIZE: [u32; 2] = [1280, 720];
@@ -54,6 +60,8 @@ const SMALL_SIZE: [u32; 2] = [360, 240];
 const TALL_SIZE: [u32; 2] = [1280, 900];
 /// Keeps the first hotbar rows visible below the keyboard options.
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
+/// Reaches the Video pane's Renderer row below the general options.
+const SHADER_PACK_ROW_SIZE: [u32; 2] = [SIZE[0], 1600];
 
 pub const STATES: &[State] = &[
     State {
@@ -615,7 +623,7 @@ pub const STATES: &[State] = &[
         fixture: mods::undeclared_permissions,
     },
     State {
-        name: "settings-video-shader-pack",
+        name: "settings-video-shader-options-button",
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_options::renderer_row,
@@ -637,6 +645,36 @@ pub const STATES: &[State] = &[
         size: SIZE,
         gui_scale: GUI_SCALE,
         fixture: shader_options::rest,
+    },
+    State {
+        name: "toast-shader-pack-loading",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loading,
+    },
+    State {
+        name: "toast-shader-pack-loaded",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loaded,
+    },
+    State {
+        name: "toast-shader-pack-failed",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::failed,
+    },
+    State {
+        name: "settings-video-shader-pack",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(false),
+    },
+    State {
+        name: "settings-video-shader-pack-failed",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(true),
     },
 ];
 

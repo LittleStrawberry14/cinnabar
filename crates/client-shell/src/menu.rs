@@ -43,6 +43,7 @@ pub mod settings_options;
 mod settings_paths;
 pub mod settings_storage;
 pub mod settings_support;
+mod shader_pack_status;
 mod settings_values;
 #[cfg(feature = "developer-control")]
 mod sign_in_fixture;
@@ -134,6 +135,7 @@ pub struct MenuRuntime {
     /// The applied pack name, retaining a pending menu choice until taken.
     shader_pack: Option<String>,
     shader_pack_request: Option<String>,
+    shader_pack_status: shader_pack_status::ShaderPackStatusUi,
     /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
     shader_pack_reload: bool,
     vsync_override: Option<bool>,

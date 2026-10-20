@@ -14,6 +14,7 @@ use super::{MenuRuntime, RenderModeConfig, RuntimeSettings, compiled_render_mode
 #[cfg(feature = "shaderpacks")]
 pub(super) mod import;
 pub(super) mod reload;
+pub(super) mod status;
 #[cfg(test)]
 mod tests;
 

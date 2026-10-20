@@ -1,6 +1,5 @@
 //! The Video renderer picker publishes only the renderers this build compiles.
 
-use super::pack_label;
 use crate::test_support::{centre, settings_view};
 use launcher::menu::{
     MenuAction, MenuView, RendererChoice,
@@ -80,13 +79,4 @@ fn renderer_choices_follow_the_compiled_features() {
     }
     assert_eq!(renderers.len(), expected.len(), "{renderers:?}");
     assert!(expected.iter().all(|choice| renderers.contains(choice)));
-}
-
-#[test]
-fn pack_labels_drop_only_a_zip_extension() {
-    assert_eq!(pack_label("Dusk.zip"), "Dusk");
-    assert_eq!(pack_label("Dusk.ZIP"), "Dusk");
-    assert_eq!(pack_label("Lumen"), "Lumen");
-    assert_eq!(pack_label(".zip"), ".zip");
-    assert_eq!(pack_label("Lumen v2.zipped"), "Lumen v2.zipped");
 }

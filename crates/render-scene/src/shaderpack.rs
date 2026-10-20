@@ -3,7 +3,15 @@
 //! their standard uniforms. The renderer behind it compiles only with the `shaderpacks`
 //! feature; without it these types stay unused.
 
-use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use bevy::{
     ecs::system::SystemParam,
@@ -42,7 +50,8 @@ pub enum ShaderPackStatus {
     Loading(PathBuf),
     /// The pack is translated and its programs are ready to bind.
     Ready(PathBuf),
-    /// The pack could not be used; cameras stay on Vanilla.
+    /// The pack could not be used; cameras stay on Vanilla. `reason` holds one problem per
+    /// line, the first summarising the failure.
     Failed { pack: PathBuf, reason: String },
 }
 
@@ -51,6 +60,45 @@ impl ShaderPackStatus {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         matches!(self, Self::Ready(_))
+    }
+}
+
+/// How far the load in progress has translated the pack's programs, shared with its worker.
+/// Each load starts a fresh counter, so a superseded worker never reports into the next one.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ShaderPackLoadProgress(Option<Arc<LoadProgress>>);
+
+impl ShaderPackLoadProgress {
+    /// Replaces the counter with a fresh one for a load that starts now.
+    pub fn start(&mut self) -> Arc<LoadProgress> {
+        Arc::clone(self.0.insert(Arc::default()))
+    }
+
+    /// `(translated, programs)` of the latest load once it knows its program count.
+    #[must_use]
+    pub fn programs(&self) -> Option<(u32, u32)> {
+        self.0.as_deref().and_then(LoadProgress::programs)
+    }
+}
+
+/// Programs translated out of the total, written by a load worker.
+#[derive(Debug, Default)]
+pub struct LoadProgress(AtomicU64);
+
+impl LoadProgress {
+    /// Records `translated` of `programs` done; both saturate at `u32::MAX`.
+    pub fn record(&self, translated: usize, programs: usize) {
+        let clamp = |count: usize| u64::from(u32::try_from(count).unwrap_or(u32::MAX));
+        self.0
+            .store(clamp(translated) << 32 | clamp(programs), Ordering::Relaxed);
+    }
+
+    /// `(translated, programs)`, or `None` before the program count is known.
+    #[must_use]
+    pub fn programs(&self) -> Option<(u32, u32)> {
+        let packed = self.0.load(Ordering::Relaxed);
+        let programs = packed as u32;
+        (programs > 0).then_some(((packed >> 32) as u32, programs))
     }
 }
 
@@ -339,5 +387,25 @@ mod tests {
             [false, false],
             "a pack without terrain keeps the Vanilla terrain it composites"
         );
+    }
+
+    #[test]
+    fn each_load_reports_its_own_program_progress() {
+        let mut progress = ShaderPackLoadProgress::default();
+        assert_eq!(progress.programs(), None, "nothing loading");
+        let first = progress.start();
+        assert_eq!(progress.programs(), None, "program count not known yet");
+        first.record(0, 40);
+        first.record(12, 40);
+        assert_eq!(progress.programs(), Some((12, 40)));
+        let second = progress.start();
+        first.record(40, 40);
+        assert_eq!(
+            progress.programs(),
+            None,
+            "the superseded load reports elsewhere"
+        );
+        second.record(3, 7);
+        assert_eq!(progress.programs(), Some((3, 7)));
     }
 }

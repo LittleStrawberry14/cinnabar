@@ -19,6 +19,7 @@ pub mod settings_options;
 pub mod settings_sections;
 pub mod settings_storage;
 pub mod settings_support;
+pub mod shader_pack_status;
 pub mod sign_in;
 pub mod updates;
 pub mod view;

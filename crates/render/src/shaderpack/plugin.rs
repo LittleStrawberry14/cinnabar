@@ -35,7 +35,8 @@ use bevy::{
 use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
     ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
-    ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackSettledRevision,
+    ShaderPackIdMaps, ShaderPackLoadProgress, ShaderPackRendering, ShaderPackRequest,
+    ShaderPackSettledRevision,
     ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
@@ -83,13 +84,17 @@ type MainWorldGpu<'w> = (
 /// publishes results. A dimension change or reload of the shown pack keeps it on screen
 /// until the new load is ready. The pack's `minecraft:` texture references resolve against
 /// the vanilla textures loaded when its load starts.
-#[allow(clippy::too_many_arguments, reason = "a main-world system's inputs")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system reading each resource the load starts from and publishes to"
+)]
 fn drive_loader(
     request: Res<ShaderPackRequest>,
     inputs: Res<ShaderPackFrameInputs>,
     mut status: ResMut<ShaderPackStatus>,
     mut settled: ResMut<ShaderPackSettledRevision>,
     mut loaded: ResMut<LoadedShaderPack>,
+    mut progress: ResMut<ShaderPackLoadProgress>,
     mut loader: ResMut<Loader>,
     gpu: MainWorldGpu,
     atmosphere: Option<Res<render_scene::AtmosphereTextureAssets>>,
@@ -128,18 +133,21 @@ fn drive_loader(
             .map(VanillaTextures::from_atmosphere)
             .unwrap_or_default();
         let (send, receive) = mpsc::channel();
+        let progress = progress.start();
         let spawned = std::thread::Builder::new()
             .name("shader pack load".into())
             .spawn(move || {
                 let id = JAVA_DIMENSIONS[dimension as usize];
-                let _ = send.send(load(
+                let outcome = load(
                     &path,
                     options.as_deref(),
                     id,
                     cache_dir.as_deref(),
                     &gpu,
                     &vanilla,
-                ));
+                    &progress,
+                );
+                let _ = send.send(outcome);
             });
         match spawned {
             Ok(_) => loader.job = Some(Mutex::new(receive)),
@@ -630,6 +638,7 @@ pub(super) fn build(app: &mut App) {
     actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
+        .init_resource::<ShaderPackLoadProgress>()
         .init_resource::<ShaderPackSettledRevision>()
         .init_resource::<ShaderPackFrameInputs>()
         .init_resource::<ShaderPackIdMaps>()
