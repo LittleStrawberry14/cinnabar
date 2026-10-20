@@ -189,12 +189,12 @@ impl GpuArtwork {
                         .filter(|_| wanted.contains(&((index + 1) as ActorArtworkPageId)))
                         .filter(|gpu| gpu._texture.depth_or_array_layers() >= page.layers);
                 }
-                if let Some(gpu) = &mut self.pages[index] {
-                    if gpu.color_mask != page.color_mask || gpu.multitexture != page.multitexture {
-                        gpu.bind_group = None;
-                        gpu.color_mask = page.color_mask;
-                        gpu.multitexture = page.multitexture;
-                    }
+                if let Some(gpu) = &mut self.pages[index]
+                    && (gpu.color_mask != page.color_mask || gpu.multitexture != page.multitexture)
+                {
+                    gpu.bind_group = None;
+                    gpu.color_mask = page.color_mask;
+                    gpu.multitexture = page.multitexture;
                 }
             }
         }
