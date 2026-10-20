@@ -204,6 +204,11 @@ impl ShaderpackGeometry {
         self.supported
     }
 
+    /// Whether every live section can fit a page; otherwise the host keeps the native scene.
+    pub fn all_sections_fit(&self) -> bool {
+        !self.residency.has_unplaceable()
+    }
+
     /// Block position every expanded vertex position is relative to; it moves (re-expanding
     /// all terrain) when the camera strays [`super::residency::ORIGIN_REBASE_DISTANCE`] away.
     pub fn origin(&self) -> Option<IVec3> {
