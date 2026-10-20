@@ -464,8 +464,14 @@ impl WorldStream {
         );
         let now = Instant::now();
         for (index, candidate) in candidates.into_iter().enumerate() {
-            let ready = (index == 0 || !self.poll_budget_exhausted())
-                && self.revisions.is_current(candidate.key, candidate.revision)
+            if index != 0 && self.poll_budget_exhausted() {
+                self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+                    .deferred
+                    .push(candidate);
+                continue;
+            }
+            self.mesh_jobs.lanes[RESIDENT_MESH_LANE].record_deferred_recheck(candidate);
+            let ready = self.revisions.is_current(candidate.key, candidate.revision)
                 && !self.mesh_jobs.in_flight.contains_key(&candidate.key)
                 && !self.mesh_neighbour_is_due(candidate.key, now)
                 && self.mesh_light_halo(candidate.key).is_some();

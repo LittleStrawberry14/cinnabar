@@ -59,7 +59,10 @@ impl Lane {
         is_current: impl Fn(SubChunkKey, u64) -> bool,
     ) {
         let candidates = self.take_deferred_rechecks(budget, deadline, is_current);
-        self.ready.extend(candidates);
+        for candidate in candidates {
+            self.record_deferred_recheck(candidate);
+            self.ready.push(candidate);
+        }
     }
 
     /// Takes bounded current retries in rank order, leaving cooling revisions deferred.
@@ -109,20 +112,27 @@ impl Lane {
                 self.held.push(candidate);
                 continue;
             }
-            let attempts = recheck.map_or(0, |recheck| recheck.attempts);
-            self.rechecks.insert(
-                candidate.key,
-                Recheck {
-                    revision: candidate.revision,
-                    attempts: attempts + 1,
-                    not_before: self.polls
-                        + (1_u64 << attempts.min(5)).min(MAX_RECHECK_BACKOFF_POLLS),
-                },
-            );
             candidates.push(candidate);
         }
         self.rechecked.extend(self.held.drain(..));
         candidates
+    }
+
+    /// Advances backoff only when a selected revision actually reaches a readiness check.
+    pub(super) fn record_deferred_recheck(&mut self, candidate: PendingSchedulerCandidate) {
+        let attempts = self
+            .rechecks
+            .get(&candidate.key)
+            .filter(|recheck| recheck.revision == candidate.revision)
+            .map_or(0, |recheck| recheck.attempts);
+        self.rechecks.insert(
+            candidate.key,
+            Recheck {
+                revision: candidate.revision,
+                attempts: attempts + 1,
+                not_before: self.polls + (1_u64 << attempts.min(5)).min(MAX_RECHECK_BACKOFF_POLLS),
+            },
+        );
     }
 }
 
@@ -623,111 +633,7 @@ mod tests {
         assert_eq!(after, needed);
     }
 
-    /// Ordinary mesh retries have a fixed work budget and never revive superseded revisions.
-    #[test]
-    fn ordinary_mesh_promotion_is_bounded_and_current() {
-        let view = SchedulerView {
-            position: [8.0; 3],
-            forward: Some([1.0, 0.0, 0.0]),
-            startup_center: None,
-        };
-        let mut jobs = KeyedJobs::<PendingMesh, u64, 1>::default();
-        jobs.refresh
-            .refresh(view, &mut jobs.lanes, None, |_, _| true);
-        let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
-        let now = Instant::now();
-        for x in 0..=count {
-            let key = SubChunkKey::new(1, x as i32, 0, 0);
-            jobs.pending.insert(
-                key,
-                PendingMesh {
-                    revision: 2,
-                    since: now,
-                    queued_at: now,
-                    urgent: false,
-                },
-            );
-            let candidate =
-                PendingSchedulerCandidate::new(key, if x == 0 { 1 } else { 2 }, view, false);
-            if x == count {
-                jobs.lanes[0].ready.push(candidate);
-            } else {
-                jobs.lanes[0].deferred.push(candidate);
-            }
-        }
-        jobs.ingress(view, None, |_, _, _| (0, false));
-        let pending = &jobs.pending;
-        let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-        let candidates =
-            jobs.lanes[0].take_deferred_rechecks(&mut budget, None, |key, revision| {
-                pending
-                    .get(&key)
-                    .is_some_and(|job| job.revision == revision)
-            });
-        jobs.lanes[0].ready.extend(candidates);
-        let lane = &jobs.lanes[0];
-        assert_eq!(
-            lane.deferred.len(),
-            count - MAX_PENDING_SCHEDULER_SCANS_PER_POLL
-        );
-        assert_eq!(lane.ready.len(), MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
-        assert!(lane.ready.iter().all(|candidate| candidate.revision == 2));
-        let best = lane.ready.peek().unwrap().key;
-        assert_eq!(best.x, 1);
-        assert!(jobs.lanes[0].rechecks.contains_key(&best));
-        jobs.remove_pending(&best);
-        assert!(!jobs.lanes[0].rechecks.contains_key(&best));
-        jobs.clear_queued();
-        assert!(jobs.lanes[0].is_empty());
-        assert!(jobs.lanes[0].rechecks.is_empty());
-    }
-
-    /// Cooling high-ranked retries cannot hide eligible work beyond one bounded scan window.
-    #[test]
-    fn cooling_retries_do_not_hide_deferred_work() {
-        let view = SchedulerView {
-            position: [8.0; 3],
-            forward: None,
-            startup_center: None,
-        };
-        let count = MAX_PENDING_SCHEDULER_SCANS_PER_POLL * 3;
-        let eligible = SubChunkKey::new(0, count as i32, 0, 0);
-        let mut lane = Lane::default();
-        lane.ready.push(PendingSchedulerCandidate::new(
-            SubChunkKey::new(0, eligible.x + 1, 0, 0),
-            1,
-            view,
-            false,
-        ));
-        for x in 0..=count {
-            let key = SubChunkKey::new(0, x as i32, 0, 0);
-            lane.deferred
-                .push(PendingSchedulerCandidate::new(key, 1, view, false));
-            if key != eligible {
-                lane.rechecks.insert(
-                    key,
-                    Recheck {
-                        revision: 1,
-                        attempts: 6,
-                        not_before: u64::MAX,
-                    },
-                );
-            }
-        }
-        let mut offered = Vec::new();
-        for _ in 0..=count / MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
-            let mut budget = MAX_PENDING_SCHEDULER_SCANS_PER_POLL;
-            offered.extend(lane.take_deferred_rechecks(&mut budget, None, |_, _| true));
-        }
-        assert_eq!(
-            offered
-                .iter()
-                .map(|candidate| candidate.key)
-                .collect::<Vec<_>>(),
-            [eligible]
-        );
-        assert_eq!(lane.rechecked.len(), count);
-    }
+    mod deferred;
 
     /// A blocked startup job cooling down costs no allocation however many polls it waits.
     #[test]
