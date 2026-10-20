@@ -86,6 +86,17 @@ cat > "$app/Info.plist" << PLIST
 <dict>
   <key>CFBundleIdentifier</key>
   <string>com.cinnabar.ios</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+    <string>iPhoneOS</string>
+  </array>
+  <key>UIDeviceFamily</key>
+  <array>
+    <integer>1</integer>
+    <integer>2</integer>
+  </array>
   <key>CFBundleName</key>
   <string>Cinnabar</string>
   <key>CFBundleDisplayName</key>
@@ -134,10 +145,41 @@ cat > "$app/Info.plist" << PLIST
 </plist>
 PLIST
 
+# Normalize and verify the app metadata before archiving. A successful Rust compile
+# does not guarantee that iOS/LiveContainer can discover the bundle identifier.
+if ! plutil -lint "$app/Info.plist" 2>&1 | tee -a "$log"; then
+  echo "Generated Info.plist is invalid" | tee -a "$log"
+  exit 1
+fi
+plutil -convert binary1 "$app/Info.plist"
+bundle_id=$(plutil -extract CFBundleIdentifier raw -o - "$app/Info.plist")
+bundle_executable=$(plutil -extract CFBundleExecutable raw -o - "$app/Info.plist")
+if [[ "$bundle_id" != "com.cinnabar.ios" || "$bundle_executable" != "$bin_name" || ! -x "$app/$bin_name" ]]; then
+  echo "Invalid app metadata: bundle_id=$bundle_id executable=$bundle_executable" | tee -a "$log"
+  exit 1
+fi
+printf 'APPL????' > "$app/PkgInfo"
+echo "Validated bundle metadata: id=$bundle_id executable=$bundle_executable" | tee -a "$log"
+
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - --deep "$app" 2>&1 | tee -a "$log" || true
 fi
 
 (cd "$out" && zip -qr cinnabar-ios-unsigned.ipa Payload build.log)
+
+# Validate the actual archive, not just the source directory.
+if ! unzip -t "$out/cinnabar-ios-unsigned.ipa" 2>&1 | tee -a "$log"; then
+  echo "IPA archive validation failed" | tee -a "$log"
+  exit 1
+fi
+archive_bundle_id=$(unzip -p "$out/cinnabar-ios-unsigned.ipa" "Payload/Cinnabar.app/Info.plist" | plutil -extract CFBundleIdentifier raw -o - - 2>> "$log") || {
+  echo "Could not read CFBundleIdentifier from archived IPA" | tee -a "$log"
+  exit 1
+}
+if [[ "$archive_bundle_id" != "$bundle_id" ]]; then
+  echo "IPA bundle ID mismatch: $archive_bundle_id" | tee -a "$log"
+  exit 1
+fi
+echo "Validated archived IPA bundle ID: $archive_bundle_id" | tee -a "$log"
 size=$(wc -c < "$out/cinnabar-ios-unsigned.ipa" | tr -d ' ')
 echo "Wrote $out/cinnabar-ios-unsigned.ipa ($size bytes)" | tee -a "$log"
