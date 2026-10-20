@@ -72,7 +72,7 @@ pub(crate) use gpu::prepare_shaderpack_geometry;
 pub use gpu::{FRAME_EXPANSION_FACES, ShaderpackGeometry, ShaderpackGeometrySettings};
 pub use jobs::GeometryCategory;
 pub use residency::{DEFAULT_GEOMETRY_BUDGET_BYTES, device_geometry_budget};
-pub(crate) use shadow_cull::{ShadowCullSettings, ShadowCulling, ShadowFrustum};
+pub(crate) use shadow_cull::{ShadowCulling, ShadowFrustum};
 #[cfg(test)]
 pub(crate) use vertex::{BLOCK_ID, IRIS_VERTEX_WORDS, LIGHTMAP, NORMAL, POSITION, UV0};
 pub(crate) use vertex::{
