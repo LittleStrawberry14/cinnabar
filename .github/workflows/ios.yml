@@ -23,9 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
+      - name: Install Rust + iOS target
+        run: |
+          # Project pins 1.99.0 via rust-toolchain.toml
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup target add aarch64-apple-ios --toolchain 1.99.0
+          rustup default 1.99.0
+          rustc --version
+          rustup show
 
       - name: Build unsigned IPA
         run: |
