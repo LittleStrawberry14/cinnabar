@@ -65,9 +65,21 @@ fn crowd(count: u64, padding: usize) -> (ActorAnimationStore, HashMap<u64, TestA
                 store.start_swing(actor.runtime_id, 6, 6);
             }
         }
-        store.advance_tick(&actors, None, None, true, false, |_| {
-            ActorTickContext::default()
+        store.advance_tick(&actors, None, None, true, false, |_| ActorTickContext {
+            frame_alpha: if tick == 1 { 1.0 } else { 0.0 },
+            ..Default::default()
         });
+    }
+    for &id in actors.keys() {
+        assert!(store.get(id).unwrap().pose_evaluated);
+    }
+    if padding == 0 {
+        assert!(
+            store
+                .rigs
+                .values()
+                .all(|state| state.controllers[0].state == 1)
+        );
     }
     (store, actors)
 }
@@ -297,23 +309,44 @@ fn reset_removal_respawn_duplicates_and_missing_actors_match_serial() {
 /// Adds independent controller transitions, blend history and effectful entry scripts.
 fn add_controller(compiled: &mut CompiledEntityAssets) {
     let mut sources = compiled.sources.to_vec();
-    let source_index = sources.len() as u32;
-    sources.push(EntityAssetSource {
-        path: "animation_controllers/fixture.json".into(),
-        source_bytes: 1,
-        source_sha256: [1; 32],
-    });
+    sources.insert(
+        0,
+        EntityAssetSource {
+            path: "animation_controllers/fixture.json".into(),
+            source_bytes: 1,
+            source_sha256: [1; 32],
+        },
+    );
     compiled.sources = sources.into();
+    for geometry in &mut compiled.geometries {
+        geometry.source_index += 1;
+    }
+    for clip in &mut compiled.animation_clips {
+        clip.source += 1;
+    }
+    for candidate in &mut compiled.render.candidates {
+        candidate.source += 1;
+    }
     let mut symbols = compiled.symbols.to_vec();
-    let symbol = symbols.len() as u32;
-    symbols.push(EntityAssetSymbol {
-        mount_equipment: assets::entity::mount::MountEquipment::Unresolved,
-        kind: EntityAssetKind::AnimationController,
-        identifier: "controller.animation.fixture".into(),
-        source_index,
-        dependencies: Box::new([]),
-    });
+    for symbol in &mut symbols {
+        symbol.source_index += 1;
+    }
+    let symbol = symbols
+        .iter()
+        .position(|s| s.kind == EntityAssetKind::RenderController)
+        .unwrap() as u32;
+    symbols.insert(
+        symbol as usize,
+        EntityAssetSymbol {
+            mount_equipment: assets::entity::mount::MountEquipment::Unresolved,
+            kind: EntityAssetKind::AnimationController,
+            identifier: "controller.animation.fixture".into(),
+            source_index: 0,
+            dependencies: Box::new([]),
+        },
+    );
     compiled.symbols = symbols.into();
+    *compiled.rig_bindings[0].render_controller.as_mut().unwrap() += 1;
     let mut names = compiled.molang_symbols.to_vec();
     let name = names.len() as u32;
     names.push(MolangSymbol {
@@ -336,6 +369,7 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
             first_transition: state,
             transition_count: 1,
             on_entry: Some(0),
+            on_exit: Some(0),
             blend_transition: EntityGeometryScalar::new(0.2).unwrap(),
             blend_via_shortest_path: true,
             ..Default::default()
@@ -346,10 +380,22 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
         weight: Some(2),
     }]
     .into();
+    let mut expressions = compiled.molang_expressions.to_vec();
+    let never = expressions.len() as u32;
+    expressions.push(CompiledMolangExpression {
+        first_op: compiled
+            .molang_ops
+            .iter()
+            .position(|op| matches!(op, MolangOp::Push(value) if value.get() == 0.0))
+            .unwrap() as u32,
+        op_count: 1,
+        max_stack: 1,
+    });
+    compiled.molang_expressions = expressions.into();
     compiled.controller_transitions = (0..2)
         .map(|state| EntityControllerTransition {
             target_state: 1 - state,
-            condition: 3,
+            condition: if state == 0 { 3 } else { never },
         })
         .collect();
     compiled.rig_geometries[0].animation_count = 0;

@@ -636,7 +636,7 @@ fn selected_persona_geometry_is_admitted_before_skin_registration() {
 
 #[test]
 fn remote_body_batches_keep_serial_order_layers_and_budget() {
-    let (assets, artwork) = catalog(Some("query.frame_alpha > 0.25"), true, "Geometry.default");
+    let (assets, artwork) = catalog(Some("query.frame_alpha < 0.75"), true, "Geometry.default");
     let serial = player_world(&assets, 127, |id| skin(id, false), [0.0, 0.0, -5.0]);
     let parallel = player_world(&assets, 127, |id| skin(id, false), [0.0, 0.0, -5.0]);
     let mut caches = Caches::default();
@@ -664,7 +664,7 @@ fn remote_body_batches_keep_serial_order_layers_and_budget() {
                 body.submission.input.current_bones,
             ));
         }
-        let (sampled, _) = caches.sample_with_view(&parallel, &artwork, alpha, None);
+        let (mut sampled, _) = caches.sample_with_view(&parallel, &artwork, alpha, None);
         let actual: Vec<_> = sampled
             .remotes
             .iter()
@@ -677,6 +677,19 @@ fn remote_body_batches_keep_serial_order_layers_and_budget() {
             })
             .collect();
         assert_eq!(actual, expected, "alpha={alpha}");
+        for (id, _, _) in &expected {
+            assert_eq!(
+                sampled
+                    .render_frame
+                    .as_mut()
+                    .unwrap()
+                    .layers_with_skin(*id)
+                    .unwrap()
+                    .render,
+                frame.layers_with_skin(*id).unwrap().render,
+                "layers for actor {id}, alpha={alpha}"
+            );
+        }
         assert_eq!(
             sampled.render_frame.as_ref().unwrap().remaining_ops(),
             frame.remaining_ops()

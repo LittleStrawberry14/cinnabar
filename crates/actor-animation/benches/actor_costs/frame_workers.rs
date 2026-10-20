@@ -12,6 +12,10 @@ fn installed_assets() -> Option<Arc<RuntimeEntityAssets>> {
     match std::fs::read(&path) {
         Ok(bytes) => Some(Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Reports the benchmark's named missing-fixture skip."
+            )]
             eprintln!("missing-fixture: frame worker benchmarks need an installed entity carrier");
             None
         }
