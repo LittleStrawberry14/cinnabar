@@ -242,8 +242,14 @@ pub(crate) fn prepare_effect_textures(
     if textures.constants.is_none() {
         let constants = [
             ("shader pack effect white", [255, 255, 255, 255]),
-            ("shader pack effect normals", [128, 128, 255, 255]),
-            ("shader pack effect specular", [0, 0, 0, 0]),
+            (
+                "shader pack effect normals",
+                crate::shaderpack::atlas::NEUTRAL_NORMAL,
+            ),
+            (
+                "shader pack effect specular",
+                crate::shaderpack::atlas::NEUTRAL_SPECULAR,
+            ),
         ]
         .map(|(label, texel)| {
             let (texture, view) = texture(device, label, [1, 1]);

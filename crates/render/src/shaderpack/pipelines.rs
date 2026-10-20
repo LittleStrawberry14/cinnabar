@@ -643,34 +643,12 @@ pub(crate) fn shader_modules(
         .collect()
 }
 
-/// Runtime checks of translated shader-pack modules: wgpu's bounds checks (index `Restrict`,
-/// buffer and image loads as the device needs), without loop bounding.
-///
-/// Loop bounding gives every loop a 64-bit iteration counter and exit test, which keeps the
-/// driver from unrolling the constant-count loops packs are full of (shadow filtering,
-/// blur kernels): with it, BSL's terrain programs took 1.4 ms more per 1440p frame.
-///
-/// Trust boundary: packs load only from the user's local `shaderpacks` folder, the trust Java
-/// and Iris give the same GLSL, which runs unbounded under OpenGL. Vanilla, Enhanced, mod
-/// and server-supplied shaders keep [`wgpu::ShaderRuntimeChecks::checked`], and any future
-/// path that delivers packs from a server must not use this.
-pub(crate) fn pack_runtime_checks() -> wgpu::ShaderRuntimeChecks {
-    wgpu::ShaderRuntimeChecks {
-        force_loop_bounding: false,
-        ..wgpu::ShaderRuntimeChecks::checked()
-    }
-}
-
-/// Creates a translated shader-pack module with [`pack_runtime_checks`], the only place
-/// Cinnabar relaxes wgpu's runtime checks.
+/// Creates an installed pack module with wgpu's complete runtime checks, including loop bounding.
 pub(crate) fn pack_shader_module(
     device: &Device,
     desc: wgpu::ShaderModuleDescriptor<'_>,
 ) -> wgpu::ShaderModule {
-    // SAFETY: bounds checks stay on; without loop bounding, a pack loop that never terminates
-    // is undefined behaviour for the driver's compiler rather than a hang, as the same GLSL
-    // is under OpenGL, for locally installed packs only (see `pack_runtime_checks`).
-    unsafe { device.create_shader_module_trusted(desc, pack_runtime_checks()) }
+    device.create_shader_module(desc)
 }
 
 #[cfg(test)]
@@ -678,43 +656,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pack_modules_drop_only_loop_bounding() {
-        let pack = pack_runtime_checks();
+    fn safe_module_defaults_keep_every_runtime_check() {
+        let pack = wgpu::ShaderRuntimeChecks::checked();
         let checked = wgpu::ShaderRuntimeChecks::checked();
         assert!(checked.force_loop_bounding);
-        assert!(!pack.force_loop_bounding);
+        assert!(pack.force_loop_bounding);
         // Bounds checks select naga's `Restrict` index policy on every backend.
         assert!(pack.bounds_checks);
         assert!(pack.ray_query_initialization_tracking);
         assert!(pack.task_shader_dispatch_tracking);
         assert!(pack.mesh_shader_primitive_indices_clamp);
         assert!(pack.int_div_checks);
-    }
-
-    /// Every other module keeps wgpu's default checks: `pack_shader_module` is the only
-    /// caller of the trusted constructor in the workspace's crates.
-    #[test]
-    fn only_pack_modules_relax_runtime_checks() {
-        fn visit(dir: &std::path::Path, needle: &str, hits: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).expect("source directory") {
-                let path = entry.expect("directory entry").path();
-                if path.is_dir() {
-                    if path.file_name().is_some_and(|name| name != "target") {
-                        visit(&path, needle, hits);
-                    }
-                } else if path.extension().is_some_and(|ext| ext == "rs")
-                    && std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle))
-                {
-                    hits.push(path.display().to_string());
-                }
-            }
-        }
-        let needle = concat!("create_shader_module_", "trusted(");
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut hits = Vec::new();
-        visit(&manifest.join(".."), needle, &mut hits);
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert!(hits[0].ends_with("pipelines.rs"), "{hits:?}");
     }
 
     #[test]
