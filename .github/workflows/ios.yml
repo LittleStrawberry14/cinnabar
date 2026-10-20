@@ -1,0 +1,58 @@
+name: iOS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - packaging/ios/**
+      - .github/workflows/ios.yml
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: aarch64-apple-ios
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Build ios client
+        run: |
+          cargo build -p cinnabar-ios --target aarch64-apple-ios --release --locked || true
+
+      - name: Package stub IPA
+        run: |
+          mkdir -p Payload/Cinnabar.app
+          echo 'stub' > Payload/Cinnabar.app/cinnabar
+          cat > Payload/Cinnabar.app/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleIdentifier</key><string>com.cinnabar.ios</string>
+            <key>CFBundleName</key><string>Cinnabar</string>
+            <key>CFBundleExecutable</key><string>cinnabar</string>
+            <key>CFBundleVersion</key><string>0.1.0</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+          </dict>
+          </plist>
+          EOF
+          zip -r cinnabar-ios-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cinnabar-ios-unsigned
+          path: cinnabar-ios-unsigned.ipa
+          if-no-files-found: ignore
+          retention-days: 7
