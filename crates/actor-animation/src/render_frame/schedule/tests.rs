@@ -365,7 +365,6 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
             on_exit: Some(0),
             blend_transition: EntityGeometryScalar::new(0.2).unwrap(),
             blend_via_shortest_path: true,
-            ..Default::default()
         })
         .collect();
     compiled.controller_animations = vec![

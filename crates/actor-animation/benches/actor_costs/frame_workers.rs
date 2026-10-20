@@ -2,6 +2,10 @@
 use super::*;
 
 /// Loads an installed carrier; benchmark sources contain no game assets.
+#[expect(
+    clippy::print_stderr,
+    reason = "Reports the benchmark's named missing-fixture skip."
+)]
 fn installed_assets() -> Option<Arc<RuntimeEntityAssets>> {
     let path = std::env::var_os("CINNABAR_ENTITY_CARRIER")
         .map(std::path::PathBuf::from)
@@ -12,10 +16,6 @@ fn installed_assets() -> Option<Arc<RuntimeEntityAssets>> {
     match std::fs::read(&path) {
         Ok(bytes) => Some(Arc::new(RuntimeEntityAssets::decode(&bytes).unwrap())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            #[expect(
-                clippy::print_stderr,
-                reason = "Reports the benchmark's named missing-fixture skip."
-            )]
             eprintln!("missing-fixture: frame worker benchmarks need an installed entity carrier");
             None
         }
