@@ -731,7 +731,7 @@ mod tests {
         ]));
         let translation = pack.translate(&shaderpack::TranslateConfig::default());
         assert!(translation.programs.iter().all(|program| program.is_ok()));
-        let (selected, draws) = select_draws(&translation.programs);
+        let (selected, draws) = select_draws(&translation.programs, |_| true);
         assert!(selected.is_empty());
         assert!(draws.is_empty());
     }
