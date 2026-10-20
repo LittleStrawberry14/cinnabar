@@ -181,7 +181,7 @@ pub(super) fn prepare(context: &Context) {
 }
 
 /// Writes the prepared folder with async-signal-safe calls only.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "ios")))]
 pub(super) fn write_native(crash: &crash_handler::CrashContext) {
     use std::sync::atomic::Ordering;
 
