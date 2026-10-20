@@ -261,6 +261,7 @@ fn configure_replacement(
     cameras: Query<Entity, With<ShaderPackRendering>>,
     geometry: Option<Res<ShaderpackGeometry>>,
     views: Res<ShaderPackViews>,
+    (pipelines, cache): (Res<ActorSkinPipelines>, Res<PipelineCache>),
     mut drawn: ResMut<ShaderPackDrawnCategories>,
     mut replaced: ResMut<ShaderPackEffects>,
 ) {
@@ -276,14 +277,21 @@ fn configure_replacement(
                         .is_some_and(|state| Arc::ptr_eq(&state.pack, pack))
                 })
         });
-    replaced.set_if_neq(ready.map_or_else(Default::default, |pack| replaced_effects(pack)));
     let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
+    let replaces = geometry
+        .is_some_and(|geometry| geometry.supported() && geometry.origin().is_some())
+        && pipelines.kernels(&cache).is_some()
+        && super::draws::complete_world(draws);
+    replaced.set_if_neq(
+        ready
+            .filter(|_| replaces)
+            .map_or_else(Default::default, |pack| replaced_effects(pack)),
+    );
     drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: geometry.is_some_and(|geometry| geometry.supported())
-            && super::draws::complete_terrain(draws),
-        actors: draws(DrawKind::Entities),
-        block_entities: draws(DrawKind::Block),
-        hand: draws(DrawKind::Hand),
+        terrain: replaces,
+        actors: replaces,
+        block_entities: replaces,
+        hand: replaces,
     });
 }
 
