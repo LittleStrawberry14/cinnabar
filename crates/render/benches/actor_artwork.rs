@@ -5,6 +5,14 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use render::ActorArtworkBenchmark;
 use render_model::{ActorArtworkPages, ActorTexturePage};
 
+/// Submits pending uploads and reclaims staging memory outside publication timing.
+fn drain_uploads(device: &RenderDevice, queue: &RenderQueue) {
+    queue.submit([]);
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("benchmark uploads must complete");
+}
+
 /// Measures cold publication when a crowd samples a small part of a larger pack.
 fn artwork_burst(c: &mut Criterion) {
     let (device, queue) = wgpu::Device::noop(&Default::default());
@@ -23,11 +31,15 @@ fn artwork_burst(c: &mut Criterion) {
         })
         .collect();
     c.bench_function("actor_artwork/cold_pack_four_demanded_pages", |b| {
-        b.iter_batched(
-            ActorArtworkBenchmark::default,
-            |mut gpu| black_box(gpu.prepare(&pages, &[1, 2, 3, 4], &device, &queue)),
-            BatchSize::SmallInput,
+        b.iter_batched_ref(
+            || {
+                drain_uploads(&device, &queue);
+                ActorArtworkBenchmark::default()
+            },
+            |gpu| black_box(gpu.prepare(&pages, &[1, 2, 3, 4], &device, &queue)),
+            BatchSize::PerIteration,
         );
+        drain_uploads(&device, &queue);
     });
 }
 
