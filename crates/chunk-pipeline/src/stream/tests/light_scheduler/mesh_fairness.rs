@@ -191,6 +191,18 @@ fn far_settled_retry_precedes_continuous_fresh_ingress() {
 /// Output-memory pressure must not starve a smaller ready mesh or duplicate retry heap records.
 #[test]
 fn memory_blocked_retry_keeps_ready_progress_and_bounded_storage() {
+    assert_memory_blocked_retry_progress(1);
+}
+
+/// More blocked retries than the cooldown must still leave ordinary work an admission turn.
+#[test]
+fn many_memory_blocked_retries_preserve_ready_progress_across_rotations() {
+    let blocked = usize::try_from(scheduler::MAX_RECHECK_BACKOFF_POLLS).unwrap() + 1;
+    assert_memory_blocked_retry_progress(blocked);
+}
+
+/// Keeps smaller ready meshes publishing while a FIFO of larger models cannot reserve output.
+fn assert_memory_blocked_retry_progress(blocked: usize) {
     let base = light_test_assets();
     let model_id = u32::try_from(base.visual_count()).unwrap();
     let side = assets::MODEL_POSITION_SCALE;
@@ -229,14 +241,41 @@ fn memory_blocked_retry_keeps_ready_progress_and_bounded_storage() {
         ..assets::BlockOverlay::default()
     };
     let assets = base.with_block_overlay(model_id, &overlay).unwrap();
-    let (mut stream, view, visible, backlog) =
-        seed_deferred_meshes(lit_stream_with_assets(1, assets));
+    let mut stream = lit_stream_with_assets(1, assets);
+    stream.set_view_forward([1.0, 0.0, 0.0]);
+    let view = stream.scheduler_view([8.0; 3]);
     stream
-        .authority
-        .commit_sub_chunk(visible, super::uniform_sub_chunk(model_id))
-        .unwrap();
-    install_current_light(&mut stream, visible, 0, 0, false);
-    let revision = stream.mark_dirty_exact(visible, Instant::now());
+        .mesh_jobs
+        .refresh
+        .refresh(view, &mut stream.mesh_jobs.lanes, None, |_, _| true);
+    let visible = SubChunkKey::new(1, scheduler::NEAR_CAMERA_RADIUS * 3, 0, 0);
+    let backlog = SubChunkKey::new(1, visible.x + i32::try_from(blocked).unwrap() * 2 + 4, 0, 0);
+    for offset in 0..=blocked {
+        let ready = offset == blocked;
+        let key = if ready {
+            backlog
+        } else {
+            SubChunkKey::new(1, visible.x + i32::try_from(offset).unwrap() * 2, 0, 0)
+        };
+        stream
+            .authority
+            .commit_sub_chunk(
+                key,
+                super::uniform_sub_chunk(if ready { 2 } else { model_id }),
+            )
+            .unwrap();
+        install_current_light(&mut stream, key, 0, 0, false);
+        let revision = stream.mark_dirty_exact(key, Instant::now());
+        let candidate = PendingSchedulerCandidate::new(key, revision, view, false);
+        let lane = &mut stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+        if ready {
+            lane.ready.push(candidate);
+        } else {
+            lane.deferred.push(candidate);
+        }
+    }
+    stream.mesh_jobs.scan.clear();
+    let revision = stream.mesh_jobs.pending[&visible].revision;
     let source = stream.authority.terrain().sub_chunk(visible).unwrap();
     let small = stream.authority.terrain().sub_chunk(backlog).unwrap();
     let reserve = |source| {
@@ -271,13 +310,17 @@ fn memory_blocked_retry_keeps_ready_progress_and_bounded_storage() {
     drop(reserve(&small));
     let lane = &stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
     let storage_limit = lane.ready.len() + lane.deferred.len() + stream.mesh_jobs.scan.len();
-    let mut published = false;
-    for _ in 0..12 {
+    let mut published = 0;
+    for _ in 0..(blocked * 3).max(12) {
+        if !stream.mesh_jobs.pending.contains_key(&backlog) {
+            stream.mark_dirty_exact(backlog, Instant::now());
+        }
         stream.poll_deadline = Some(Instant::now());
         if stream.dispatch_mesh_jobs(view.position, 1) != 0 {
             let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             assert_ne!(completion.key, visible);
-            published |= completion.key == backlog;
+            assert_eq!(completion.key, backlog);
+            published += 1;
             stream.accept_mesh_completion(completion);
             stream.take_mesh_changes();
         }
@@ -289,7 +332,7 @@ fn memory_blocked_retry_keeps_ready_progress_and_bounded_storage() {
         assert_eq!(stream.mesh_jobs.pending[&visible].revision, revision);
     }
     assert!(
-        published,
-        "a memory-blocked retry starved admissible ready work"
+        published >= 3,
+        "memory-blocked retries starved admissible ready work across rotations: {published}"
     );
 }

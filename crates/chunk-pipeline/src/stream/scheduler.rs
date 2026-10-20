@@ -7,7 +7,7 @@ pub(super) const NEAR_CAMERA_RADIUS: i32 = 4;
 const NEAR_LIGHT_COLUMN_RADIUS: i32 = NEAR_CAMERA_RADIUS + 1;
 
 /// Longest wait, in readiness polls, before a still-blocked revision is rechecked.
-const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
+pub(in crate::stream) const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
 
 /// Ready work leads during ordinary streaming; startup also rechecks higher-priority deferred work.
 #[derive(Default)]
