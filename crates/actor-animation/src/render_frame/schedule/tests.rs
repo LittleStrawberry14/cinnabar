@@ -347,13 +347,6 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
     );
     compiled.symbols = symbols.into();
     *compiled.rig_bindings[0].render_controller.as_mut().unwrap() += 1;
-    let mut names = compiled.molang_symbols.to_vec();
-    let name = names.len() as u32;
-    names.push(MolangSymbol {
-        kind: MolangSymbolKind::Name,
-        identifier: "active".into(),
-    });
-    compiled.molang_symbols = names.into();
     compiled.controllers = vec![EntityAnimationController {
         symbol,
         first_state: 0,
@@ -363,8 +356,8 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
     .into();
     compiled.controller_states = (0..2)
         .map(|state| EntityControllerState {
-            name: if state == 0 { 0 } else { name },
-            first_animation: 0,
+            name: 0,
+            first_animation: state,
             animation_count: 1,
             first_transition: state,
             transition_count: 1,
@@ -375,22 +368,24 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
             ..Default::default()
         })
         .collect();
-    compiled.controller_animations = vec![EntityControllerAnimation {
-        target: EntityControllerAnimationTarget::Clip(0),
-        weight: Some(2),
-    }]
+    compiled.controller_animations = vec![
+        EntityControllerAnimation {
+            target: EntityControllerAnimationTarget::Clip(0),
+            weight: Some(2),
+        };
+        2
+    ]
     .into();
     let mut expressions = compiled.molang_expressions.to_vec();
     let never = expressions.len() as u32;
+    let mut ops = compiled.molang_ops.to_vec();
     expressions.push(CompiledMolangExpression {
-        first_op: compiled
-            .molang_ops
-            .iter()
-            .position(|op| matches!(op, MolangOp::Push(value) if value.get() == 0.0))
-            .unwrap() as u32,
+        first_op: ops.len() as u32,
         op_count: 1,
         max_stack: 1,
     });
+    ops.push(MolangOp::Push(EntityGeometryScalar::new(0.0).unwrap()));
+    compiled.molang_ops = ops.into();
     compiled.molang_expressions = expressions.into();
     compiled.controller_transitions = (0..2)
         .map(|state| EntityControllerTransition {
@@ -398,6 +393,7 @@ fn add_controller(compiled: &mut CompiledEntityAssets) {
             condition: if state == 0 { 3 } else { never },
         })
         .collect();
+    compiled.rig_animations = Box::new([]);
     compiled.rig_geometries[0].animation_count = 0;
     compiled.rig_geometries[0].controller_count = 1;
     compiled.rig_controllers = vec![EntityRigControllerBinding {
