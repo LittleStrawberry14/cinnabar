@@ -22,16 +22,22 @@ cargo build -p cinnabar-ios --target "$triple" --profile "$profile" 2>&1 | tee -
 status=${PIPESTATUS[0]}
 set -e
 
-if [[ "$status" -eq 0 ]]; then
-  echo "Rust build succeeded" | tee -a "$log"
-else
+if [[ "$status" -ne 0 ]]; then
   echo "Rust build failed (exit $status). See build.log" | tee -a "$log"
+  # Still package the log so CI can upload it, then fail the job.
+  (cd "$out" && zip -qr cinnabar-ios-unsigned.ipa build.log) || true
+  exit "$status"
 fi
+
+echo "Rust build succeeded" | tee -a "$log"
 
 lib_path="target/$triple/$profile/libcinnabar_ios.a"
 if [[ -f "$lib_path" ]]; then
   cp "$lib_path" "$app/libcinnabar_ios.a"
   ls -la "$lib_path" | tee -a "$log"
+else
+  echo "missing $lib_path" | tee -a "$log"
+  exit 1
 fi
 
 cat > "$app/cinnabar" << 'EOF'
