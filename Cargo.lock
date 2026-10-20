@@ -2807,6 +2807,7 @@ version = "0.1.22"
 dependencies = [
  "anyhow",
  "assets",
+ "bedrock-packs",
  "bevy",
  "client-state",
  "client-ui",
@@ -11697,7 +11698,6 @@ name = "web-gateway"
 version = "0.1.22"
 dependencies = [
  "bedrock-net",
- "bedrock-protocol-1-26-51",
  "bedrock-services",
  "bridge",
  "bytes",
