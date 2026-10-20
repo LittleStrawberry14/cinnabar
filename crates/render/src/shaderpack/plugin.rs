@@ -35,7 +35,9 @@ use bevy::{
 use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
     ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
-    ShaderPackIdMaps, ShaderPackRendering, ShaderPackRequest, ShaderPackStatus,
+    ShaderPackIdMaps, ShaderPackLoadProgress, ShaderPackRendering, ShaderPackRequest,
+    ShaderPackSettledRevision,
+    ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -64,10 +66,10 @@ pub(crate) struct LoadedShaderPack(pub Option<Arc<PackGpu>>);
 
 type LoadResult = Result<PackGpu, String>;
 
-/// The pack being loaded or shown, identified by path and dimension.
+/// The pack being loaded or shown, identified by path, dimension and request revision.
 #[derive(Resource, Default)]
 struct Loader {
-    key: Option<(PathBuf, i32)>,
+    key: Option<(PathBuf, i32, u64)>,
     job: Option<Mutex<mpsc::Receiver<LoadResult>>>,
 }
 
@@ -78,15 +80,21 @@ type MainWorldGpu<'w> = (
     Option<Res<'w, RenderAdapter>>,
 );
 
-/// Starts a load when the requested pack or the dimension changes and publishes results.
-/// A dimension change of the shown pack keeps it on screen until the new folder is ready.
-/// The pack's `minecraft:` texture references resolve against the vanilla textures loaded
-/// when its load starts.
+/// Starts a load when the requested pack, its revision or the dimension changes and
+/// publishes results. A dimension change or reload of the shown pack keeps it on screen
+/// until the new load is ready. The pack's `minecraft:` texture references resolve against
+/// the vanilla textures loaded when its load starts.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system reading each resource the load starts from and publishes to"
+)]
 fn drive_loader(
     request: Res<ShaderPackRequest>,
     inputs: Res<ShaderPackFrameInputs>,
     mut status: ResMut<ShaderPackStatus>,
+    mut settled: ResMut<ShaderPackSettledRevision>,
     mut loaded: ResMut<LoadedShaderPack>,
+    mut progress: ResMut<ShaderPackLoadProgress>,
     mut loader: ResMut<Loader>,
     gpu: MainWorldGpu,
     atmosphere: Option<Res<render_scene::AtmosphereTextureAssets>>,
@@ -94,9 +102,9 @@ fn drive_loader(
     let wanted = request
         .pack
         .clone()
-        .map(|path| (path, inputs.dimension.clamp(0, 2)));
+        .map(|path| (path, inputs.dimension.clamp(0, 2), request.revision));
     if wanted != loader.key {
-        let Some((path, dimension)) = wanted.clone() else {
+        let Some((path, dimension, _)) = wanted.clone() else {
             loader.key = None;
             loader.job = None;
             status.set_if_neq(ShaderPackStatus::Idle);
@@ -124,20 +132,23 @@ fn drive_loader(
             .map(VanillaTextures::from_atmosphere)
             .unwrap_or_default();
         let (send, receive) = mpsc::channel();
+        let progress = progress.start();
         let spawned = std::thread::Builder::new()
             .name("shader pack load".into())
             .spawn(move || {
                 let id = JAVA_DIMENSIONS[dimension as usize];
-                let _ = send.send(load(&path, id, cache_dir.as_deref(), &gpu, &vanilla));
+                let outcome = load(&path, id, cache_dir.as_deref(), &gpu, &vanilla, &progress);
+                let _ = send.send(outcome);
             });
         match spawned {
             Ok(_) => loader.job = Some(Mutex::new(receive)),
             Err(error) => {
-                if let Some((path, _)) = &loader.key {
+                if let Some((path, _, revision)) = &loader.key {
                     *status = ShaderPackStatus::Failed {
                         pack: path.clone(),
                         reason: error.to_string(),
                     };
+                    settled.0 = *revision;
                 }
             }
         }
@@ -153,9 +164,10 @@ fn drive_loader(
         Err(mpsc::TryRecvError::Disconnected) => Err("the load worker stopped".to_string()),
     };
     loader.job = None;
-    let Some((path, _)) = loader.key.clone() else {
+    let Some((path, _, revision)) = loader.key.clone() else {
         return;
     };
+    settled.0 = revision;
     match outcome {
         Ok(pack) => {
             loaded.0 = Some(Arc::new(pack));
@@ -617,6 +629,8 @@ pub(super) fn build(app: &mut App) {
     actors::load_shaders(app);
     app.init_resource::<ShaderPackRequest>()
         .init_resource::<ShaderPackStatus>()
+        .init_resource::<ShaderPackLoadProgress>()
+        .init_resource::<ShaderPackSettledRevision>()
         .init_resource::<ShaderPackFrameInputs>()
         .init_resource::<ShaderPackIdMaps>()
         .init_resource::<ShaderPackActorIds>()

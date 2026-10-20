@@ -3,18 +3,35 @@
 
 use super::super::widgets;
 use super::Content;
-use launcher::menu::{MenuAction, MenuView, RendererChoice};
+use launcher::menu::{
+    MenuAction, MenuView, RendererChoice,
+    settings_storage::{StorageAction, StorageFolder},
+    shader_pack_status::pack_label,
+};
 use ui_engine::engine::screen::PaintError;
 
 #[cfg(test)]
 mod tests;
 
-/// Draws nothing unless this build compiles an optional renderer.
+/// Draws nothing unless this build compiles an optional renderer. Shader-pack builds add
+/// the shader-pack folder's Open folder button when the host can open folders.
 pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     if !render_model::ENHANCED_RENDERING_ENABLED && !render_model::SHADER_PACKS_ENABLED {
         return Ok(());
     }
-    renderer(content)
+    renderer(content)?;
+    if render_model::SHADER_PACKS_ENABLED && content.view.storage.opens_folders {
+        super::services::action_row(
+            content,
+            "options.cinnabar.shaderPacksFolder",
+            "options.cinnabar.shaderPacksFolder.description",
+            "options.cinnabar.openFolder.buttonLabel",
+            Some(MenuAction::SettingsStorage(StorageAction::OpenFolder(
+                StorageFolder::ShaderPacks,
+            ))),
+        )?;
+    }
+    Ok(())
 }
 
 /// The compiled renderer choices in display order with their labels.
@@ -37,20 +54,6 @@ fn choices(view: &MenuView) -> impl Iterator<Item = (RendererChoice, &str)> {
         .chain(packs)
 }
 
-/// A pack's display name: its file or folder name without a `.zip` extension.
-fn pack_label(name: &str) -> &str {
-    name.len()
-        .checked_sub(".zip".len())
-        .filter(|&split| {
-            split > 0
-                && name
-                    .get(split..)
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case(".zip"))
-        })
-        .and_then(|split| name.get(..split))
-        .unwrap_or(name)
-}
-
 /// One segmented row choosing between Vanilla and the compiled optional renderers.
 fn renderer(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     let view = content.view;
@@ -65,6 +68,8 @@ fn renderer(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     let extra = control_height + content.canvas.r(0.4);
     let description = if !render_model::SHADER_PACKS_ENABLED {
         "Enhanced improves lighting, shadows, sky and reflections."
+    } else if let Some(failure) = view.renderer_failure.as_deref() {
+        failure
     } else if view.shader_packs.is_empty() {
         "Java shader packs (zips or folders) in the shaderpacks data folder appear here."
     } else {

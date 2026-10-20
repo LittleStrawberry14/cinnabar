@@ -17,6 +17,8 @@ reads = [
 
 [features]
 test-support = []
+# Offers shader-pack controls; enabled by the app's `shaderpacks` feature.
+shaderpacks = []
 
 [dependencies]
 cosmetics = { path = "../cosmetics" }

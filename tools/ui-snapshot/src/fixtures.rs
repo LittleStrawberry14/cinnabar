@@ -3,6 +3,7 @@
 mod minecraft_import;
 mod mods;
 mod out_of_game;
+mod shader_pack;
 mod updates;
 
 use std::sync::Arc;
@@ -44,6 +45,11 @@ pub enum Fixture {
     CraftOverlap {
         selected: bool,
     },
+    /// A client toast as the toast screen shows it once slid in.
+    Toast {
+        title: String,
+        message: String,
+    },
 }
 
 const SIZE: [u32; 2] = [1280, 720];
@@ -53,6 +59,8 @@ const SMALL_SIZE: [u32; 2] = [360, 240];
 const TALL_SIZE: [u32; 2] = [1280, 900];
 /// Keeps the first hotbar rows visible below the keyboard options.
 const KEYBOARD_SIZE: [u32; 2] = [SIZE[0], 2000];
+/// Reaches the Video pane's Renderer row below the general options.
+const SHADER_PACK_ROW_SIZE: [u32; 2] = [SIZE[0], 1600];
 
 pub const STATES: &[State] = &[
     State {
@@ -490,6 +498,12 @@ pub const STATES: &[State] = &[
         fixture: settings_video,
     },
     State {
+        name: "settings-video-shader-packs",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: settings_video_shader_packs,
+    },
+    State {
         name: "settings-storage",
         size: SIZE,
         gui_scale: GUI_SCALE,
@@ -606,6 +620,36 @@ pub const STATES: &[State] = &[
         size: TALL_SIZE,
         gui_scale: GUI_SCALE,
         fixture: mods::undeclared_permissions,
+    },
+    State {
+        name: "toast-shader-pack-loading",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loading,
+    },
+    State {
+        name: "toast-shader-pack-loaded",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::loaded,
+    },
+    State {
+        name: "toast-shader-pack-failed",
+        size: SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: shader_pack::failed,
+    },
+    State {
+        name: "settings-video-shader-pack",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(false),
+    },
+    State {
+        name: "settings-video-shader-pack-failed",
+        size: SHADER_PACK_ROW_SIZE,
+        gui_scale: GUI_SCALE,
+        fixture: || shader_pack::settings_video(true),
     },
 ];
 
@@ -813,6 +857,19 @@ pub fn settings(section: &str) -> MenuView {
 /// Shows an ordinary OreUI route without account, world or network services.
 fn settings_video() -> Fixture {
     Fixture::Menu(Box::new(settings(SettingSection::Video.definition().name)))
+}
+
+/// Scrolls Video to the renderer picker of a `shaderpacks` build listing two packs, with the
+/// shader-pack folder's Open folder button a desktop host shows below it.
+fn settings_video_shader_packs() -> Fixture {
+    use launcher::menu::settings_storage::{StorageAction, StorageFolder};
+    let mut view = settings(SettingSection::Video.definition().name);
+    view.shader_packs = Arc::from(["Dusk.zip".to_owned(), "Lumen".to_owned()]);
+    Arc::make_mut(&mut view.storage).opens_folders = true;
+    view.focused_action = Some(MenuAction::SettingsStorage(StorageAction::OpenFolder(
+        StorageFolder::ShaderPacks,
+    )));
+    Fixture::Menu(Box::new(view))
 }
 
 /// Shows Storage as a desktop host fills it, with the folder buttons.

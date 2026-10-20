@@ -2,7 +2,7 @@
 //! for renderers this build does not compile are ignored.
 
 use super::{MenuRuntime, RenderMode};
-use launcher::menu::RendererChoice;
+use launcher::menu::{MenuScreen, RendererChoice};
 
 impl MenuRuntime {
     /// Replaces the discovered shader-pack names the picker offers, in display order. Names
@@ -25,6 +25,30 @@ impl MenuRuntime {
     /// the mode changed too, arrives through [`Self::take_render_mode_request`].
     pub fn take_shader_pack_request(&mut self) -> Option<String> {
         self.shader_pack_request.take()
+    }
+
+    /// Asks the app to reload shader packs as Iris's reload key does: re-list the pack
+    /// folder, then re-read the selected pack (source and options) from disk and swap it in
+    /// once translated, drawing the current pack meanwhile. The one entry point for anything
+    /// that changes a pack on disk, such as its options screen applying.
+    pub fn request_shader_pack_reload(&mut self) {
+        self.shader_pack_reload = true;
+    }
+
+    /// Consume a [`Self::request_shader_pack_reload`].
+    pub fn take_shader_pack_reload(&mut self) -> bool {
+        std::mem::take(&mut self.shader_pack_reload)
+    }
+
+    /// Whether files dropped on the window go to the shader-pack folder: in shader-pack
+    /// builds while Video settings, which lists the packs, is on screen.
+    #[must_use]
+    pub fn takes_shader_pack_drops(&self) -> bool {
+        use launcher::menu::settings_sections::SettingSection;
+        render_model::SHADER_PACKS_ENABLED
+            && self.visible
+            && self.screen == MenuScreen::Settings
+            && SettingSection::from_index(self.settings.section) == Some(SettingSection::Video)
     }
 
     /// The highlighted choice; `None` while the selected pack is not in the synced list.
@@ -151,5 +175,47 @@ mod tests {
         menu.sync_render_mode(RenderMode::Vanilla);
         menu.sync_shader_pack(None);
         assert_eq!(menu.view().renderer, Some(RendererChoice::Vanilla));
+    }
+
+    #[test]
+    fn a_reload_request_is_taken_once() {
+        let mut menu = menu();
+        assert!(!menu.take_shader_pack_reload());
+        menu.request_shader_pack_reload();
+        menu.request_shader_pack_reload();
+        assert!(menu.take_shader_pack_reload());
+        assert!(!menu.take_shader_pack_reload());
+    }
+
+    #[test]
+    fn only_video_settings_takes_dropped_shader_packs() {
+        use launcher::menu::settings_sections::SettingSection;
+        let mut menu = menu();
+        menu.screen = MenuScreen::Settings;
+        for section in [
+            SettingSection::General,
+            SettingSection::GlobalTexturePack,
+            SettingSection::Video,
+        ] {
+            menu.settings.section = section.definition().index;
+            assert_eq!(
+                menu.takes_shader_pack_drops(),
+                render_model::SHADER_PACKS_ENABLED && section == SettingSection::Video,
+                "{section:?}"
+            );
+        }
+        menu.screen = MenuScreen::Play;
+        assert!(!menu.takes_shader_pack_drops());
+    }
+
+    /// The reload key's row follows the same build switch as the renderer it reloads.
+    #[test]
+    fn shader_pack_controls_follow_the_shader_pack_build() {
+        use launcher::menu::settings_options::{BindingId, SHADER_PACK_BINDINGS};
+        assert_eq!(SHADER_PACK_BINDINGS, render_model::SHADER_PACKS_ENABLED);
+        assert_eq!(
+            BindingId::ReloadShaders.row(false).is_some(),
+            render_model::SHADER_PACKS_ENABLED
+        );
     }
 }

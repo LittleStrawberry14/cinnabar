@@ -706,6 +706,10 @@ pub(super) fn fallback(key: &str) -> &str {
         "options.cinnabar.resourcePacksFolder.description" => {
             "Where your imported resource packs are stored"
         }
+        "options.cinnabar.shaderPacksFolder" => "Shader packs folder",
+        "options.cinnabar.shaderPacksFolder.description" => {
+            "Add Java shader packs here, or drop them onto this window"
+        }
         "options.cinnabar.openFolder.buttonLabel" => "Open folder",
         "options.dev_clearAllCache" => "Clear All Cache",
         "options.dev_clearDownloadeCache.name" => "Clear download cache",
