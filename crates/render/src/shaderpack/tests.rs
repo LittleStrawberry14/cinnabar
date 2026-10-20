@@ -4,7 +4,7 @@ use super::loader::{build, class_sampler, runnable_programs, translate_config};
 use super::passes::{FrameIo, ViewState, record_frame};
 use super::pipelines::GpuContext;
 use super::plan::plan_frame;
-use super::plugin::JAVA_DIMENSIONS;
+use super::plugin::{BlockIdRevisions, JAVA_DIMENSIONS};
 use super::uniforms::{FrameClock, FrameUniforms, ViewCamera};
 use bevy::math::{Quat, Vec3};
 use render_scene::shaderpack::ShaderPackFrameInputs;
@@ -108,6 +108,22 @@ fn a_failed_required_program_fails_the_load() {
     assert!(
         lines[0].starts_with("composite: composite.fsh:") && lines[0].contains("undefined_name"),
         "names the program and its first diagnostic: {error}"
+    );
+}
+
+/// Switching packs shows Vanilla, which removes the block ids, between them; the geometry
+/// adapter still remembers the revision its terrain attributes came from, so the next pack's
+/// ids must arrive under another one or its terrain keeps the previous pack's `mc_Entity`.
+#[test]
+fn the_next_packs_block_ids_never_reuse_a_revision() {
+    let mut revisions = BlockIdRevisions::default();
+    let photon = revisions.publish(Arc::new(vec![-1, 8]));
+    let bsl = revisions.publish(Arc::new(vec![-1, 10001]));
+    assert_ne!(photon.revision, bsl.revision);
+    assert_eq!((photon.block_entity_id)(1), 8);
+    assert_eq!(
+        [(bsl.block_entity_id)(1), (bsl.block_entity_id)(2)],
+        [10001, -1]
     );
 }
 
