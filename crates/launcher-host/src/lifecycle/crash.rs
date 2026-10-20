@@ -11,6 +11,10 @@ pub(crate) mod core_exit;
 mod fallback;
 mod handler;
 pub mod heartbeat;
+#[cfg(not(target_os = "ios"))]
+pub mod monitor;
+#[cfg(target_os = "ios")]
+#[path = "crash/monitor_ios.rs"]
 pub mod monitor;
 pub mod protocol;
 pub mod state;
