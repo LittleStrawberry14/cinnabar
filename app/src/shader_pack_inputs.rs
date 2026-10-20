@@ -563,6 +563,16 @@ mod tests {
         use assets::facts::java_mapping::JavaBlockMapping;
         use std::collections::BTreeSet;
         let mapping = JavaBlockMapping::pinned().expect("the pinned Java mapping validates");
+        // A new mapping source requires reviewing this inventory's Java fluid-state policy.
+        assert_eq!(
+            mapping.payload().source_manifest_sha256,
+            [
+                0x7f, 0x7d, 0xa1, 0xd0, 0xfa, 0xa1, 0x4a, 0xc3, 0x3b, 0xc7, 0xb0, 0x02, 0xc2, 0xec,
+                0xfc, 0x89, 0xd9, 0x16, 0x4a, 0x4d, 0x8a, 0xc7, 0xad, 0x6d, 0xaf, 0xba, 0x6d, 0x00,
+                0x9a, 0x37, 0x92, 0x86
+            ],
+            "review the water-filled inventory for the new pinned Java mapping"
+        );
         let records = assets::read_registry_for_protocol(
             assets::pinned_block_registry_bytes(),
             assets::active_content_registry_protocol(),
