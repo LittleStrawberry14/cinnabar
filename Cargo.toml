@@ -104,8 +104,8 @@ rust-version = "1.99.0"
 
 [workspace.dependencies]
 glam = { version = "0.33.2", default-features = false, features = ["std", "f64"] }
-# One feature set per heavy dependency: any per-crate difference rebuilds it and every dependent.
-# wayland/x11 only select winit backends on Linux; winit ignores them on other targets.
+# wayland/x11 are Linux-only; enable them on Linux targets in app, not in the shared set
+# (they break aarch64-apple-ios builds).
 bevy = { version = "=0.20.0", default-features = false, features = [
     "bevy_anti_alias",
     "smaa_luts",
@@ -128,14 +128,9 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "mouse",
     "multi_threaded",
     "std",
-    "wayland",
-    "x11",
 ] }
-# The noop backend only runs when an instance explicitly enables it (render tests).
-# `std` keeps error scopes per thread; without it, concurrent pipeline compiles share one stack.
 wgpu = { version = "30.0.1", default-features = false, features = ["noop", "std", "wgsl"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga"] }
-# Native bridge and session composition add OS I/O and the multithreaded runtime.
 tokio = { version = "1.52", features = ["io-util", "macros", "rt", "sync", "time"] }
 tokio-util = "0.7"
 web-time = "1.1"
@@ -151,42 +146,29 @@ rayon = "1.11"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 mimalloc = { version = "=0.1.52", default-features = false }
 sha2 = "=0.10.9"
-# Crates that generate random UUIDs add `v4`; wasm32-unknown-unknown has no source for it.
 uuid = "1"
 wasmtime = { version = "=36.0.16", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 wit-bindgen = "=0.57.1"
-# WASI for trusted packet mods only, pinned with wasmtime.
 wasmtime-wasi = { version = "=36.0.16", default-features = false, features = ["preview1"] }
 wasi-preview1-component-adapter-provider = "=36.0.16"
 wit-component = "=0.247.0"
 
-
-# Keep Metal display-link delivery, bounded submissions and indirect validation on wgpu 30.0.1.
 [patch.crates-io]
 naga = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu-core = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu-hal = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
 wgpu-types = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-
 wgpu-naga-bridge = { git = "https://github.com/cinnabar-mc/wgpu", rev = "b9611d40466b1c86cda04099890ab157b1ae5035" }
-
-# Iris conditions allow float option values and conditional expressions.
 pp-rs = { git = "https://github.com/cinnabar-mc/glslpp-rs", rev = "e67c2d3796526e539cf9b1678a83fbdfcfae87c1" }
 
 [profile.dev]
 opt-level = 1
-# Line tables keep backtraces and panics readable; full debuginfo made local builds 20-45% slower.
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
 
-# Shipped binaries carry no debug info; line tables go to a split file per binary (a PDB on
-# Windows, a `.dSYM` on macOS) that package.yml publishes as a release symbol archive. MSVC writes
-# the PDB whatever `strip` says; macOS runs dsymutil before stripping. Linux packaging overrides
-# split-debuginfo and strip and splits after linking (packaging/release-symbols.py), because the
-# linker's `--strip-debug` would also drop the line tables a packed `.dwp` depends on.
 [profile.release]
 codegen-units = 1
 lto = "thin"
@@ -194,8 +176,6 @@ debug = "line-tables-only"
 split-debuginfo = "packed"
 strip = "debuginfo"
 
-# `make play`: release speed with parallel codegen and incremental rebuilds; shipped builds use release.
-# It skips release debug info, so local and Android CI builds pay no dsymutil, PDB or link cost.
 [profile.play]
 inherits = "release"
 codegen-units = 16
@@ -204,6 +184,5 @@ incremental = true
 debug = false
 
 [workspace.lints.clippy]
-# Diagnostics go through `tracing`; stdout/stderr contracts carry a reasoned `#[expect]`.
 print_stderr = "warn"
 print_stdout = "warn"
