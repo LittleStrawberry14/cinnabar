@@ -38,10 +38,11 @@ jobs:
           bash packaging/ios/build-ipa.sh
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: cinnabar-ios-unsigned
           path: |
             target/ios/cinnabar-ios-unsigned.ipa
             target/ios/build.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
