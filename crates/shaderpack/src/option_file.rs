@@ -49,7 +49,8 @@ pub fn write_option_file(
             _ => Ok(()),
         };
     }
-    std::fs::write(path, format_option_file(&values))
+    assets::write_blob_atomic(path, format_option_file(&values).as_bytes())
+        .map_err(io::Error::other)
 }
 
 /// Encodes values as `Properties.store` does, minus its timestamp comment: one `key=value`
@@ -195,6 +196,20 @@ mod tests {
         assert_eq!(
             parse_option_file(written.as_bytes()),
             values(&[("A B", " x=y #z"), ("C", "\u{b3}\u{1F600}")])
+        );
+    }
+    #[test]
+    fn option_replacement_preserves_the_previous_file_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Pack.zip.txt");
+        let previous = dir.path().join("previous.txt");
+        std::fs::write(&path, b"QUALITY=1\n").unwrap();
+        std::fs::hard_link(&path, &previous).unwrap();
+        write_option_file(&path, &options(), &values(&[("GLOW", "true")])).unwrap();
+        assert_eq!(std::fs::read(&previous).unwrap(), b"QUALITY=1\n");
+        assert_eq!(
+            read_option_file(&path).unwrap(),
+            values(&[("GLOW", "true")])
         );
     }
 }

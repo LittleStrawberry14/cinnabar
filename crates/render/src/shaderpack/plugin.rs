@@ -10,7 +10,7 @@ use super::effects::{Effect, EffectCamera, EffectInputs};
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
-    ShaderpackGeometrySettings, ShadowFrustum, device_geometry_budget,
+    ShaderpackGeometrySettings, ShadowFrustum, UNASSIGNED_BLOCK_ID, device_geometry_budget,
 };
 use super::loader::{PackGpu, load};
 use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
@@ -36,8 +36,7 @@ use render_scene::device_memory::DedicatedGraphicsMemory;
 use render_scene::shaderpack::{
     ShaderPackActorIds, ShaderPackDrawnCategories, ShaderPackEffects, ShaderPackFrameInputs,
     ShaderPackIdMaps, ShaderPackLoadProgress, ShaderPackRendering, ShaderPackRequest,
-    ShaderPackSettledRevision,
-    ShaderPackStatus,
+    ShaderPackSettledRevision, ShaderPackStatus,
 };
 use render_scene::{RuntimeStage, RuntimeStageProfiler};
 use std::{
@@ -196,7 +195,10 @@ fn drive_loader(
 
 /// Render-world state of every view drawing through the pack.
 #[derive(Resource, Default)]
-struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
+struct ShaderPackViews {
+    states: Mutex<HashMap<Entity, ViewState>>,
+    failed: HashMap<Entity, (Arc<PackGpu>, [u32; 2])>,
+}
 
 type PreparedView = (Entity, &'static ExtractedView);
 
@@ -210,15 +212,9 @@ fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
-    (mut settings, geometry): (
-        ResMut<ShaderpackGeometrySettings>,
-        Option<Res<ShaderpackGeometry>>,
-    ),
-    mut drawn: ResMut<ShaderPackDrawnCategories>,
-    ids: Option<Res<ShaderpackBlockIds>>,
-    mut replaced: ResMut<ShaderPackEffects>,
+    mut settings: ResMut<ShaderpackGeometrySettings>,
     memory: Option<Res<DedicatedGraphicsMemory>>,
-    mut shown: Local<Option<usize>>,
+    (mut shown, mut revisions): (Local<Option<usize>>, Local<BlockIdRevisions>),
 ) {
     let pack = pack
         .and_then(|p| p.0.clone())
@@ -235,38 +231,14 @@ fn configure_geometry(
     if *settings != wanted {
         *settings = wanted;
     }
-    replaced.set_if_neq(
-        pack.as_deref()
-            .map_or_else(Default::default, replaced_effects),
-    );
-    let draws = |kind: DrawKind| {
-        pack.as_ref()
-            .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
-    };
-    let expands_terrain = geometry.is_some_and(|geometry| geometry.supported());
-    drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: expands_terrain
-            && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
-        actors: draws(DrawKind::Entities),
-        block_entities: draws(DrawKind::Block),
-        hand: draws(DrawKind::Hand),
-    });
+
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
         return;
     }
     *shown = key;
-    let table = pack.and_then(|p| p.block_ids.clone());
-    match table {
-        Some(table) => {
-            let revision = ids.map_or(1, |ids| ids.revision + 1);
-            commands.insert_resource(ShaderpackBlockIds {
-                block_entity_id: Arc::new(move |state| {
-                    table.get(state as usize).copied().unwrap_or(-1)
-                }),
-                revision,
-            });
-        }
+    match pack.and_then(|p| p.block_ids.clone()) {
+        Some(table) => commands.insert_resource(revisions.publish(table)),
         None => commands.remove_resource::<ShaderpackBlockIds>(),
     }
 }
@@ -290,6 +262,71 @@ fn replaced_effects(pack: &PackGpu) -> ShaderPackEffects {
         clouds: draws(&[Effect::Clouds]) || !pack.effects.draws(Effect::Clouds),
         selection: draws(&[Effect::Outline]),
         cracks: draws(&[Effect::DamagedBlock]),
+    }
+}
+
+/// Replaces native queues only after every pack view and terrain category is ready.
+fn configure_replacement(
+    pack: Option<Res<LoadedShaderPack>>,
+    cameras: Query<Entity, With<ShaderPackRendering>>,
+    geometry: Option<Res<ShaderpackGeometry>>,
+    views: Res<ShaderPackViews>,
+    (pipelines, cache): (Res<ActorSkinPipelines>, Res<PipelineCache>),
+    mut drawn: ResMut<ShaderPackDrawnCategories>,
+    mut replaced: ResMut<ShaderPackEffects>,
+) {
+    let states = views.states.lock().unwrap_or_else(|e| e.into_inner());
+    let ready = pack
+        .as_ref()
+        .and_then(|pack| pack.0.as_ref())
+        .filter(|pack| {
+            !cameras.is_empty()
+                && cameras.iter().all(|entity| {
+                    states
+                        .get(&entity)
+                        .is_some_and(|state| Arc::ptr_eq(&state.pack, pack))
+                })
+        });
+    let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
+    let replaces = geometry
+        .is_some_and(|geometry| geometry.supported() && geometry.origin().is_some())
+        && pipelines.kernels(&cache).is_some()
+        && super::draws::complete_world(draws);
+    replaced.set_if_neq(
+        ready
+            .filter(|_| replaces)
+            .map_or_else(Default::default, |pack| replaced_effects(pack)),
+    );
+    drawn.set_if_neq(ShaderPackDrawnCategories {
+        terrain: replaces,
+        actors: replaces,
+        block_entities: replaces,
+        hand: replaces,
+    });
+}
+
+/// Hands out the revisions [`ShaderpackBlockIds`] are published under, each one no earlier
+/// table had. The geometry adapter keeps the revision it last derived terrain attributes from
+/// while Vanilla shows between two packs, so counting on from the current resource, which
+/// Vanilla removes, would hand the next pack that same revision and leave its terrain with the
+/// previous pack's ids.
+#[derive(Default)]
+pub(super) struct BlockIdRevisions(u64);
+
+impl BlockIdRevisions {
+    /// `table`'s ids by sequential block state ([`UNASSIGNED_BLOCK_ID`] past its end) under a
+    /// revision no earlier table had.
+    pub(super) fn publish(&mut self, table: Arc<Vec<i32>>) -> ShaderpackBlockIds {
+        self.0 += 1;
+        ShaderpackBlockIds {
+            block_entity_id: Arc::new(move |state| {
+                table
+                    .get(state as usize)
+                    .copied()
+                    .unwrap_or(UNASSIGNED_BLOCK_ID)
+            }),
+            revision: self.0,
+        }
     }
 }
 
@@ -319,9 +356,11 @@ fn prepare_views(
         .map_or(DEFAULT_HAND_FOV_DEGREES.to_radians(), |frame| {
             frame.fov_radians
         });
-    let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
+    let ShaderPackViews { states, failed } = &mut *views;
+    let states = states.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
         states.clear();
+        failed.clear();
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
@@ -330,17 +369,36 @@ fn prepare_views(
     if let Some(geometry) = geometry.as_deref_mut() {
         geometry.retain_shadow_views(|view| cameras.contains(view) && pack.shadow.is_some());
     }
+    failed.retain(|entity, _| cameras.contains(*entity));
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
     for (entity, view) in &cameras {
         let screen = [view.viewport.z.max(1), view.viewport.w.max(1)];
-        let state = states
-            .entry(entity)
-            .or_insert_with(|| ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen));
-        if !state.matches(&pack, screen) {
-            *state = ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen);
+        if failed
+            .get(&entity)
+            .is_some_and(|(previous, size)| Arc::ptr_eq(previous, &pack) && *size == screen)
+        {
+            continue;
         }
+        failed.remove(&entity);
+        if states
+            .get(&entity)
+            .is_none_or(|state| !state.matches(&pack, screen))
+        {
+            match ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen) {
+                Ok(state) => {
+                    states.insert(entity, state);
+                }
+                Err(error) => {
+                    states.remove(&entity);
+                    failed.insert(entity, (Arc::clone(&pack), screen));
+                    warn!(pack = %pack.name, "shader pack view could not be prepared: {error}");
+                    continue;
+                }
+            }
+        }
+        let state = states.get_mut(&entity).expect("the view was prepared");
         let (_, rotation, position) = view.world_from_view.to_scale_rotation_translation();
         let camera = ViewCamera {
             position,
@@ -381,7 +439,7 @@ fn prepare_views(
                 .inverse()
                 .transform_vector3(Vec3::Z);
             let frustum = ShadowFrustum::new(
-                &pack.shadow_culling,
+                &pack.settings.shadow,
                 render_distance,
                 position.as_dvec3(),
                 frame.projection() * frame.model_view(),
@@ -438,6 +496,9 @@ impl TerrainDraws for ViewTerrain<'_> {
 /// Vanilla scene instead (`passes::copy_scene`).
 fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
     world
+        .get_resource::<ShaderPackDrawnCategories>()
+        .filter(|drawn| drawn.terrain)?;
+    world
         .get_resource::<ShaderpackGeometry>()
         .filter(|geometry| geometry.supported() && geometry.origin().is_some())
 }
@@ -451,7 +512,7 @@ pub(crate) fn draws_world(world: &World, view: Entity) -> bool {
             .get_resource::<ShaderPackViews>()
             .is_some_and(|views| {
                 views
-                    .0
+                    .states
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&view)
@@ -471,7 +532,7 @@ fn shaderpack_post(
     let Some(views) = world.get_resource::<ShaderPackViews>() else {
         return Ok(());
     };
-    let mut states = views.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut states = views.states.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = states.get_mut(&entity) else {
         return Ok(());
     };
@@ -682,6 +743,9 @@ pub(super) fn finish(app: &mut App) {
                     .in_set(RenderSystems::PrepareResources)
                     .after(bevy::render::view::prepare_view_targets)
                     .after(super::geometry::prepare_shaderpack_geometry),
+                configure_replacement
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(prepare_views),
                 super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
             ),
         );
