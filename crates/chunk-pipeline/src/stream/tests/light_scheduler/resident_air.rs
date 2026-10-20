@@ -411,3 +411,25 @@ fn stale_air_returns_are_pruned_a_bounded_slice_per_dispatch() {
     }
     assert!(stream.air_requeued.is_empty());
 }
+
+/// Replacing an urgent removal while credit is exhausted must preserve the current removal.
+#[test]
+fn superseded_deferred_removal_cannot_replace_current_ready_revision() {
+    let mut stream = lit_stream(1);
+    let key = SubChunkKey::new(1, 0, 0, 0);
+    resident(&mut stream, key, super::uniform_sub_chunk(0));
+    let first = stream.mark_dirty_exact_with_priority(key, Instant::now(), true);
+    assert_eq!(stream.dispatch_mesh_jobs_with_limits([8.0; 3], 1, 0), 0);
+    assert!(stream.pop_mesh_change().is_none());
+    let current = stream.mark_dirty_exact(key, Instant::now());
+    assert_ne!(first, current);
+    assert!(stream.mesh_jobs.pending[&key].urgent);
+
+    assert_eq!(stream.dispatch_mesh_jobs_with_limits([8.0; 3], 1, 1), 0);
+    assert!(matches!(
+        stream.pop_mesh_change(),
+        Some(WorldMeshChange::Remove { key: removed, generation, .. })
+            if removed == key && generation == current
+    ));
+    assert!(!stream.mesh_jobs.pending.contains_key(&key));
+}

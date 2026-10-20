@@ -246,6 +246,13 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
 
     /// Startup dependencies enter ingress ahead of ordinary work but behind urgent records.
     pub(super) fn enqueue_prioritized(&mut self, key: SubChunkKey, pending: P, startup: bool) {
+        if self
+            .pending
+            .get(&key)
+            .is_none_or(|previous| previous.revision() != pending.revision())
+        {
+            self.retire_lane_ownership(&key);
+        }
         if startup && !pending.urgent() {
             self.startup_scan.push_back((key, pending.revision()));
         } else {
@@ -268,12 +275,17 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
     /// Removes a pending job and retires its lane ownership and retry history.
     pub(super) fn remove_pending(&mut self, key: &SubChunkKey) -> Option<P> {
         self.retries.remove(key);
+        self.retire_lane_ownership(key);
+        self.pending.remove(key)
+    }
+
+    /// Retires a key from both lane generations without scanning unrelated candidates.
+    fn retire_lane_ownership(&mut self, key: &SubChunkKey) {
         for lane in self.lanes.iter_mut().chain(&mut self.refresh.previous) {
             lane.ready.remove(key);
             lane.deferred.remove(key);
             lane.rechecks.remove(key);
         }
-        self.pending.remove(key)
     }
 
     /// Drops queued work; dispatched jobs keep their records.
