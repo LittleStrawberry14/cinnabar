@@ -51,10 +51,15 @@ async fn post_hello_upload_excess_waits_and_controller_cancel_stops_the_read() {
     let (completed_early, read_before_cancel, cancelled_at, retired_at, result) = {
         let serving = run(&registry, stream);
         tokio::pin!(serving);
-        let early = tokio::select! {
-            biased;
-            result = &mut serving => Some(result),
-            () = tokio::time::sleep(Duration::from_millis(500)) => None,
+        let early = match futures::poll!(&mut serving) {
+            std::task::Poll::Ready(result) => Some(result),
+            std::task::Poll::Pending => {
+                tokio::time::advance(Duration::from_millis(500)).await;
+                match futures::poll!(&mut serving) {
+                    std::task::Poll::Ready(result) => Some(result),
+                    std::task::Poll::Pending => None,
+                }
+            }
         };
         let completed_early = early.is_some();
         let read_before_cancel = read.load(Ordering::Relaxed);

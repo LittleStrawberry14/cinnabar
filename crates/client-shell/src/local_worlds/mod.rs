@@ -6,6 +6,8 @@
 
 use launcher::menu::settings_options::SettingId;
 mod client;
+#[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
+mod native;
 
 use launcher::local_worlds::model;
 #[cfg(test)]
@@ -88,63 +90,6 @@ impl LocalWorlds {
         Ok(())
     }
 
-    /// Selects native session routing while retaining the same manager/store/process worker.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub fn attach_native(&mut self, layout: &InstallLayout) -> io::Result<()> {
-        let manager = self.attach_manager(layout)?;
-        self.client = Some(WorldsClient::spawn_native(manager)?);
-        self.playing = false;
-        self.menu = WorldsMenu::default();
-        self.input(Input::Refresh);
-        self.dispatch(vec![Effect::LoadPrefs]);
-        Ok(())
-    }
-
-    /// Captures a real selected opening only from the actual native world worker.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub fn native_selection(
-        &mut self,
-        id: &str,
-    ) -> io::Result<launcher_host::local_worlds::NativeLocalWorldSelection> {
-        if self.client.as_ref().is_none_or(|client| !client.native()) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "native world worker is unavailable",
-            ));
-        }
-        let selection = self
-            .manager
-            .as_ref()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "local world manager is unavailable",
-                )
-            })?
-            .native_local_world(id)?;
-        self.native_playing = Some(selection.clone());
-        Ok(selection)
-    }
-
-    /// Captures cleanup on the same native worker, never a mutable latest-world lookup.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub fn native_retirement(
-        &self,
-        selection: launcher_host::local_worlds::NativeLocalWorldSelection,
-    ) -> io::Result<NativeLocalWorldRetirement> {
-        let client = self
-            .client
-            .as_ref()
-            .filter(|client| client.native())
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "native world worker is unavailable",
-                )
-            })?;
-        Ok(client.native_retirement(selection))
-    }
-
     /// Preserves the existing manager across account-core attachment changes.
     fn attach_manager(&mut self, layout: &InstallLayout) -> io::Result<Manager> {
         let manager = match &self.manager {
@@ -177,15 +122,6 @@ impl LocalWorlds {
         if let Some(manager) = &self.manager {
             manager.close();
         }
-    }
-
-    /// Captures a real played opening; account and network work stay with the existing host worker.
-    #[cfg(all(feature = "native-networking", not(target_arch = "wasm32")))]
-    pub fn native_host_intent(&self) -> Option<launcher_host::local_worlds::NativeHostIntent> {
-        if !self.playing || self.client.is_none() {
-            return None;
-        }
-        self.manager.as_ref()?.native_host_intent().ok()
     }
 
     pub fn menu(&self) -> &WorldsMenu {
