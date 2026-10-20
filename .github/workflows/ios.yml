@@ -7,6 +7,8 @@ on:
       - packaging/ios/**
       - .github/workflows/ios.yml
       - Cargo.toml
+      - Makefile
+      - assets/**
       - app/**
       - crates/**
 
