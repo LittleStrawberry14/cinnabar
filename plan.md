@@ -397,8 +397,8 @@ Compiled entities, blocks and icons share a compressed disk cache. Hits restore 
 records; archive, session, startup artwork and device inputs invalidate affected entries.
 Actor artwork prepares current demand immediately and prewarms unused pages within a
 per-frame budget. Skin slots and append-only artwork arrays use geometric capacity, and
-shared artwork textures and bindings stay resident. Worker rig-plan preparation and measured
-cold arrival latency remain open acceptance work.
+each artwork slot retains its own unchanged texture and bindings. Worker rig-plan preparation
+and measured cold arrival latency remain open acceptance work.
 Hardware join and frame acceptance still needs the full capture matrix below.
 
 Check deterministic work in CI: bounded queues, invalidation, stale-work rejection,

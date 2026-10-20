@@ -1,9 +1,6 @@
-//! Device-bounded immutable artwork; publications retain textures with unchanged pixels.
+//! Slot-owned artwork prepares current demand immediately and prewarms unused pages.
 use super::*;
-use std::{
-    collections::hash_map::RandomState,
-    sync::{Arc, Mutex},
-};
+use std::{collections::hash_map::RandomState, sync::Arc};
 use {
     crate::actor::gpu::ActorDrawSpan,
     render_model::{
@@ -11,20 +8,17 @@ use {
     },
 };
 
-#[path = "artwork_cache.rs"]
-mod cache;
+#[path = "artwork_source.rs"]
+mod source;
 use crate::gpu_allocation;
-use cache::{TextureCache, TextureKey};
+use source::TextureKey;
 
 pub(super) const PAGES_PER_FRAME: usize = 4;
 const PAGE_BYTES_PER_FRAME: usize = 8 * 1024 * 1024;
 
-#[derive(Clone)]
 pub(super) struct GpuArtworkPage {
     source: TextureKey,
     _texture: Texture,
-    /// Every alias agrees which layer prefix has been initialized successfully.
-    initialized: Arc<Mutex<TextureKey>>,
     pub view: TextureView,
     pub bind_group: Option<BindGroup>,
     pub color_mask: bool,
@@ -129,11 +123,11 @@ impl GpuArtwork {
         )
     }
 
-    /// Reuses immutable textures and limits only speculative background preparation.
+    /// Retains each slot independently and limits only speculative background preparation.
     fn prepare_pages(
         &mut self,
         pages: &ActorArtworkPages,
-        demanded: impl Iterator<Item = ActorArtworkPageId> + Clone,
+        demanded: impl Iterator<Item = ActorArtworkPageId>,
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> bool {
@@ -177,23 +171,10 @@ impl GpuArtwork {
                 );
                 return false;
             }
-            let wanted: std::collections::HashSet<_> = demanded.clone().collect();
-            // Drain keeps geometric host capacity across immutable publications.
-            #[expect(clippy::drain_collect, reason = "retain the page vector's allocation")]
-            let mut old: Vec<_> = self.pages.drain(..).collect();
-            let retained = TextureCache::new(old.iter().flatten().cloned().collect());
+            self.pages.truncate(pages.pages.len());
             self.pages.resize_with(pages.pages.len(), || None);
             self.prewarm_cursor = 0;
             for (index, page) in pages.pages.iter().enumerate() {
-                if let Some(gpu) = retained.shared(page) {
-                    self.pages[index] = Some(gpu);
-                } else {
-                    self.pages[index] = old
-                        .get_mut(index)
-                        .and_then(Option::take)
-                        .filter(|_| wanted.contains(&((index + 1) as ActorArtworkPageId)))
-                        .filter(|gpu| gpu._texture.depth_or_array_layers() >= page.layers);
-                }
                 if let Some(gpu) = &mut self.pages[index]
                     && (gpu.color_mask != page.color_mask || gpu.multitexture != page.multitexture)
                 {
@@ -206,12 +187,11 @@ impl GpuArtwork {
         if self.rejected {
             return false;
         }
-        let mut retained = None;
         let mut prepared = 0;
         let mut bytes = 0;
         let mut attempted = std::collections::HashSet::new();
         let first_background = self.prewarm_cursor;
-        let requests = demanded.clone().map(|id| (id, false)).chain(
+        let requests = demanded.map(|id| (id, false)).chain(
             (first_background..pages.pages.len())
                 .map(|index| ((index + 1) as ActorArtworkPageId, true)),
         );
@@ -223,8 +203,11 @@ impl GpuArtwork {
                 continue;
             };
             let page = &pages.pages[index];
+            let current = self.pages[index]
+                .as_ref()
+                .is_some_and(|gpu| gpu.source.shares_pixels_with(page));
             if background {
-                if self.pages[index].is_some() {
+                if current || attempted.contains(&index) {
                     self.prewarm_cursor = index + 1;
                     continue;
                 }
@@ -237,47 +220,27 @@ impl GpuArtwork {
                 prepared += 1;
                 bytes += page.rgba8.len();
                 self.prewarm_cursor = index + 1;
-            } else if self.pages[index]
-                .as_ref()
-                .is_some_and(|gpu| gpu.source.shares_pixels_with(page))
-            {
+            } else if current {
                 continue;
             }
-            if !background && !attempted.insert(index) {
+            if !attempted.insert(index) {
                 continue;
             }
-            let retained = retained.get_or_insert_with(|| {
-                let mut cache = TextureCache::new(self.pages.iter().flatten().cloned().collect());
-                for id in demanded.clone().collect::<std::collections::HashSet<_>>() {
-                    if let Some(page) = usize::from(id)
-                        .checked_sub(1)
-                        .and_then(|index| pages.pages.get(index))
-                    {
-                        cache.require(page, &self.source_hasher);
-                    }
-                }
-                cache
-            });
-            let source = retained.key(page, &self.source_hasher);
-            let previous = self.pages[index].take();
-            let previous_source = previous.as_ref().map(|gpu| gpu.source.clone());
+            let source = TextureKey::new(page, &self.source_hasher);
+            let mut previous = self.pages[index].take();
             let has_fallback = previous
                 .as_ref()
                 .is_some_and(|gpu| gpu.source.contains_layers(page.layers));
-            let gpu = retained
-                .get(&source)
-                .map(|mut gpu| {
-                    gpu.source = source.clone();
-                    gpu
-                })
-                .or_else(|| {
-                    previous
-                        .as_ref()
-                        .and_then(|gpu| append_layers(gpu, page, source.clone(), device, queue))
-                })
-                .or_else(|| allocate_page(device, queue, page, source, !has_fallback))
-                .or_else(|| previous.filter(|gpu| gpu.source.contains_layers(page.layers)));
-            let Some(mut gpu) = gpu else {
+            let reused = previous
+                .as_mut()
+                .is_some_and(|gpu| reuse_page(gpu, page, &source, device, queue).is_some());
+            let gpu = if reused {
+                previous
+            } else {
+                allocate_page(device, queue, page, source, !has_fallback)
+                    .or_else(|| previous.filter(|gpu| gpu.source.contains_layers(page.layers)))
+            };
+            let Some(gpu) = gpu else {
                 if background {
                     continue;
                 }
@@ -285,17 +248,8 @@ impl GpuArtwork {
                 self.rejected = true;
                 return false;
             };
-            if gpu.color_mask != page.color_mask || gpu.multitexture != page.multitexture {
-                gpu.bind_group = None;
-                gpu.color_mask = page.color_mask;
-                gpu.multitexture = page.multitexture;
-            }
-            retained.replace(previous_source.as_ref(), gpu.clone());
             self.pages[index] = Some(gpu);
         }
-        #[cfg(feature = "tracy")]
-        let _retire = bevy::log::info_span!("actor.artwork_retire").entered();
-        drop(retained);
         true
     }
 
@@ -323,33 +277,26 @@ impl GpuArtwork {
     }
 }
 
-/// Writes only new layers into spare storage; existing layers remain immutable for earlier draws.
-fn append_layers(
-    previous: &GpuArtworkPage,
+/// Reuses this slot's exact content or appends beyond its own initialized prefix.
+fn reuse_page(
+    previous: &mut GpuArtworkPage,
     page: &render_model::ActorTexturePage,
-    source: TextureKey,
+    source: &TextureKey,
     device: &RenderDevice,
     queue: &RenderQueue,
-) -> Option<GpuArtworkPage> {
-    previous.source.appended_layers(page)?;
-    if previous._texture.width() != u32::from(page.width)
-        || previous._texture.height() != u32::from(page.height)
-        || previous._texture.depth_or_array_layers() < page.layers
-    {
-        return None;
-    }
-    let mut initialized = previous
-        .initialized
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if !initialized.covers(page) {
-        let first = initialized.appended_layers(page)?;
+) -> Option<()> {
+    if previous.source != *source {
+        let first = previous.source.appended_layers(page)?;
+        if previous._texture.width() != u32::from(page.width)
+            || previous._texture.height() != u32::from(page.height)
+            || previous._texture.depth_or_array_layers() < page.layers
+        {
+            return None;
+        }
         write_page(device, queue, &previous._texture, page, first)?;
-        *initialized = source.clone();
     }
-    let mut gpu = previous.clone();
-    gpu.source = source;
-    Some(gpu)
+    previous.source = source.clone();
+    Some(())
 }
 
 /// Publishes a page only after both its pixels and array view are usable.
@@ -368,7 +315,6 @@ fn allocate_page(
         })
     })?;
     Some(GpuArtworkPage {
-        initialized: Arc::new(Mutex::new(source.clone())),
         source,
         _texture: texture,
         view,

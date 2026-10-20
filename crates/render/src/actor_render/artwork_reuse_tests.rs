@@ -52,30 +52,7 @@ fn publication_of_one_new_page_retains_existing_textures_and_glint() {
 }
 
 #[test]
-fn route_and_page_order_changes_reuse_immutable_textures() {
-    let (device, queue) = gpu();
-    let (mut pages, _) = artwork().with_equipment_rasters(&[render_model::EquipmentRaster {
-        width: 8,
-        height: 8,
-        rgba8: vec![31; 8 * 8 * 4].into(),
-    }]);
-    let mut gpu = GpuArtwork::default();
-    assert!(gpu.prepare(&pages, &device, &queue));
-    let ids: Vec<_> = gpu
-        .pages
-        .iter()
-        .flatten()
-        .map(|page| page._texture.id())
-        .collect();
-    pages.entity_identity = [3; 32];
-    pages.pages = pages.pages.iter().rev().cloned().collect();
-    assert!(gpu.prepare(&pages, &device, &queue));
-    assert_eq!(gpu.page(0).unwrap()._texture.id(), ids[1]);
-    assert_eq!(gpu.page(1).unwrap()._texture.id(), ids[0]);
-}
-
-#[test]
-fn equal_pixels_in_independent_allocations_reuse_textures_after_material_changes() {
+fn equal_pixels_in_the_same_slot_reuse_its_texture_after_material_changes() {
     let (device, queue) = gpu();
     let mut pages = artwork();
     let mut gpu = GpuArtwork::default();
