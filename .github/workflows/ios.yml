@@ -7,6 +7,8 @@ on:
       - packaging/ios/**
       - .github/workflows/ios.yml
       - Cargo.toml
+      - app/**
+      - crates/**
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -19,18 +21,16 @@ jobs:
   build:
     name: unsigned IPA
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust + iOS target
         run: |
-          # Project pins 1.99.0 via rust-toolchain.toml
           rustup toolchain install 1.99.0 --profile minimal
           rustup target add aarch64-apple-ios --toolchain 1.99.0
           rustup default 1.99.0
           rustc --version
-          rustup show
 
       - name: Build unsigned IPA
         run: |
@@ -40,6 +40,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cinnabar-ios-unsigned
-          path: target/ios/cinnabar-ios-unsigned.ipa
+          path: |
+            target/ios/cinnabar-ios-unsigned.ipa
+            target/ios/build.log
           if-no-files-found: error
           retention-days: 7
