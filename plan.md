@@ -211,6 +211,10 @@ with [client presentation](crates/client-presentation/src/lib.rs) and
 [rendering](crates/render/src/lib.rs). The open gates require complete behavioral
 and rendered qualification, not initial implementation of those systems.
 
+Pure numeric Molang expressions use bound f32 lane programs with load fusion;
+mixed values and effects retain the generic evaluator, including exact budget tails.
+Full rig history and rendered qualification remain part of `P4.3-RIGS`.
+
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
 - [ ] `P4.4-LIVE-ACTOR` — Close spawn, movement, rotation and teleport ground-contact
