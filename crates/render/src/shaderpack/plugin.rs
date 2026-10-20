@@ -247,7 +247,8 @@ fn configure_replacement(
         });
     let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
     drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: geometry.is_some_and(|geometry| geometry.supported())
+        terrain: geometry
+            .is_some_and(|geometry| geometry.supported() && geometry.all_sections_fit())
             && super::draws::complete_terrain(draws),
     });
 }
@@ -374,7 +375,10 @@ fn pack_inputs(
     geometry: Option<&ShaderpackGeometry>,
 ) -> ShaderPackFrameInputs {
     let mut inputs = *inputs;
-    if let Some(horizon) = geometry.and_then(ShaderpackGeometry::budget_horizon) {
+    if let Some(horizon) = geometry
+        .filter(|geometry| geometry.all_sections_fit())
+        .and_then(ShaderpackGeometry::budget_horizon)
+    {
         inputs.render_distance = inputs.render_distance.min(horizon.max(MIN_PACK_FAR));
     }
     inputs
