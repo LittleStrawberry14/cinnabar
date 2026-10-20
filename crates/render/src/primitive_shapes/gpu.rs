@@ -87,7 +87,7 @@ impl Arena {
                 0,
                 self.last_capacity as u64 * self.bytes,
             );
-            queue.submit([encoder.finish()]);
+            queue.profiled_submit([encoder.finish()]);
             *last = next;
             self.last_capacity = target;
         }

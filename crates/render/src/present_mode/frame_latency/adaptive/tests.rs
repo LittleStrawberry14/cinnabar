@@ -1,5 +1,106 @@
 use super::*;
 use bevy::render::MainWorld;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
+/// Advances only when fixture work executes, so the timer never depends on wall time.
+#[derive(Resource, Clone, Default)]
+struct WorkClock(Arc<AtomicU64>);
+
+/// Models the blocking drawable acquisition with a deterministic twenty-millisecond wait.
+fn acquire(clock: Res<WorkClock>) {
+    clock.0.fetch_add(20, Ordering::Relaxed);
+}
+
+/// Models attachment or view-target preparation that must stay in CPU feeding work.
+fn prepare_targets(clock: Res<WorkClock>) {
+    clock.0.fetch_add(10, Ordering::Relaxed);
+}
+
+#[test]
+fn latency_review_keeps_unrelated_view_preparation_in_cpu_work() {
+    use bevy::ecs::schedule::SingleThreadedExecutor;
+    for preparation_first in [true, false] {
+        let mut world = World::new();
+        let adaptive = AdaptiveFrameLatency::default();
+        let epoch = adaptive.epoch;
+        let clock = WorkClock::default();
+        let timer = clock.clone();
+        world.insert_resource(clock);
+        world.insert_resource(adaptive);
+        let mut schedule = Schedule::default();
+        schedule.set_executor(SingleThreadedExecutor::new());
+        // Preparation is permitted as soon as acquisition returns.
+        if preparation_first {
+            schedule.add_systems(prepare_targets.after(acquire));
+        }
+        schedule.add_systems(measure_acquisition(acquire, move || {
+            epoch + Duration::from_millis(timer.0.load(Ordering::Relaxed))
+        }));
+        if !preparation_first {
+            schedule.add_systems(prepare_targets.after(acquire));
+        }
+        schedule.run(&mut world);
+        let mut adaptive = world.resource_mut::<AdaptiveFrameLatency>();
+        adaptive.frame = 1;
+        adaptive.started = Some(epoch);
+        adaptive.finish(epoch + Duration::from_millis(35), 0);
+        assert_eq!(adaptive.cpu[1].unwrap().render, Duration::from_millis(15));
+    }
+}
+
+#[test]
+fn latency_review_partial_gpu_frames_cannot_accumulate_headroom() {
+    let (mut app, _) = fixture();
+    let policy = app.world().resource::<PresentModePolicy>().clone();
+    let mut adaptive = app.world_mut().resource_mut::<AdaptiveFrameLatency>();
+    for frame in 1..=250 {
+        let at = Duration::from_micros(frame * 16_667);
+        let index = frame as usize % adaptive.cpu.len();
+        adaptive.cpu[index] = Some(FrameWorkSample {
+            frame,
+            at,
+            render: Duration::from_millis(4),
+            gpu: Duration::ZERO,
+        });
+        let now = adaptive.epoch + at;
+        let gpu = (frame % 2 == 1).then_some(Duration::from_millis(5));
+        adaptive.record_gpu(frame, gpu, now, &policy);
+        assert_eq!(
+            policy.frame_latency.latency.load(Ordering::Acquire),
+            2,
+            "incomplete GPU frames must break the headroom window"
+        );
+    }
+}
+
+#[test]
+fn latency_review_pregraph_queue_uploads_reject_the_cpu_gpu_pair() {
+    use crate::queue_writes::ProfiledQueue as _;
+    let mut adaptive = AdaptiveFrameLatency::default();
+    let epoch = adaptive.epoch;
+    let (device, queue) = wgpu::Device::noop(&Default::default());
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("unmeasured upload"),
+        size: 4,
+        usage: wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    adaptive.frame = 1;
+    adaptive.started = Some(epoch);
+    adaptive.unmeasured_work = crate::queue_writes::unmeasured_work_generation();
+    queue.profiled_write_buffer(&buffer, 0, &[1, 2, 3, 4]);
+    adaptive.finish(
+        epoch + Duration::from_millis(4),
+        crate::queue_writes::unmeasured_work_generation(),
+    );
+    assert!(
+        adaptive.cpu[1].is_none(),
+        "graph timing excludes queue staging uploads"
+    );
+}
 
 /// Creates fixed-refresh context and a shared recommendation without a native surface.
 fn fixture() -> (SubApp, Entity) {
@@ -25,14 +126,14 @@ fn acquisition_and_surface_recreation_do_not_become_render_work() {
     adaptive.frame = 1;
     adaptive.started = Some(epoch);
     adaptive.surface_elapsed = Duration::from_millis(20);
-    adaptive.finish(epoch + Duration::from_millis(25));
+    adaptive.finish(epoch + Duration::from_millis(25), 0);
     assert_eq!(adaptive.cpu[1].unwrap().render, Duration::from_millis(5));
     assert_eq!(adaptive.frame(), 1);
 
     adaptive.frame = 2;
     adaptive.started = Some(epoch);
     adaptive.discard_current_frame();
-    adaptive.finish(epoch + Duration::from_secs(1));
+    adaptive.finish(epoch + Duration::from_secs(1), 0);
     assert!(adaptive.cpu[2].is_none());
 }
 
@@ -88,7 +189,6 @@ fn matched_gpu_readbacks_qualify_headroom_but_old_or_partial_ones_do_not() {
         });
         let now = adaptive.epoch + at;
         adaptive.record_gpu(frame + 1, Some(Duration::from_millis(5)), now, &policy);
-        adaptive.record_gpu(frame, None, now, &policy);
         assert!(adaptive.cpu[index].is_some());
         adaptive.record_gpu(frame, Some(Duration::from_millis(5)), now, &policy);
         assert!(adaptive.cpu[index].is_none());

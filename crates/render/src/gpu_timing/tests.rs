@@ -74,6 +74,103 @@ pub(super) fn complete_readback(
     }
 }
 
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn latency_review_coarse_span_is_open_before_upload_prefix() {
+    use bevy::render::renderer::{RenderGraph, RenderGraphSystems};
+    let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
+    let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
+    timestamps.begin(1, |_, _, _| unreachable!("no readback yet"));
+    let mut world = World::new();
+    world.insert_resource(device.clone());
+    world.insert_resource(timestamps);
+    world.init_resource::<PendingCommandBuffers>();
+    let mut graph = RenderGraph::base_schedule();
+    graph.add_systems(
+        (|world: &World| {
+            let timestamps = world.resource::<GpuTimestamps>();
+            assert_ne!(
+                timestamps.frame.open_frame.load(Ordering::Acquire),
+                NO_SPAN,
+                "upload-prefix execution must be covered before camera work starts"
+            );
+        })
+        .in_set(RenderGraphSystems::Render),
+    );
+    world.add_schedule(graph);
+    install_readback(&mut world);
+    world.run_schedule(RenderGraph);
+    queue.submit(
+        world
+            .resource_mut::<PendingCommandBuffers>()
+            .finish()
+            .collect::<Vec<_>>(),
+    );
+    let mut timestamps = world.remove_resource::<GpuTimestamps>().unwrap();
+    timestamps.request_readback(&queue);
+    complete_readback(&mut timestamps, &device, &queue);
+    let mut read = false;
+    timestamps.begin(2, |id, _, complete| {
+        assert_eq!(id, 1);
+        assert!(
+            complete,
+            "the complete root-graph bracket is valid controller evidence"
+        );
+        read = true;
+    });
+    assert!(read);
+}
+
+#[test]
+fn latency_review_camera_only_span_cannot_prove_complete_gpu_coverage() {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
+    let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
+    timestamps.begin(1, |_, _, _| unreachable!("no readback yet"));
+    let mut world = World::new();
+    world.insert_resource(timestamps);
+    let (_, buffers) = record(&mut world, &device, |world, context| {
+        timed(world, context, RuntimeStage::GpuOpaque, |_| {});
+    });
+    queue.submit(buffers);
+    let mut timestamps = world.remove_resource::<GpuTimestamps>().unwrap();
+    finish_frame(&mut timestamps, &device, &queue);
+    complete_readback(&mut timestamps, &device, &queue);
+    let mut read = false;
+    timestamps.begin(2, |id, _, complete| {
+        assert_eq!(id, 1);
+        assert!(
+            !complete,
+            "a camera-only span omits uploads before the camera"
+        );
+        read = true;
+    });
+    assert!(read);
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn latency_review_full_query_ring_restores_two_queued_frames() {
+    use crate::present_mode::{PresentModePolicy, frame_latency::adaptive::AdaptiveFrameLatency};
+    let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
+    let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
+    for _ in 0..SLOTS {
+        let slot = timestamps.ring.acquire().unwrap();
+        timestamps.ring.submit(slot);
+    }
+    let policy = PresentModePolicy::default();
+    policy.publish_frame_latency(std::num::NonZeroU32::MIN);
+    let mut world = World::new();
+    world.insert_resource(timestamps);
+    world.insert_resource(policy.clone());
+    world.insert_resource(AdaptiveFrameLatency::default());
+    world.insert_resource(RuntimeStageProfiler::default());
+    world.run_system_once(begin_gpu_frame).unwrap();
+    assert_eq!(policy.frame_latency_for_vsync(true).get(), 2);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn completed_metal_samples_drain_when_every_readback_slot_is_occupied() {
@@ -335,7 +432,7 @@ fn late_terrain_pass_queries_follow_frame_detail() {
     let (device, queue) = noop_device(wgpu::Features::TIMESTAMP_QUERY);
     for detailed in [false, true] {
         let mut timestamps = GpuTimestamps::new(&device, &queue, detailed).unwrap();
-        timestamps.begin(|_| unreachable!("first frame has no readback"));
+        timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
         let mut world = World::new();
         world.insert_resource(timestamps);
         let writes = render_pass_timestamps(&world, stage);
@@ -367,7 +464,7 @@ fn cull_compute_pass_queries_follow_frame_detail() {
     ];
     for detailed in [false, true] {
         let mut timestamps = GpuTimestamps::new(&device, &queue, detailed).unwrap();
-        timestamps.begin(|_| unreachable!("first frame has no readback"));
+        timestamps.begin(0, |_, _, _| unreachable!("first frame has no readback"));
         let mut world = World::new();
         world.insert_resource(timestamps);
         let expected = detailed && !cfg!(target_os = "macos");
@@ -629,8 +726,8 @@ fn readback_includes_every_camera_in_submission_order() {
         },
     );
     world.add_schedule(views);
-    let mut root = bevy::ecs::schedule::Schedule::new(RenderGraph);
-    root.add_systems(camera_driver);
+    let mut root = RenderGraph::base_schedule();
+    root.add_systems(camera_driver.in_set(bevy::render::renderer::RenderGraphSystems::Render));
     world.add_schedule(root);
     install_readback(&mut world);
     world.run_schedule(RenderGraph);

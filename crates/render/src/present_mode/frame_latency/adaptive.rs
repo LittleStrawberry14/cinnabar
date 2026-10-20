@@ -3,9 +3,13 @@
 use std::time::{Duration, Instant};
 
 use bevy::{
+    ecs::{
+        schedule::{ScheduleCleanupPolicy, ScheduleConfigs, ScheduleError},
+        system::{IntoSystem, ScheduleSystem},
+    },
     prelude::*,
     render::{
-        Extract, ExtractSchedule, Render, RenderSystems, renderer::RenderAdapter,
+        Extract, ExtractSchedule, Render, RenderStartup, RenderSystems, renderer::RenderAdapter,
         view::window::prepare_windows,
     },
     window::{PresentMode, PrimaryWindow, WindowOccluded},
@@ -34,6 +38,7 @@ pub(crate) struct AdaptiveFrameLatency {
     started: Option<Instant>,
     surface_started: Option<Instant>,
     surface_elapsed: Duration,
+    unmeasured_work: u64,
     cpu: [Option<FrameWorkSample>; crate::gpu_timing::readback::SLOTS + 1],
 }
 
@@ -47,12 +52,19 @@ impl Default for AdaptiveFrameLatency {
             started: None,
             surface_started: None,
             surface_elapsed: Duration::ZERO,
+            unmeasured_work: 0,
             cpu: [None; crate::gpu_timing::readback::SLOTS + 1],
         }
     }
 }
 
 impl AdaptiveFrameLatency {
+    /// Retains two queued frames until complete GPU coverage can establish new headroom.
+    pub(crate) fn invalidate_gpu(&mut self, policy: &PresentModePolicy) {
+        self.model = FrameLatencyPolicy::default();
+        self.cpu.fill(None);
+        policy.publish_frame_latency(std::num::NonZeroU32::new(2).expect("two is nonzero"));
+    }
     /// Identifies this render schedule for its query readback slot.
     pub(crate) fn frame(&self) -> u64 {
         self.frame
@@ -63,10 +75,17 @@ impl AdaptiveFrameLatency {
         self.started = None;
     }
 
-    /// Retains feeding work on the caller's clock, leaving acquisition outside the sample.
-    fn finish(&mut self, now: Instant) {
+    /// Retains feeding work on the caller's clock. Returns false and clears evidence when
+    /// preparation queued GPU work outside the graph's timestamps.
+    fn finish(&mut self, now: Instant, unmeasured_work: u64) -> bool {
+        if unmeasured_work != self.unmeasured_work {
+            self.started = None;
+            self.cpu.fill(None);
+            self.model = FrameLatencyPolicy::default();
+            return false;
+        }
         let Some(started) = self.started.take() else {
-            return;
+            return true;
         };
         let index = self.frame as usize % self.cpu.len();
         self.cpu[index] = Some(FrameWorkSample {
@@ -77,6 +96,7 @@ impl AdaptiveFrameLatency {
                 .saturating_sub(self.surface_elapsed),
             gpu: Duration::ZERO,
         });
+        true
     }
 
     /// Accepts only a matching CPU sample and a complete coarse GPU span; sparse pass timing
@@ -88,12 +108,15 @@ impl AdaptiveFrameLatency {
         now: Instant,
         policy: &PresentModePolicy,
     ) {
-        let Some(gpu) = gpu else { return };
         let index = frame as usize % self.cpu.len();
         let Some(mut sample) = self.cpu[index].filter(|sample| sample.frame == frame) else {
             return;
         };
         self.cpu[index] = None;
+        let Some(gpu) = gpu else {
+            self.invalidate_gpu(policy);
+            return;
+        };
         sample.gpu = gpu;
         let refresh = self.refresh();
         let selected = self.model.update(
@@ -120,18 +143,53 @@ impl AdaptiveFrameLatency {
 pub(super) fn install(app: &mut SubApp) {
     app.init_resource::<AdaptiveFrameLatency>()
         .add_systems(ExtractSchedule, extract_context)
+        .add_systems(RenderStartup, install_acquisition_timing)
         .add_systems(
             Render,
             (
                 begin_frame.before(RenderSystems::ExtractCommands),
-                end_frame.in_set(RenderSystems::PostCleanup),
-                (
-                    begin_surface.before(prepare_windows),
-                    end_surface.after(prepare_windows),
-                )
-                    .in_set(RenderSystems::PrepareViews),
+                end_frame.after(RenderSystems::PostCleanup),
             ),
         );
+}
+
+/// Replaces window preparation once all plugins have registered their render systems.
+fn install_acquisition_timing(world: &mut World) {
+    world.schedule_scope(Render, |world, schedule| {
+        let removed = match schedule.remove_systems_in_set(
+            prepare_windows,
+            world,
+            ScheduleCleanupPolicy::RemoveSystemsOnly,
+        ) {
+            Ok(removed) => removed,
+            Err(ScheduleError::SetNotFound) => 0,
+            Err(error) => panic!("window preparation cannot be timed: {error}"),
+        };
+        if removed != 0 {
+            schedule.add_systems(
+                measure_acquisition(prepare_windows, Instant::now)
+                    .in_set(RenderSystems::PrepareViews),
+            );
+        }
+    });
+}
+
+/// Times window acquisition using the caller's clock while retaining the wrapped system's sets.
+fn measure_acquisition<S, M, C>(system: S, now: C) -> ScheduleConfigs<ScheduleSystem>
+where
+    S: IntoSystem<(), (), M>,
+    C: Fn() -> Instant + Clone + Send + Sync + 'static,
+{
+    let start_clock = now.clone();
+    let begin = move |mut adaptive: ResMut<AdaptiveFrameLatency>| {
+        adaptive.surface_started = Some(start_clock());
+    };
+    let end = move |mut adaptive: ResMut<AdaptiveFrameLatency>| {
+        if let Some(started) = adaptive.surface_started.take() {
+            adaptive.surface_elapsed += now().saturating_duration_since(started);
+        }
+    };
+    begin.pipe(system).pipe(end).into_configs()
 }
 
 /// Invalidates measurements when the primary window's delivery context changes.
@@ -187,6 +245,7 @@ fn begin_frame(
     adaptive.frame += 1;
     adaptive.surface_elapsed = Duration::ZERO;
     adaptive.surface_started = None;
+    adaptive.unmeasured_work = crate::queue_writes::unmeasured_work_generation();
     let supported = *supported.get_or_insert_with(|| {
         matches!(
             adapter.get_info().backend,
@@ -201,19 +260,12 @@ fn begin_frame(
 }
 
 /// Retains this frame's render feeding work after subtracting surface acquisition.
-fn end_frame(mut adaptive: ResMut<AdaptiveFrameLatency>) {
-    adaptive.finish(Instant::now());
-}
-
-/// Starts the drawable-acquisition interval to exclude from CPU feeding work.
-fn begin_surface(mut adaptive: ResMut<AdaptiveFrameLatency>) {
-    adaptive.surface_started = Some(Instant::now());
-}
-
-/// Removes surface backpressure from the workload that chooses queue depth.
-fn end_surface(mut adaptive: ResMut<AdaptiveFrameLatency>) {
-    if let Some(started) = adaptive.surface_started.take() {
-        adaptive.surface_elapsed += started.elapsed();
+fn end_frame(mut adaptive: ResMut<AdaptiveFrameLatency>, policy: Res<PresentModePolicy>) {
+    if !adaptive.finish(
+        Instant::now(),
+        crate::queue_writes::unmeasured_work_generation(),
+    ) {
+        policy.publish_frame_latency(std::num::NonZeroU32::new(2).expect("two is nonzero"));
     }
 }
 

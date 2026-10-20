@@ -145,3 +145,15 @@ fn many_fast_samples_still_require_two_seconds_of_headroom() {
         assert_eq!(selected.get(), if id < 290 { 2 } else { 1 });
     }
 }
+
+#[test]
+fn latency_review_gaps_in_readback_coverage_cannot_prove_headroom() {
+    let mut policy = FrameLatencyPolicy::default();
+    for index in 1..=150 {
+        assert_eq!(
+            frame(&mut policy, index * 2, 4, 5),
+            2,
+            "unmeasured frames must break sustained headroom qualification"
+        );
+    }
+}

@@ -207,15 +207,46 @@ fn install_builtin_timing(world: &mut World) {
     });
 }
 
-/// Resolves frame queries after all cameras have recorded their commands.
+/// Brackets the non-Metal root graph, including uploads before the first camera.
 fn install_readback(world: &mut World) {
     let _ = world.try_schedule_scope(bevy::render::renderer::RenderGraph, |_, schedule| {
+        #[cfg(target_os = "macos")]
         schedule.add_systems(
             encode_readback
                 .after(bevy::core_pipeline::schedule::camera_driver)
                 .in_set(bevy::render::renderer::RenderGraphSystems::Render),
         );
+        #[cfg(not(target_os = "macos"))]
+        {
+            use bevy::render::renderer::RenderGraphSystems;
+            schedule.add_systems((
+                begin_coarse_graph
+                    .after(RenderGraphSystems::Begin)
+                    .before(RenderGraphSystems::Render),
+                encode_readback
+                    .after(RenderGraphSystems::Render)
+                    .before(RenderGraphSystems::Submit),
+            ));
+        }
     });
+}
+
+/// Opens ordinary frame timing before any upload or camera command buffer is recorded.
+#[cfg(not(target_os = "macos"))]
+fn begin_coarse_graph(world: &World, mut context: RenderContext) {
+    let Some(timestamps) = world.get_resource::<GpuTimestamps>() else {
+        return;
+    };
+    if timestamps.pass_detail {
+        return;
+    }
+    if let Some((span, false)) = timestamps.open_graph_span(RuntimeStage::GpuFrame) {
+        mark(context.command_encoder(), span.queries, span.begin);
+        timestamps
+            .frame
+            .graph_coverage
+            .store(true, Ordering::Release);
+    }
 }
 
 /// Copies completed pass and draw queries into this frame's nonblocking readback slot.
@@ -324,6 +355,8 @@ struct FrameSpans {
     started: AtomicBool,
     /// Begin query of a whole-frame span that [`GpuTimestamps::encode_readback`] still has to close.
     open_frame: AtomicU32,
+    /// The opening marker precedes the root graph's upload prefix, not only its cameras.
+    graph_coverage: AtomicBool,
     /// Pass and draw span counts retained for readback, packed high and low, or `NOT_RECORDED`.
     recorded: AtomicU64,
 }
@@ -336,6 +369,7 @@ struct ReadbackSlot {
     stages: [RuntimeStage; SLOT_SPANS as usize],
     /// Render schedule that recorded these queries, retained across asynchronous mapping.
     frame_id: u64,
+    graph_coverage: bool,
 }
 
 #[derive(Resource)]
@@ -391,6 +425,7 @@ impl GpuTimestamps {
                 draws: 0,
                 stages: [RuntimeStage::GpuFrame; SLOT_SPANS as usize],
                 frame_id: 0,
+                graph_coverage: false,
             }),
             ring: ReadbackRing::default(),
             period_ns: queue.get_timestamp_period(),
@@ -405,6 +440,7 @@ impl GpuTimestamps {
                 stages: std::array::from_fn(|_| AtomicU8::new(0)),
                 started: AtomicBool::new(false),
                 open_frame: AtomicU32::new(NO_SPAN),
+                graph_coverage: AtomicBool::new(false),
                 recorded: AtomicU64::new(NOT_RECORDED),
             },
             health: health::QueryHealth::requested("pass_queries"),
@@ -504,7 +540,8 @@ impl GpuTimestamps {
                     slot.buffer.unmap();
                     #[cfg(feature = "tracy")]
                     tracy::record(&frame);
-                    let whole_frame = slot.passes == 1
+                    let whole_frame = slot.graph_coverage
+                        && slot.passes == 1
                         && slot.draws == 0
                         && slot.stages[0] == RuntimeStage::GpuFrame;
                     sink(slot.frame_id, &frame, whole_frame);
@@ -513,6 +550,7 @@ impl GpuTimestamps {
                     if let Some(health) = &mut self.health {
                         health.map_failure();
                     }
+                    sink(slot.frame_id, &GpuFrameTimes::default(), false);
                 }
             }
             slot.state.store(PENDING, Ordering::Relaxed);
@@ -529,6 +567,7 @@ impl GpuTimestamps {
         self.frame.draws.store(0, Ordering::Relaxed);
         self.frame.started.store(false, Ordering::Relaxed);
         self.frame.open_frame.store(NO_SPAN, Ordering::Relaxed);
+        self.frame.graph_coverage.store(false, Ordering::Relaxed);
         self.frame.recorded.store(NOT_RECORDED, Ordering::Relaxed);
         self.frame.slot.store(slot, Ordering::Release);
     }
@@ -618,6 +657,7 @@ impl GpuTimestamps {
         let target = &mut self.slots[index];
         target.passes = passes;
         target.draws = draws;
+        target.graph_coverage = self.frame.graph_coverage.load(Ordering::Acquire);
         for span in (0..passes).chain(PASS_SPANS..PASS_SPANS + draws) {
             let stage = self.frame.stages[span as usize].load(Ordering::Relaxed);
             target.stages[span as usize] = RuntimeStage::ALL[stage as usize];
@@ -674,10 +714,12 @@ fn begin_gpu_frame(
     profiler: Res<RuntimeStageProfiler>,
     detail: Option<Res<DetailedGpuTiming>>,
     categories: Option<Res<categories::CategoryProfiling>>,
-    #[cfg(target_os = "windows")] mut adaptive: Option<
+    #[cfg(any(target_os = "windows", test))] mut adaptive: Option<
         ResMut<crate::present_mode::frame_latency::adaptive::AdaptiveFrameLatency>,
     >,
-    #[cfg(target_os = "windows")] policy: Option<Res<crate::present_mode::PresentModePolicy>>,
+    #[cfg(any(target_os = "windows", test))] policy: Option<
+        Res<crate::present_mode::PresentModePolicy>,
+    >,
 ) {
     let Some(mut timestamps) = timestamps else {
         return;
@@ -687,13 +729,15 @@ fn begin_gpu_frame(
         || categories.is_some()
         || detail.is_some_and(|detail| detail.0);
     // Reads slots mapped by the previous frame's device poll.
-    #[cfg(target_os = "windows")]
-    let frame_id = adaptive.as_ref().map_or(0, |adaptive| adaptive.frame());
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "windows", test))]
+    let frame_id = adaptive
+        .as_ref()
+        .map_or_else(|| profiler.frame_id(), |adaptive| adaptive.frame());
+    #[cfg(not(any(target_os = "windows", test)))]
     let frame_id = profiler.frame_id();
     timestamps.begin(frame_id, |id, frame, whole_frame| {
         profiler.record_gpu_frame(frame);
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", test))]
         if let (Some(adaptive), Some(policy)) = (adaptive.as_mut(), policy.as_ref()) {
             adaptive.record_gpu(
                 id,
@@ -704,9 +748,15 @@ fn begin_gpu_frame(
                 policy,
             );
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", test)))]
         let _ = (id, whole_frame);
     });
+    #[cfg(any(target_os = "windows", test))]
+    if timestamps.frame.slot.load(Ordering::Acquire) == NO_SLOT
+        && let (Some(adaptive), Some(policy)) = (adaptive.as_mut(), policy.as_ref())
+    {
+        adaptive.invalidate_gpu(policy);
+    }
 }
 
 fn request_gpu_frame_readback(timestamps: Option<ResMut<GpuTimestamps>>, queue: Res<RenderQueue>) {

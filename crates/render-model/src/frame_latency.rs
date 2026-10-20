@@ -72,7 +72,7 @@ impl Default for FrameLatencyPolicy {
 
 impl FrameLatencyPolicy {
     /// Advances the policy without reading a clock. Missing or stale evidence keeps two frames;
-    /// duplicate readbacks never count toward either sustained threshold.
+    /// duplicates never count toward either threshold, and gaps restart headroom qualification.
     pub fn update(
         &mut self,
         now: Duration,
@@ -97,6 +97,15 @@ impl FrameLatencyPolicy {
         }) else {
             return self.latency;
         };
+        if self
+            .last
+            .is_some_and(|last| sample.frame != last.frame.saturating_add(1))
+        {
+            self.headroom_since = None;
+            self.evidence = Evidence::default();
+            self.len = 0;
+            self.next = 0;
+        }
         self.last = Some(sample);
         self.samples[self.next] = sample;
         self.next = (self.next + 1) % HISTORY;
