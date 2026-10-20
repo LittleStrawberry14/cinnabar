@@ -164,7 +164,7 @@ fn candidate_queue_replacements_and_removals_match_current_priorities() {
         for x in 0..MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
             let key = SubChunkKey::new(0, x as i32, 0, 0);
             let mut candidate = PendingSchedulerCandidate::new(key, revision, view, x % 5 == 0);
-            candidate.transfer = (x + revision as usize) % 7 == 0;
+            candidate.transfer = (x + revision as usize).is_multiple_of(7);
             queue.push(candidate);
             expected.insert(key, candidate);
         }
