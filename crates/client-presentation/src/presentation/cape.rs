@@ -106,10 +106,10 @@ pub fn apply_capes<'a>(
         let Some(rig) = rig_of(identity.runtime_id) else {
             continue;
         };
-        let bindings = rig.attachments.map_or_else(
-            || Cow::Owned(cape.bind(rig.bone_names)),
-            |bindings| Cow::Borrowed(bindings.cape()),
-        );
+        let bindings = rig
+            .attachments
+            .and_then(|bindings| bindings.cape_for(cape))
+            .map_or_else(|| Cow::Owned(cape.bind(rig.bone_names)), Cow::Borrowed);
         let body = &batch.submissions[index];
         let mut submission: ActorRigSubmission = body.clone();
         submission.input.identity.layer = ACTOR_LAYER_CAPE;

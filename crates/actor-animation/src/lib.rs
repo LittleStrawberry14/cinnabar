@@ -96,8 +96,6 @@ pub use motion::{ACTOR_SWING_TICKS, SwingEffects};
 use motion::{MotionInput, MotionState};
 pub use pose::MODEL_PART_ORIGIN_Y;
 use pose::compose_pose;
-#[cfg(test)]
-use pose::sample_clips;
 pub use render::RenderTextureLayer;
 pub use skin_layers::SkinRenderLayer;
 pub use tick::{ActorTickContext, StackVariant, WornArmor};

@@ -204,10 +204,13 @@ impl UiPresentationRuntime {
             discard_collapsed_faces(vertices);
         }
         if draw_cape && let Some(cape) = &self.gui_models.cape {
-            let bindings = rig.attachments.map_or_else(
-                || std::borrow::Cow::Owned(cape.bind(rig.bone_names)),
-                |bindings| std::borrow::Cow::Borrowed(bindings.cape()),
-            );
+            let bindings = rig
+                .attachments
+                .and_then(|bindings| bindings.cape_for(cape))
+                .map_or_else(
+                    || std::borrow::Cow::Owned(cape.bind(rig.bone_names)),
+                    std::borrow::Cow::Borrowed,
+                );
             let pose = cape.pose_bound(
                 &bindings,
                 |index| rig.rest.get(index).and_then(render_bone),

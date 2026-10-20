@@ -415,3 +415,17 @@ fn prepared_cosmetic_anchors_rebind_skins_and_retain_equipped_catalog_revisions(
     assert_eq!(changed.anchor(new), Some(0));
     assert_eq!(changed.rebind(&[]).anchor(old), None);
 }
+
+#[test]
+fn prepared_cape_indices_decline_a_different_cape_with_the_same_bone_count() {
+    let model = fixture_model();
+    let names = vec![Box::<str>::from("body"), Box::<str>::from("cape")];
+    let bound = crate::ActorAttachmentBindings::from_cape(&model.bones, &names);
+    let cape = fixture_cape();
+    assert!(bound.cape_for(&cape).is_some());
+    let mut different = model.bones.into_vec();
+    different[0].name = "torso".into();
+    different[1].parent = Some("torso".into());
+    let other = super::CapeRig::new(cape.geometry.clone(), &different);
+    assert!(bound.cape_for(&other).is_none());
+}

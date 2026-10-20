@@ -17,6 +17,7 @@ mod tests;
 #[derive(Clone)]
 pub struct CapeRig {
     pub geometry: ActorRigGeometry,
+    pub(crate) binding_key: [u8; 32],
     bone_names: Vec<Box<str>>,
     pose_frames: Vec<CapePoseFrame>,
 }
@@ -61,6 +62,7 @@ impl CapeRig {
     /// Retains a resolved mesh with its matching authored bone order and bind frames.
     pub fn new(geometry: ActorRigGeometry, bones: &[assets::EntityGeometryBone]) -> Self {
         Self {
+            binding_key: crate::actor_bindings::cape_binding_key(bones),
             pose_frames: pose_frames(bones, &geometry.bone_pivots),
             bone_names: bones.iter().map(|bone| bone.name.clone()).collect(),
             geometry,
