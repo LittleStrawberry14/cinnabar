@@ -67,6 +67,8 @@ pub(crate) struct ResidentFaces {
     pub(crate) origin: [i32; 3],
     /// Origin epoch the positions were written against; stale faces are not drawn.
     pub(crate) epoch: u64,
+    /// Expansion input generation used to bake atlas coordinates and material attributes.
+    pub(crate) generation: u64,
     /// Unique to this placement: a draw list built from it stays valid while the section
     /// keeps this stamp.
     pub(crate) stamp: u64,
@@ -116,6 +118,7 @@ pub(crate) struct Residency {
     face_bytes: u64,
     pub(crate) origin: Option<IVec3>,
     pub(crate) epoch: u64,
+    pub(crate) generation: u64,
     /// Stamp the next committed placement takes.
     next_stamp: u64,
     /// Draw-origin slots given back by sections that left, reused first.
@@ -155,6 +158,7 @@ impl Residency {
             face_bytes,
             origin: None,
             epoch: 0,
+            generation: 0,
             next_stamp: 0,
             free_slots: Vec::new(),
             slot_count: 0,
@@ -214,6 +218,12 @@ impl Residency {
         if self.queued.insert(entity) {
             self.queue.push_back(entity);
         }
+    }
+
+    /// Withdraws faces baked against previous inputs and queues every live section to rebuild.
+    pub(crate) fn invalidate_contents(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        self.generation += 1;
+        self.enqueue_all(entities);
     }
 
     /// Queues every resident section, as after an origin, table or atlas change.
@@ -526,6 +536,7 @@ impl Residency {
                 facing: plan.facing.clone(),
                 origin,
                 epoch: self.epoch,
+                generation: self.generation,
                 stamp: self.next_stamp,
                 slot,
             },
