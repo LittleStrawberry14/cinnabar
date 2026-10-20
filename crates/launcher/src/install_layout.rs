@@ -71,4 +71,5 @@ pub struct InstallLayout {
     transient_runtime_root: PathBuf,
 }
 
-include!("install_layout_impl.rs");
+include!("install_layout_impl_a.rs");
+include!("install_layout_impl_b.rs");
