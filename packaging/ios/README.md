@@ -1,22 +1,20 @@
 # iOS (experimental)
 
-This is the start of an iOS port of Cinnabar.
+Builds an **unsigned .ipa** with a real `aarch64-apple-ios` Mach-O client binary.
 
-**Current status:** scaffolding only.  
-It produces an **unsigned .ipa** that is **not a working game** yet.
+### Get the IPA
+1. Actions → **iOS** workflow → download `cinnabar-ios-unsigned`
+2. Install with SideStore / TrollStore / similar (you need JIT for Wasmtime mods)
 
-### How to get the IPA
-1. Go to the Actions tab on GitHub
-2. Select the **iOS** workflow
-3. Click **Run workflow**
-4. Download the artifact called `cinnabar-ios-unsigned`
+### What works so far
+- Full Rust client compiles for iOS
+- App package uses a real executable (not a shell stub)
+- Sandbox layout under `Documents/cinnabar`
+- Desktop crash-monitor / Wayland / arboard gated off
 
-You will need a tool like Sideloadly / TrollStore / AltStore to install unsigned IPAs.
+### Still incomplete
+- First-run assets / Go core may be missing on device
+- Touch UI and iOS-specific polish
+- Production signing
 
-### What still needs to be done
-- Real Bevy + Metal windowing on iOS
-- Go core cross-compile
-- Asset download + first-run flow
-- Proper app lifecycle and signing setup
-
-This will take more work. The structure is in place so we can keep building on it.
+Expect crashes or a black screen until assets + core path are filled in. This is the first bootable packaging step.

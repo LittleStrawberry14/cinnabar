@@ -5,15 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-[lib]
-crate-type = ["staticlib", "cdylib"]
+[package.metadata.cinnabar]
+platform-specific = ["ios"]
+
+[[bin]]
+name = "cinnabar"
+path = "src/main.rs"
+test = false
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
-
-# Pull the real client the same way Android does. This will surface iOS compile errors.
-[target.'cfg(target_os = "ios")'.dependencies]
 cinnabar = { path = "../../../app", default-features = false }
 launcher = { path = "../../../crates/launcher" }
 
