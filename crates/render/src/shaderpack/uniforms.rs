@@ -7,7 +7,7 @@
 //! final clip position to wgpu's. As in Minecraft, `gbufferModelView` holds only the camera
 //! rotation and positions are relative to `cameraPosition`.
 
-use super::geometry::ShadowCullSettings;
+use super::geometry::shadow_cull::ShadowCullSettings;
 use assets::facts::java_mapping::JavaBlockMapping;
 use bevy::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use render_scene::shaderpack::ShaderPackFrameInputs;
