@@ -9,7 +9,7 @@ use std::{
 };
 
 #[cfg(any(target_os = "windows", test))]
-pub(super) mod adaptive;
+pub(crate) mod adaptive;
 
 #[cfg(test)]
 use bevy::prelude::{Result, World};

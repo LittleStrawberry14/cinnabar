@@ -673,7 +673,7 @@ fn begin_gpu_frame(
     detail: Option<Res<DetailedGpuTiming>>,
     categories: Option<Res<categories::CategoryProfiling>>,
     #[cfg(target_os = "windows")] mut adaptive: Option<
-        ResMut<crate::present_mode::AdaptiveFrameLatency>,
+        ResMut<crate::present_mode::frame_latency::adaptive::AdaptiveFrameLatency>,
     >,
     #[cfg(target_os = "windows")] policy: Option<Res<crate::present_mode::PresentModePolicy>>,
 ) {

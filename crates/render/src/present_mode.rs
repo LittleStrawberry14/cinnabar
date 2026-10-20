@@ -1,6 +1,4 @@
-mod frame_latency;
-#[cfg(target_os = "windows")]
-pub(crate) use frame_latency::adaptive::AdaptiveFrameLatency;
+pub(crate) mod frame_latency;
 
 pub use frame_latency::frame_latency_for_vsync;
 
