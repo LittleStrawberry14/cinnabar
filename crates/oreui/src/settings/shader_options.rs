@@ -14,6 +14,9 @@ use launcher::menu::{MenuAction, MenuView};
 use launcher::shader_options::{Action, Control, Element, Input, Status, View};
 use ui_engine::engine::screen::PaintError;
 
+#[cfg(test)]
+mod tests;
+
 type Rgba = [u8; 4];
 
 /// Iris's colour for the label of a changed option.
