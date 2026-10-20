@@ -19,6 +19,7 @@ impl CandidateQueue {
     }
 
     /// Returns the number of distinct keys owned by this queue.
+    #[cfg(test)]
     pub(in crate::stream) fn len(&self) -> usize {
         self.heap.len()
     }
