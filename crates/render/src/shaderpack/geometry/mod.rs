@@ -60,7 +60,7 @@ mod gpu;
 pub(crate) mod jobs;
 mod pipelines;
 mod residency;
-mod shadow_cull;
+pub(super) mod shadow_cull;
 mod vertex;
 
 use bevy::math::Mat4;
