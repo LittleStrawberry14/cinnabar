@@ -1,7 +1,10 @@
 //! Appearance-owned indices shared by cape and cosmetic attachment sampling.
 use assets::{EntityGeometryBone, RuntimeEntityAssets};
 use cosmetics::Item;
-use std::{mem::size_of, sync::Arc};
+use std::{
+    mem::{align_of, size_of},
+    sync::Arc,
+};
 
 /// One cape bone's body driver and parent, matched with the original case-insensitive rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,16 +114,24 @@ impl ActorAttachmentBindings {
 
     /// Counts boxed arrays and the complete shared metadata conservatively for plan admission.
     pub fn retained_bytes(&self) -> Option<usize> {
-        let arrays = std::mem::size_of_val(self.cape.as_ref())
-            .checked_add(std::mem::size_of_val(self.anchors.as_ref()))?
-            .checked_add(std::mem::size_of_val(self.cape_names.as_ref()))?
-            .checked_add(2 * size_of::<usize>())?;
-        self.cape_names
+        let Self {
+            cape_names,
+            cape,
+            anchors,
+            generation: _,
+        } = self;
+        let arrays = std::mem::size_of_val(cape.as_ref())
+            .checked_add(std::mem::size_of_val(anchors.as_ref()))?
+            .checked_add(std::mem::size_of_val(cape_names.as_ref()))?
+            .checked_add(2 * size_of::<usize>())?
+            .checked_add(align_of::<CapeNames>())?;
+        cape_names
             .iter()
             .try_fold(size_of::<Self>().checked_add(arrays)?, |bytes, name| {
+                let CapeNames { bone, parent } = name;
                 bytes
-                    .checked_add(name.bone.len())?
-                    .checked_add(name.parent.as_ref().map_or(0, |parent| parent.len()))
+                    .checked_add(bone.len())?
+                    .checked_add(parent.as_ref().map_or(0, |parent| parent.len()))
             })
     }
 }

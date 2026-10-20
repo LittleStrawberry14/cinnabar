@@ -291,7 +291,12 @@ impl ChannelBindings {
 
     /// Counts the exact boxed payload retained beside a rig template.
     pub(super) fn retained_bytes(&self) -> usize {
-        std::mem::size_of_val(self.named.as_ref())
+        let Self {
+            named,
+            #[cfg(test)]
+                reference: _,
+        } = self;
+        std::mem::size_of_val(named.as_ref())
     }
 }
 

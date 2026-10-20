@@ -16,9 +16,12 @@ struct ClipMask {
 impl ClipMasks {
     /// Counts each boxed record and its sparse bone payload against the shared plan budget.
     pub(super) fn retained_bytes(&self) -> Option<usize> {
-        self.clips.iter().try_fold(
-            std::mem::size_of::<Self>().checked_add(std::mem::size_of_val(self.clips.as_ref()))?,
-            |bytes, mask| bytes.checked_add(std::mem::size_of_val(mask.bones.as_ref())),
+        let Self { geometry: _, clips } = self;
+        clips.iter().try_fold(
+            std::mem::size_of::<Self>().checked_add(std::mem::size_of_val(clips.as_ref()))?,
+            |bytes, ClipMask { clip: _, bones }| {
+                bytes.checked_add(std::mem::size_of_val(bones.as_ref()))
+            },
         )
     }
 }
