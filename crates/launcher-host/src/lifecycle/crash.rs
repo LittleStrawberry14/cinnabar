@@ -9,6 +9,10 @@
 pub mod attachments;
 pub(crate) mod core_exit;
 mod fallback;
+#[cfg(not(target_os = "ios"))]
+mod handler;
+#[cfg(target_os = "ios")]
+#[path = "crash/handler_ios.rs"]
 mod handler;
 pub mod heartbeat;
 #[cfg(not(target_os = "ios"))]
