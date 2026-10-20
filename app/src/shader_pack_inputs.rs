@@ -131,7 +131,7 @@ fn mesh_like_java_for_shader_packs(
     if stream.java_meshing() != wanted.as_deref()
         && let Some(stream) = client_world.stream.as_mut()
     {
-        stream.set_java_meshing(wanted);
+        stream.set_java_meshing(wanted, web_time::Instant::now());
     }
 }
 
@@ -556,6 +556,43 @@ mod tests {
             sky_biomes([0.0; 3], |_| None)
                 .iter()
                 .all(|(_, w)| *w == 0.0)
+        );
+    }
+    #[test]
+    fn water_filled_inventory_conforms_to_the_pinned_java_mapping() {
+        use assets::facts::java_mapping::JavaBlockMapping;
+        use std::collections::BTreeSet;
+        let mapping = JavaBlockMapping::pinned().expect("the pinned Java mapping validates");
+        let records = assets::read_registry_for_protocol(
+            assets::pinned_block_registry_bytes(),
+            assets::active_content_registry_protocol(),
+        )
+        .unwrap();
+        let java_names = [
+            "minecraft:seagrass",
+            "minecraft:tall_seagrass",
+            "minecraft:kelp",
+            "minecraft:kelp_plant",
+            "minecraft:bubble_column",
+        ];
+        let mut seen = BTreeSet::new();
+        let expected: BTreeSet<_> = records
+            .iter()
+            .filter_map(|record| {
+                let java = mapping.java_block_state(record.sequential_id)?;
+                if !java_names.contains(&java.name()) {
+                    return None;
+                }
+                seen.insert(java.name());
+                Some(record.name.as_ref())
+            })
+            .collect();
+        assert_eq!(seen, java_names.into_iter().collect());
+        assert_eq!(
+            JAVA_WATER_FILLED.into_iter().collect::<BTreeSet<_>>(),
+            expected,
+            "water-filled inventory for Java {}",
+            assets::facts::java_mapping::java_edition()
         );
     }
 }

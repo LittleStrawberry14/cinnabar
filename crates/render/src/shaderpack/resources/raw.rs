@@ -14,6 +14,7 @@ pub(super) struct RawSpec {
     pub(super) internal: BufferFormat,
     pub(super) size: [u32; 3],
     channels: usize,
+    bgr: bool,
     pixel: PixelType,
 }
 
@@ -95,7 +96,8 @@ impl RawSpec {
                 .ok()
                 .filter(|v| (1..=MAX_CUSTOM_TEXTURE_SIDE).contains(v))?;
         }
-        let channels = match spec.get(2 + dims)?.trim_end_matches("_INTEGER") {
+        let order = spec.get(2 + dims)?.trim_end_matches("_INTEGER");
+        let channels = match order {
             "RED" | "R" => 1,
             "RG" => 2,
             "RGB" | "BGR" => 3,
@@ -118,6 +120,7 @@ impl RawSpec {
             internal,
             size,
             channels,
+            bgr: matches!(order, "BGR" | "BGRA"),
             pixel,
         })
     }
@@ -153,7 +156,8 @@ impl RawSpec {
         for texel in bytes.chunks_exact(stride).take(texels) {
             for c in 0..channels {
                 let value = if c < self.channels {
-                    let at = c * self.pixel.bytes();
+                    let source = if self.bgr && c < 3 { 2 - c } else { c };
+                    let at = source * self.pixel.bytes();
                     self.pixel
                         .read(&texel[at..at + self.pixel.bytes()], integer)
                 } else if c == 3 {
@@ -213,6 +217,34 @@ mod tests {
                 "UNSIGNED_BYTE"
             ]))
             .is_none()
+        );
+    }
+
+    #[test]
+    fn raw_bgr_pixels_preserve_red_and_blue_channels() {
+        let raw =
+            RawSpec::parse(&spec(&["TEXTURE_1D", "RGBA8", "1", "BGR", "UNSIGNED_BYTE"])).unwrap();
+        assert_eq!(
+            raw.convert(&[0, 0, 255], TextureFormat::Rgba8Unorm)
+                .unwrap(),
+            [255, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn raw_bgra_pixels_preserve_color_and_alpha() {
+        let raw = RawSpec::parse(&spec(&[
+            "TEXTURE_1D",
+            "RGBA8",
+            "1",
+            "BGRA",
+            "UNSIGNED_BYTE",
+        ]))
+        .unwrap();
+        assert_eq!(
+            raw.convert(&[0, 0, 255, 51], TextureFormat::Rgba8Unorm)
+                .unwrap(),
+            [255, 0, 0, 51]
         );
     }
 

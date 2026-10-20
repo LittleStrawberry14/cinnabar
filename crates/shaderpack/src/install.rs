@@ -2,7 +2,6 @@
 //! shader pack screen does with dropped files.
 
 use std::{
-    ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -47,6 +46,8 @@ fn is_shader_pack(path: &Path) -> bool {
 /// under a staging name and renamed into place once complete. Blocking file work: run it off
 /// the frame.
 pub fn add_dropped_packs(paths: &[PathBuf], dir: &Path) -> DropOutcome {
+    static IMPORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _import = IMPORTS.lock().unwrap_or_else(|error| error.into_inner());
     let packs: Vec<_> = paths
         .iter()
         .filter_map(|path| Some((path, path.file_name()?.to_owned())))
@@ -66,7 +67,13 @@ pub fn add_dropped_packs(paths: &[PathBuf], dir: &Path) -> DropOutcome {
         if fs::symlink_metadata(&target).is_ok() {
             return DropOutcome::AlreadyExists(name);
         }
-        if let Err(error) = fs::create_dir_all(dir).and_then(|()| copy_pack(path, &target)) {
+        let copied = reject_overlap(path, &target)
+            .and_then(|()| fs::create_dir_all(dir))
+            .and_then(|()| copy_pack(path, &target));
+        if let Err(error) = copied {
+            if fs::symlink_metadata(&target).is_ok() {
+                return DropOutcome::AlreadyExists(name);
+            }
             return DropOutcome::CopyFailed {
                 name,
                 error: error.to_string(),
@@ -77,27 +84,63 @@ pub fn add_dropped_packs(paths: &[PathBuf], dir: &Path) -> DropOutcome {
     DropOutcome::Added(added)
 }
 
+/// Formats an OS file name for an import result.
 fn display_name(name: &std::ffi::OsStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
-/// Copies `source` (a zip or folder) to a staging sibling of `target`, then renames it into
-/// place; a failed copy removes the staging entry.
+/// Resolves existing symlinks and normalizes a destination whose final components may be missing.
+fn resolve_destination(path: &Path) -> io::Result<PathBuf> {
+    use std::path::Component;
+    let mut resolved = PathBuf::new();
+    for component in std::path::absolute(path)?.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            component => {
+                resolved.push(component.as_os_str());
+                match resolved.canonicalize() {
+                    Ok(canonical) => resolved = canonical,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+/// Rejects directory copies whose source and destination are ancestors of one another.
+fn reject_overlap(source: &Path, target: &Path) -> io::Result<()> {
+    if source.is_dir() {
+        let source = source.canonicalize()?;
+        let target = resolve_destination(target)?;
+        if target.starts_with(&source) || source.starts_with(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pack source and destination overlap",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Copies into unique reserved staging, then publishes atomically without replacing a target.
 fn copy_pack(source: &Path, target: &Path) -> io::Result<()> {
-    let mut staging_name = target.file_name().map(OsString::from).unwrap_or_default();
-    staging_name.push(STAGING_SUFFIX);
-    let staging = target.with_file_name(staging_name);
-    remove_entry(&staging)?;
-    let copied = if source.is_dir() {
-        copy_folder(source, &staging)
+    reject_overlap(source, target)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".shaderpack-")
+        .suffix(STAGING_SUFFIX)
+        .tempdir_in(target.parent().unwrap_or_else(|| Path::new(".")))?;
+    let payload = staging.path().join("pack");
+    if source.is_dir() {
+        copy_folder(source, &payload)?;
     } else {
-        fs::copy(source, &staging).map(drop)
+        fs::copy(source, &payload)?;
     }
-    .and_then(|()| fs::rename(&staging, target));
-    if copied.is_err() {
-        let _ = remove_entry(&staging);
-    }
-    copied
+    assets::rename_no_replace(&payload, target)
 }
 
 /// Copies a folder tree; symlinks are skipped, as [`crate::PackSource::open`] skips them.
@@ -114,19 +157,6 @@ fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Removes a file or folder tree at `path`; a missing entry is not an error.
-fn remove_entry(path: &Path) -> io::Result<()> {
-    let removed = match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
-        Ok(_) => fs::remove_file(path),
-        Err(error) => Err(error),
-    };
-    match removed {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
-    }
 }
 
 #[cfg(test)]
