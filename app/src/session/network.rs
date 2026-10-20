@@ -61,7 +61,6 @@ pub(super) fn poll_join(
             endpoint,
             directory,
         } => {
-            let owned_core = directory.is_some();
             if let Some(directory) = directory {
                 controller.bind_directory(directory);
             }
@@ -119,10 +118,8 @@ pub(super) fn poll_join(
                     &session.collisions,
                 ),
             ) {
-                if owned_core || controller.core.id().is_some() {
-                    let directory = controller.directory.take();
-                    controller.core.stop_detached(move || drop(directory));
-                }
+                let directory = controller.directory.take();
+                controller.core.stop_detached(move || drop(directory));
                 controller.fail_join(menu, format!("Could not connect: {error}"));
             }
         }
