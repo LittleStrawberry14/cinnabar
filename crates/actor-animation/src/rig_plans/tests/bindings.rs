@@ -65,23 +65,28 @@ fn named_frames_preserve_selection_skin_and_owner_locator_outputs_without_lookup
                 });
             }
         }
-        let actor = &actors[&actor.runtime_id];
-        let mut reference_scans = 0;
         let changed = crate::test_support::SKIN_MODEL.replace("\"body\"", "\"rightitem\"");
         for model in [
             None,
             Some(crate::test_support::SKIN_MODEL),
             Some(changed.as_str()),
         ] {
-            if let Some(model) = model {
-                let source = crate::test_support::skin_source(model);
-                for store in [&mut bound, &mut reference] {
-                    store.request_skin_preparation(&source);
+            let source = model.map(crate::test_support::skin_source);
+            actors.get_mut(&actor.runtime_id).unwrap().position[0] += 0.2;
+            for store in [&mut bound, &mut reference] {
+                if let Some(source) = &source {
+                    store.request_skin_preparation(source);
                     store.submit_skin_preparation();
                     store.finish_skin_fixture_batch();
-                    store.sync_skin_model(actor.runtime_id, Some(&source));
+                    store.sync_skin_model(actor.runtime_id, Some(source));
                 }
+                store.advance_tick(&actors, None, None, true, false, |_| ActorTickContext {
+                    skin_geometry: source.clone(),
+                    ..Default::default()
+                });
             }
+            let actor = &actors[&actor.runtime_id];
+            let mut reference_scans = 0;
             use_reference(&mut reference);
             for alpha in [0.0, 0.25, 0.5, 0.75, 1.0, 0.25] {
                 let before = pose::name_lookups();
@@ -148,11 +153,11 @@ fn named_frames_preserve_selection_skin_and_owner_locator_outputs_without_lookup
             }
             assert_eq!(bound.frame_fallbacks(), 0);
             assert_eq!(reference.frame_fallbacks(), 0);
+            assert!(
+                reference_scans > 0,
+                "each appearance must exercise named frame sampling"
+            );
         }
-        assert!(
-            reference_scans > 0,
-            "the reference fixture must exercise named frame sampling"
-        );
     }
 }
 

@@ -3,6 +3,8 @@ use assets::*;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::{collections::HashMap, hint::black_box, sync::Arc, time::Duration};
 
+const MODES: [&str; 5] = ["idle", "walk", "swing", "named_walk", "named_swing"];
+
 #[path = "../src/test_actor.rs"]
 mod test_actor;
 
@@ -105,10 +107,12 @@ fn crowd(
     }
     if mode != "idle" {
         let mut frame = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
-        assert_eq!(
-            frame.layers_with_skin(1).unwrap().render[0].pose.len(),
-            bone_count
-        );
+        for id in actors.keys() {
+            assert_eq!(
+                frame.layers_with_skin(*id).unwrap().render[0].pose.len(),
+                bone_count
+            );
+        }
         assert_eq!(store.frame_fallbacks(), 0);
     }
     (store, actors)
@@ -127,7 +131,7 @@ fn actor_costs(c: &mut Criterion) {
         } else {
             format!("_variables_{extra_variables}")
         };
-        for mode in ["idle", "walk", "swing", "named_walk", "named_swing"] {
+        for mode in MODES {
             for repeated in [false, true] {
                 let (store, actors) = crowd(mode, extra_variables);
                 let mut alpha = 0.25;
@@ -157,9 +161,10 @@ fn actor_costs(c: &mut Criterion) {
                         })
                     },
                 );
+                assert_eq!(store.frame_fallbacks(), 0);
             }
         }
-        for mode in ["idle", "walk", "swing", "named_walk", "named_swing"] {
+        for mode in MODES {
             let (mut store, mut actors) = crowd(mode, extra_variables);
             group.bench_function(
                 BenchmarkId::new(format!("tick_and_six_frames_128{suffix}"), mode),
@@ -187,6 +192,7 @@ fn actor_costs(c: &mut Criterion) {
                     })
                 },
             );
+            assert_eq!(store.frame_fallbacks(), 0);
         }
     }
     group.finish();
