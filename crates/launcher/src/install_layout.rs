@@ -8,6 +8,7 @@ pub use ios::configure_ios;
 
 const APP_DIR: &str = crate::PRODUCT_NAME;
 
+/// The pinned vanilla resource pack below a resource root, which mirrors `.local/`.
 pub fn vanilla_pack_relative() -> String {
     assets::vanilla_source().installed_pack_dir("resource_pack")
 }
