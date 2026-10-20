@@ -2,7 +2,10 @@
 
 use super::super::webtransport::{Endpoint, serve_paired};
 use super::*;
-use crate::backend::tests::{PairedPeer, gateway_registry, paired_control, paired_event};
+use crate::backend::tests::gateway_registry;
+use crate::backend::webtransport::tests::{
+    control as paired_control, event as paired_event, peer::Peer as PairedPeer,
+};
 use bridge::contract::RELAY_TRANSPORT_PATH;
 use http::StatusCode;
 
@@ -123,7 +126,10 @@ impl PairedFixture {
     /// Joins the same serving owner before dropping its client endpoint and fixture files.
     async fn finish(&mut self) {
         self.task.take().unwrap().await.unwrap().unwrap();
-        assert_eq!(self.registry.test_counts(), (0, 0));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&self.registry),
+            (0, 0)
+        );
         self.client.close(0_u32.into(), b"");
         self.client.wait_idle().await;
     }
@@ -173,7 +179,10 @@ async fn paired_operator_reloads_both_tls_edges_and_retires_handlers_before_acco
             );
             assert_ne!(tcp_capability.generation, 0);
             assert_ne!(quic_capability.generation, 0);
-            assert_eq!(fixture.registry.test_counts().1, 2);
+            assert_eq!(
+                crate::registry::tests::retained_counts(&fixture.registry).1,
+                2
+            );
 
             fixture.files.write(&second);
             fixture.reload().await.unwrap();
@@ -215,7 +224,10 @@ async fn paired_operator_reloads_both_tls_edges_and_retires_handlers_before_acco
             let prefix = peer.connect_chunk().await;
             assert_eq!(prefix.len(), 1);
             assert!(prefix.len() + 1 < size_of::<u32>());
-            assert_eq!(fixture.registry.test_counts().1, 2);
+            assert_eq!(
+                crate::registry::tests::retained_counts(&fixture.registry).1,
+                2
+            );
             assert!(!fixture.task.as_ref().unwrap().is_finished());
             let remainder = peer.connect_end().await;
             assert!(prefix.len() + remainder >= size_of::<u32>());

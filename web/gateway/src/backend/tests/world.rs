@@ -128,7 +128,7 @@ async fn accepted_play_reaches_owned_bds_world() {
         }
         writer.await;
         test_time::eventually("actual BDS play socket retired", || {
-            fixture.registry.test_counts() == (1, 1)
+            crate::registry::tests::retained_counts(&fixture.registry) == (1, 1)
         });
         let attachment = fixture
             .registry

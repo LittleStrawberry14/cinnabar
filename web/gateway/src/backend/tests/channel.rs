@@ -73,7 +73,7 @@ async fn mismatch(path: &str, channel: &str) {
         }
         test_time::eventually(
             "mismatched Hello retires its actual accepted socket",
-            || fixture.registry.test_counts() == (1, 1),
+            || crate::registry::tests::retained_counts(&fixture.registry) == (1, 1),
         );
         let attachment = fixture
             .registry

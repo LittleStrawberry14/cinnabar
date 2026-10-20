@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[package.metadata.cinnabar]
+platform-specific = ["windows"]
+reads = ["crates/protocol/tests/fixtures/native-client-data-validation.json"]
+
 [features]
 webtransport = ["dep:h3", "dep:h3-quinn", "dep:h3-webtransport", "dep:quinn"]
 operator = [
@@ -55,7 +59,7 @@ tokio-websockets = { version = "0.13", default-features = false, features = ["se
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 raknet.workspace = true
-bedrock-protocol-1-26-51.workspace = true
+protocol = { path = "../../crates/protocol", features = ["test-support"] }
 rcgen = "0.14"
 test-time = { path = "../../crates/test-time" }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }

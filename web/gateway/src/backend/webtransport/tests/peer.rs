@@ -134,7 +134,10 @@ impl Fixture {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert_eq!(self.registry.test_counts(), (0, 0));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&self.registry),
+            (0, 0)
+        );
         self.udp.close(0_u32.into(), b"");
         self.udp.wait_idle().await;
         self.client.wait_idle().await;

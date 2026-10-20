@@ -14,6 +14,7 @@ reads = [
     "core/authcache/cache_limit.txt",
     "core/catalog/artwork_limit.txt",
     "core/catalog/profile_overview_limit.txt",
+    "core/catalog/realm_membership_conformance.json",
     "packaging/common/runtime-binaries.txt",
 ]
 

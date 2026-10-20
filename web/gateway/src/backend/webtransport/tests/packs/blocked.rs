@@ -122,7 +122,7 @@ async fn canceling_play_resets_its_blocked_pack_uni_before_reusing_the_account()
             drop(archive);
             drop(next);
             drop(attachment);
-            assert_eq!(fixture.registry.test_counts(), (1, 1));
+            assert_eq!(crate::registry::tests::retained_counts(&fixture.registry), (1, 1));
 
             control
                 .send(Bytes::from(

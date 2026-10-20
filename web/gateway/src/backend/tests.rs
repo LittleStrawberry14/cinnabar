@@ -29,11 +29,6 @@ use tokio_rustls::{
 use tokio_util::codec::Framed;
 use tokio_websockets::ClientBuilder;
 
-#[cfg(all(feature = "operator", feature = "webtransport"))]
-pub(crate) use super::webtransport::tests::{
-    Peer as PairedPeer, control as paired_control, event as paired_event,
-};
-
 /// Borrows only the original gateway's registry before its serving owner takes the gateway.
 #[cfg(all(feature = "operator", feature = "webtransport"))]
 pub(crate) fn gateway_registry(gateway: &Gateway) -> Arc<Registry> {
@@ -137,7 +132,10 @@ impl Fixture {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert_eq!(self.registry.test_counts(), (0, 0));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&self.registry),
+            (0, 0)
+        );
     }
 }
 
@@ -244,12 +242,15 @@ async fn accepted_socket_capacity_precedes_tls_and_retires_on_cancel() {
             held.push(TcpStream::connect(fixture.address).await.unwrap());
         }
         test_time::eventually("actual pre-TLS accepted peer capacity", || {
-            fixture.registry.test_counts().0 == RELAY_MAX_PER_IP
+            crate::registry::tests::retained_counts(&fixture.registry).0 == RELAY_MAX_PER_IP
         });
         let mut extra = TcpStream::connect(fixture.address).await.unwrap();
         let mut byte = [0];
         assert!(matches!(extra.read(&mut byte).await, Ok(0) | Err(_)));
-        assert_eq!(fixture.registry.test_counts(), (RELAY_MAX_PER_IP, 0));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&fixture.registry),
+            (RELAY_MAX_PER_IP, 0)
+        );
         fixture.finish().await;
         for mut stream in held {
             assert!(matches!(stream.read(&mut byte).await, Ok(0) | Err(_)));
@@ -345,19 +346,19 @@ async fn completed_service_driver_retains_sessions_until_connections_retire() {
                 result = services.as_mut() => panic!("the actual registry driver retired: {result:?}"),
             }
         }
-        assert_eq!(registry.test_counts(), (1, 1));
+        assert_eq!(crate::registry::tests::retained_counts(&registry), (1, 1));
         assert_eq!(connections.len(), 1);
         let cancellation = registry.cancelled.cancelled();
         tokio::pin!(cancellation);
         assert!(futures::poll!(cancellation.as_mut()).is_pending());
         registry.cancelled.cancel();
         services.as_mut().await.unwrap();
-        let before_connection_retirement = registry.test_counts();
+        let before_connection_retirement = crate::registry::tests::retained_counts(&registry);
         assert_eq!(connections.len(), 1);
         drop(connections);
         drop(services);
         drop(client);
-        assert_eq!(registry.test_counts(), (0, 0));
+        assert_eq!(crate::registry::tests::retained_counts(&registry), (0, 0));
         assert_eq!(
             before_connection_retirement,
             (1, 1),
