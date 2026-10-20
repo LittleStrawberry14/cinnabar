@@ -12,5 +12,10 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 
+# Pull the real client the same way Android does. This will surface iOS compile errors.
+[target.'cfg(target_os = "ios")'.dependencies]
+cinnabar = { path = "../../../app", default-features = false }
+launcher = { path = "../../../crates/launcher" }
+
 [lints]
 workspace = true
