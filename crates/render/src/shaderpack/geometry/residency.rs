@@ -337,6 +337,9 @@ impl Residency {
         near: Option<(DVec3, f64)>,
         eviction: &mut Eviction,
     ) -> Option<Placement> {
+        if !self.can_fit(plan.faces) {
+            return None;
+        }
         loop {
             if let Some(placement) = self.place(entity, plan) {
                 return Some(placement);
@@ -363,6 +366,14 @@ impl Residency {
             };
             self.evict(victim);
         }
+    }
+
+    /// Whether a request can fit any page without changing the binding limit or budget.
+    pub(crate) fn can_fit(&self, faces: u32) -> bool {
+        faces != 0
+            && faces <= self.page_faces
+            && (u64::from(faces) <= self.budget_faces
+                || self.pages.iter().any(|page| page.faces.capacity() >= faces))
     }
 
     fn allocate(&mut self, faces: u32) -> Option<Placement> {
