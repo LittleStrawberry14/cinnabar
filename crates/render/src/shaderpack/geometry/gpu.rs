@@ -282,6 +282,7 @@ impl ShaderpackGeometry {
                 .filter(|faces| frustum.visible(faces.origin)),
             None,
             self.residency.epoch,
+            self.residency.generation,
             None,
         );
         let key = inputs.key();
@@ -583,7 +584,7 @@ pub(crate) fn prepare_shaderpack_geometry(
             "shader-pack terrain re-expands every resident section"
         );
         let resident: Vec<_> = sections.entities().collect();
-        geometry.residency.enqueue_all(resident);
+        geometry.residency.invalidate_contents(resident);
         geometry.inputs = Some(expansion_inputs);
     }
     let mut expanded = 0;
@@ -698,6 +699,12 @@ fn plan_frame(
             &mut eviction,
         );
         let Some(placement) = placement else {
+            if !geometry.residency.can_fit(plan.faces) {
+                // A changed mesh or budget can make this section fit later. Keep expanding
+                // the remaining sections rather than parking them behind this request.
+                geometry.residency.wait(entity);
+                continue;
+            }
             // Nothing farther is left to give up its room: this and every farther section
             // wait until room frees up or the camera moves.
             overflow = true;
@@ -841,6 +848,7 @@ fn build_draws(
                 .filter_map(|entity| geometry.residency.sections.get(&entity)),
             Some(eye),
             epoch,
+            geometry.residency.generation,
             Some(eye),
         );
         let key = inputs.key();
