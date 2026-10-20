@@ -293,9 +293,9 @@ fn configure_replacement(
                 })
         });
     let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
-    let replaces = geometry
-        .is_some_and(|geometry| geometry.supported() && geometry.origin().is_some())
-        && pipelines.kernels(&cache).is_some()
+    let replaces = geometry.is_some_and(|geometry| {
+        geometry.supported() && geometry.all_sections_fit() && geometry.origin().is_some()
+    }) && pipelines.kernels(&cache).is_some()
         && super::draws::complete_world(draws);
     replaced.set_if_neq(
         ready
@@ -445,7 +445,10 @@ fn pack_inputs(
     geometry: Option<&ShaderpackGeometry>,
 ) -> ShaderPackFrameInputs {
     let mut inputs = *inputs;
-    if let Some(horizon) = geometry.and_then(ShaderpackGeometry::budget_horizon) {
+    if let Some(horizon) = geometry
+        .filter(|geometry| geometry.all_sections_fit())
+        .and_then(ShaderpackGeometry::budget_horizon)
+    {
         inputs.render_distance = inputs.render_distance.min(horizon.max(MIN_PACK_FAR));
     }
     inputs
@@ -480,7 +483,9 @@ fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
         .filter(|drawn| drawn.terrain)?;
     world
         .get_resource::<ShaderpackGeometry>()
-        .filter(|geometry| geometry.supported() && geometry.origin().is_some())
+        .filter(|geometry| {
+            geometry.supported() && geometry.all_sections_fit() && geometry.origin().is_some()
+        })
 }
 
 /// Whether the pack draws `view`'s sky and world itself this frame, so nothing of the Vanilla
