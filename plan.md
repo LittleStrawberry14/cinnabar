@@ -41,6 +41,8 @@ closes no gate and provides no new runtime or performance evidence.
   conformance findings, classify every decode error, and qualify frame and mutation
   latency against the current [live-testing requirements](docs/agents/live-testing.md).
   Use the current headless client workflow for scripted tests; keep captures local.
+  Dimension definitions use an exclusive maximum Y and retain complete sub-chunks;
+  live custom-dimension transfer acceptance remains open.
 
 ## Phase 1 — Core service
 
@@ -213,6 +215,9 @@ Implemented: [actor rigs, Molang, controllers, attachables and pose evaluation](
 with [client presentation](crates/client-presentation/src/lib.rs) and
 [rendering](crates/render/src/lib.rs). The open gates require complete behavioral
 and rendered qualification, not initial implementation of those systems.
+Frame sampling retains matching expression, layer and composition results; equipment
+placement reuses unchanged owner and attachment inputs. Hardware crowd captures and
+full temporal/visual qualification remain open.
 
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven
   poses, skeletal rendering and distinct tick/frame interpolation with native evidence.
@@ -227,7 +232,10 @@ and rendered qualification, not initial implementation of those systems.
   and matched inventory/held-item presentation. Shared cube face sheets are bounded coverage.
 
 Continuous cosmetic cloth uses shared vertices, fixed-step constraints, world-space
-inertia and player-body contacts. Self-collision and world collision remain open.
+inertia and player-body contacts with standard-armor clearance. Vertical follow and
+damping restrain jump and landing motion, and local cloth keeps advancing while
+first-person visibility hides the body. View changes transfer the drape between
+body pose spaces. Self-collision and world collision remain open.
 Paid cosmetic selections use session ownership from the API database and withdraw
 on disconnect or revocation; production rollout qualification remains open.
 
