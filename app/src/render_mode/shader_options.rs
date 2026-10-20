@@ -151,6 +151,11 @@ impl Open {
         let State::Ready(editor) = &mut self.state else {
             return matches!(action, Action::Back | Action::Cancel | Action::Done);
         };
+        let saves = matches!(action, Action::Apply | Action::Done | Action::Reset)
+            || (action == Action::Back && editor.session().screen_id().is_none());
+        if !saves {
+            return editor.handle(action).close;
+        }
         let mut candidate = editor.clone();
         let outcome = candidate.handle(action);
         let Some(values) = outcome.save else {
