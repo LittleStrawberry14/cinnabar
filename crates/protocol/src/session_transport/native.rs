@@ -78,11 +78,10 @@ pub(crate) mod tests;
 pub(crate) struct NativeReader {
     incoming: mpsc::Receiver<IncomingBody>,
     pub(super) rtt: Option<crate::RoundTripTime>,
-    task: Option<tokio::task::JoinHandle<PendingInput>>,
+    task: Option<tokio::task::JoinHandle<io::Result<PendingInput>>>,
     tail: PendingInput,
-    failure: Option<tokio::task::JoinError>,
-    stop: Option<oneshot::Sender<()>>,
-    close_deadline: Option<tokio::time::Instant>,
+    failure: Option<io::Error>,
+    stop: Option<oneshot::Sender<tokio::time::Instant>>,
     closed: bool,
 }
 
@@ -95,54 +94,39 @@ impl Drop for NativeReader {
 }
 
 impl NativeReader {
-    /// Drains accepted writes; cancellation retains the original cutoff and join handle.
+    /// Requests finite teardown once; the original task keeps its cutoff across canceled waits.
     pub(super) async fn close(&mut self) -> io::Result<()> {
         if self.closed {
             return Ok(());
         }
-        let deadline = *self
-            .close_deadline
-            .get_or_insert_with(|| tokio::time::Instant::now() + CLOSE_TIMEOUT);
         if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
+            let _ = stop.send(tokio::time::Instant::now() + CLOSE_TIMEOUT);
         }
-        let result =
-            tokio::time::timeout_at(deadline, std::future::poll_fn(|cx| self.poll_driver(cx)))
-                .await;
+        let result = std::future::poll_fn(|cx| self.poll_driver(cx)).await;
         self.closed = true;
         match result {
-            Ok(Ok(pending)) => {
+            Ok(pending) => {
                 if let Some(item) = pending {
                     self.tail = Some(item);
                 }
-                self.failure
-                    .take()
-                    .map_or(Ok(()), |error| Err(io::Error::other(error)))
+                self.failure.take().map_or(Ok(()), Err)
             }
-            Ok(Err(error)) => Err(io::Error::other(error)),
-            Err(_) => {
-                if let Some(task) = &self.task {
-                    task.abort();
-                }
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "native close timed out",
-                ))
-            }
+            Err(error) => Err(error),
         }
     }
 
     /// Takes completed driver ownership once, retaining the handle across pending polls.
-    fn poll_driver(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<PendingInput, tokio::task::JoinError>> {
+    fn poll_driver(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<PendingInput>> {
         let Some(task) = &mut self.task else {
             return Poll::Ready(Ok(None));
         };
         let result = std::task::ready!(Pin::new(task).poll(cx));
         self.task = None;
-        Poll::Ready(result)
+        Poll::Ready(
+            result
+                .map_err(io::Error::other)
+                .and_then(std::convert::identity),
+        )
     }
 
     /// Drains queued bodies before the driver's retained input, without losing either on cancellation.
@@ -424,8 +408,21 @@ impl SessionTransport {
             stop,
             driver,
         } = prepare_with_byte_budget(connection, Some(bridge::contract::RELAY_QUEUED_FRAME_BYTES));
-        // Desktop keeps its original close-result policy and same joined pending-input transfer.
-        let task = tokio::spawn(async move { driver.await.pending });
+        let (closing, requested) = oneshot::channel();
+        // The sole desktop task owns enforcement even when its caller stops awaiting close.
+        // Successful teardown keeps the original desktop close-result and pending-input policy.
+        let task = tokio::spawn(async move {
+            let mut driver = driver;
+            let deadline = tokio::select! {
+                result = &mut driver => return Ok(result.pending),
+                deadline = requested => deadline.map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?,
+            };
+            let _ = stop.send(());
+            tokio::time::timeout_at(deadline, driver)
+                .await
+                .map(|end| end.pending)
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "native close timed out"))
+        });
         Self {
             reader: Reader::Native(NativeReader {
                 incoming,
@@ -433,8 +430,7 @@ impl SessionTransport {
                 task: Some(task),
                 tail: None,
                 failure: None,
-                stop: Some(stop),
-                close_deadline: None,
+                stop: Some(closing),
                 closed: false,
             }),
             writer: crate::packet_relay::BatchWriter::direct(PacketSender::Native(sender)),

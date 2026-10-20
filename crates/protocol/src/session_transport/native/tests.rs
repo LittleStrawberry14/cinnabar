@@ -96,7 +96,9 @@ async fn aborting_the_connection_task_retires_its_uncommitted_permits() {
         std::future::poll_fn(|cx| reader.poll_driver(cx))
             .await
             .unwrap_err()
-            .is_cancelled()
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<tokio::task::JoinError>())
+            .is_some_and(tokio::task::JoinError::is_cancelled)
     );
     assert_eq!(
         sender

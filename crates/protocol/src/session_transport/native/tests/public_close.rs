@@ -95,7 +95,7 @@ async fn cancelled_close_retry_keeps_the_original_driver_cutoff() {
     let joined = std::future::poll_fn(|cx| reader.poll_driver(cx)).await;
     retired.await.unwrap();
     drop(transport);
-    assert!(joined.is_ok() || joined.is_err_and(|error| error.is_cancelled()));
+    assert!(joined.is_ok() || joined.is_err_and(|error| error.kind() == io::ErrorKind::TimedOut));
     assert!(
         matches!(
             &at_original_cutoff,
@@ -183,7 +183,7 @@ async fn abandoned_close_borrow_retires_the_original_driver_without_retry() {
     };
     retired.await.unwrap();
     drop(transport);
-    assert!(joined.is_ok() || joined.is_err_and(|error| error.is_cancelled()));
+    assert!(joined.is_ok() || joined.is_err_and(|error| error.kind() == io::ErrorKind::TimedOut));
     assert!(
         completed_at.is_some_and(|completed| completed <= cutoff),
         "abandoned close retained the original driver past its cutoff: {completed_at:?}"

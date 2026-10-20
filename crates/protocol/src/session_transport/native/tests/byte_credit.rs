@@ -146,7 +146,6 @@ async fn fixture(
                 tail,
                 failure: None,
                 stop: None,
-                close_deadline: None,
                 closed: false,
             }),
             timers: bridge::tasks::Timers::tokio(),
