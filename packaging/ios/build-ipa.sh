@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unsigned IPA: real Mach-O client binary for aarch64-apple-ios.
+# Unsigned IPA: real Mach-O client binary plus the required runtime asset carriers.
 set -euo pipefail
 
 here="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +18,30 @@ export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
 rm -rf "$out"
 mkdir -p "$app"
 
-echo "Building cinnabar-ios for $triple ($profile)..." | tee "$log"
+echo "Preparing required runtime asset carriers..." | tee "$log"
+# This is the repository's supported asset pipeline. It obtains the pinned sample pack
+# under the project's existing asset/EULA flow and builds the exact carriers the client loads.
+set +e
+make assets PROFILE="$profile" 2>&1 | tee -a "$log"
+status=${PIPESTATUS[0]}
+set -e
+if [[ "$status" -ne 0 ]]; then
+  echo "Asset preparation failed (exit $status). See build.log" | tee -a "$log"
+  (cd "$out" && zip -qr cinnabar-ios-unsigned.ipa build.log) || true
+  exit "$status"
+fi
+
+assets_dir="$repo_root/.local/assets/compiled"
+if [[ ! -d "$assets_dir" || ! -f "$assets_dir/vanilla-v2193.mcbea" ]]; then
+  echo "Required runtime carriers missing from $assets_dir after make assets" | tee -a "$log"
+  exit 1
+fi
+mkdir -p "$app/resources/assets"
+cp -a "$assets_dir/." "$app/resources/assets/"
+echo "Packaged runtime carriers:" | tee -a "$log"
+find "$app/resources/assets" -maxdepth 1 -type f -print | sort | tee -a "$log"
+
+echo "Building cinnabar-ios for $triple ($profile)..." | tee -a "$log"
 
 set +e
 cargo build -p cinnabar-ios --target "$triple" --profile "$profile" 2>&1 | tee -a "$log"
@@ -95,6 +118,10 @@ cat > "$app/Info.plist" << PLIST
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
   <key>CADisableMinimumFrameDurationOnPhone</key>
+  <true/>
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
   <true/>
 </dict>
 </plist>
