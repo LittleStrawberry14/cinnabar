@@ -289,3 +289,47 @@ fn pages_drain_only_once_streaming_settles() {
     assert!(residency.start_draining());
     assert_eq!(residency.take_queue(), [entity(3)]);
 }
+
+#[test]
+fn oversized_nearest_section_preserves_residents_and_can_retry_after_a_change() {
+    let mut residency = Residency::new(100 * FACE_BYTES, 200 * FACE_BYTES, STRIDE);
+    let far = entity(1);
+    let near = entity(2);
+    let placement = residency.place(far, &plan(100)).unwrap();
+    residency.commit(far, &placement, &plan(100), [320, 0, 0]);
+    let previous = residency.sections[&far].clone();
+    let mut eviction = Eviction::default();
+    assert!(
+        residency
+            .place_nearest(near, &plan(101), Some((DVec3::ZERO, 0.0)), &mut eviction)
+            .is_none()
+    );
+    assert_eq!(residency.sections.get(&far), Some(&previous));
+    residency.wait(near);
+    residency.enqueue(near);
+    assert_eq!(residency.take_queue(), [near]);
+    assert!(
+        residency
+            .place_nearest(near, &plan(100), Some((DVec3::ZERO, 0.0)), &mut eviction)
+            .is_some()
+    );
+    assert_eq!(residency.sections.get(&far), Some(&previous));
+}
+
+#[test]
+fn a_request_larger_than_the_total_budget_cannot_evict_residents() {
+    let mut residency = Residency::new(200 * FACE_BYTES, 100 * FACE_BYTES, STRIDE);
+    let placement = residency.place(entity(1), &plan(10)).unwrap();
+    residency.commit(entity(1), &placement, &plan(10), [320, 0, 0]);
+    assert!(
+        residency
+            .place_nearest(
+                entity(2),
+                &plan(101),
+                Some((DVec3::ZERO, 0.0)),
+                &mut Eviction::default()
+            )
+            .is_none()
+    );
+    assert!(residency.sections.contains_key(&entity(1)));
+}
