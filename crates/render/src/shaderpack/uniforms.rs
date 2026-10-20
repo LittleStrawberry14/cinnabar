@@ -7,6 +7,7 @@
 //! final clip position to wgpu's. As in Minecraft, `gbufferModelView` holds only the camera
 //! rotation and positions are relative to `cameraPosition`.
 
+use super::geometry::ShadowCullSettings;
 use assets::facts::java_mapping::JavaBlockMapping;
 use bevy::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use render_scene::shaderpack::ShaderPackFrameInputs;
@@ -132,8 +133,8 @@ pub(crate) fn gl_ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, 
 pub(crate) struct PackSettings {
     /// `const float sunPathRotation`, degrees.
     pub sun_path_rotation: f32,
-    /// `const float shadowDistance`: half the shadow projection's width, blocks.
-    pub shadow_distance: f32,
+    /// Shared shadow projection and culling directives.
+    pub shadow: ShadowCullSettings,
     /// `const float shadowIntervalSize`: shadow camera snapping, blocks.
     pub shadow_interval: f32,
     /// `wetnessHalflife`, `drynessHalflife`, `eyeBrightnessHalflife` and
@@ -146,18 +147,13 @@ pub(crate) struct PackSettings {
     /// the shadow camera, blocks; -1 stands for the render distance.
     pub shadow_near_plane: f32,
     pub shadow_far_plane: f32,
-    /// `shadowDistanceRenderMul`: scales `shadowDistance` into the shadow pass's cull
-    /// distance; negative leaves it to the player's setting.
-    pub shadow_render_mul: f32,
-    /// `voxelDistance`: blocks around the camera the safe-zone shadow culler always keeps.
-    pub voxel_distance: f32,
 }
 
 impl Default for PackSettings {
     fn default() -> Self {
         Self {
             sun_path_rotation: 0.0,
-            shadow_distance: 160.0,
+            shadow: ShadowCullSettings::default(),
             shadow_interval: 2.0,
             wetness_halflife: 600.0 * SECONDS_PER_HALFLIFE_UNIT,
             dryness_halflife: 200.0 * SECONDS_PER_HALFLIFE_UNIT,
@@ -165,8 +161,6 @@ impl Default for PackSettings {
             center_depth_halflife: SECONDS_PER_HALFLIFE_UNIT,
             shadow_near_plane: SHADOW_NEAR_PLANE,
             shadow_far_plane: SHADOW_FAR_PLANE,
-            shadow_render_mul: -1.0,
-            voxel_distance: 0.0,
         }
     }
 }
@@ -183,12 +177,12 @@ impl PackSettings {
         for c in consts {
             let (slot, scale) = match c.name.as_str() {
                 "sunPathRotation" => (&mut s.sun_path_rotation, 1.0),
-                "shadowDistance" => (&mut s.shadow_distance, 1.0),
+                "shadowDistance" => (&mut s.shadow.shadow_distance, 1.0),
                 "shadowIntervalSize" => (&mut s.shadow_interval, 1.0),
                 "shadowNearPlane" => (&mut s.shadow_near_plane, 1.0),
                 "shadowFarPlane" => (&mut s.shadow_far_plane, 1.0),
-                "shadowDistanceRenderMul" => (&mut s.shadow_render_mul, 1.0),
-                "voxelDistance" => (&mut s.voxel_distance, 1.0),
+                "shadowDistanceRenderMul" => (&mut s.shadow.render_mul, 1.0),
+                "voxelDistance" => (&mut s.shadow.voxel_distance, 1.0),
                 "wetnessHalflife" => (&mut s.wetness_halflife, SECONDS_PER_HALFLIFE_UNIT),
                 "drynessHalflife" => {
                     dryness = number(&c.value).or(dryness);
@@ -371,7 +365,7 @@ impl FrameUniforms {
                 snap(camera.position.y),
                 snap(camera.position.z),
             ));
-        let d = settings.shadow_distance;
+        let d = settings.shadow.shadow_distance;
         let plane = |plane: f32, sign: f32| {
             if plane == RENDER_DISTANCE_PLANE {
                 sign * game.render_distance
