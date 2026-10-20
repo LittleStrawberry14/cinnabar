@@ -52,6 +52,10 @@ fn crowd(
         .collect();
     if named {
         let channel = compiled.animation_channels[0].clone();
+        let first = channel.first_keyframe as usize;
+        let keys =
+            compiled.animation_keyframes[first..first + channel.keyframe_count as usize].to_vec();
+        compiled.animation_keyframes = (0..bone_count).flat_map(|_| keys.iter().copied()).collect();
         compiled.animation_channels = compiled.geometries[0]
             .bones
             .iter()
@@ -59,6 +63,7 @@ fn crowd(
             .map(|(index, bone)| assets::EntityAnimationChannel {
                 bone: index as u32,
                 bone_name: Some(bone.name.clone()),
+                first_keyframe: (index * keys.len()) as u32,
                 ..channel.clone()
             })
             .collect();
