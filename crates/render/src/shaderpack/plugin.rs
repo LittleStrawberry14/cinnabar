@@ -10,7 +10,7 @@ use super::effects::{Effect, EffectCamera, EffectInputs};
 use super::frame_geometry::{FrameGeometry, TerrainDraws};
 use super::geometry::{
     GeometryCategory, ShaderpackBlockIds, ShaderpackGeometry, ShaderpackGeometryPlugin,
-    ShaderpackGeometrySettings, ShadowFrustum, device_geometry_budget,
+    ShaderpackGeometrySettings, ShadowFrustum, UNASSIGNED_BLOCK_ID, device_geometry_budget,
 };
 use super::loader::{PackGpu, load};
 use super::passes::{DrawContext, FrameIo, ViewState, record_frame};
@@ -199,10 +199,9 @@ fn configure_geometry(
         Option<Res<ShaderpackGeometry>>,
     ),
     mut drawn: ResMut<ShaderPackDrawnCategories>,
-    ids: Option<Res<ShaderpackBlockIds>>,
     mut replaced: ResMut<ShaderPackEffects>,
     memory: Option<Res<DedicatedGraphicsMemory>>,
-    mut shown: Local<Option<usize>>,
+    (mut shown, mut revisions): (Local<Option<usize>>, Local<BlockIdRevisions>),
 ) {
     let pack = pack
         .and_then(|p| p.0.clone())
@@ -240,17 +239,8 @@ fn configure_geometry(
         return;
     }
     *shown = key;
-    let table = pack.and_then(|p| p.block_ids.clone());
-    match table {
-        Some(table) => {
-            let revision = ids.map_or(1, |ids| ids.revision + 1);
-            commands.insert_resource(ShaderpackBlockIds {
-                block_entity_id: Arc::new(move |state| {
-                    table.get(state as usize).copied().unwrap_or(-1)
-                }),
-                revision,
-            });
-        }
+    match pack.and_then(|p| p.block_ids.clone()) {
+        Some(table) => commands.insert_resource(revisions.publish(table)),
         None => commands.remove_resource::<ShaderpackBlockIds>(),
     }
 }
@@ -274,6 +264,31 @@ fn replaced_effects(pack: &PackGpu) -> ShaderPackEffects {
         clouds: draws(&[Effect::Clouds]) || !pack.effects.draws(Effect::Clouds),
         selection: draws(&[Effect::Outline]),
         cracks: draws(&[Effect::DamagedBlock]),
+    }
+}
+
+/// Hands out the revisions [`ShaderpackBlockIds`] are published under, each one no earlier
+/// table had. The geometry adapter keeps the revision it last derived terrain attributes from
+/// while Vanilla shows between two packs, so counting on from the current resource, which
+/// Vanilla removes, would hand the next pack that same revision and leave its terrain with the
+/// previous pack's ids.
+#[derive(Default)]
+pub(super) struct BlockIdRevisions(u64);
+
+impl BlockIdRevisions {
+    /// `table`'s ids by sequential block state ([`UNASSIGNED_BLOCK_ID`] past its end) under a
+    /// revision no earlier table had.
+    pub(super) fn publish(&mut self, table: Arc<Vec<i32>>) -> ShaderpackBlockIds {
+        self.0 += 1;
+        ShaderpackBlockIds {
+            block_entity_id: Arc::new(move |state| {
+                table
+                    .get(state as usize)
+                    .copied()
+                    .unwrap_or(UNASSIGNED_BLOCK_ID)
+            }),
+            revision: self.0,
+        }
     }
 }
 
