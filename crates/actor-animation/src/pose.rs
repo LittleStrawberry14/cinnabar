@@ -86,11 +86,11 @@ pub(super) fn sample_clips(
 }
 
 /// Frame samples lease local-channel buffers and return them after publication.
-pub(super) fn sample_clips_reused(
-    evaluator: &Evaluator<'_>,
+pub(super) fn sample_clips_reused<'a>(
+    evaluator: &Evaluator<'a>,
     variables: &mut MolangVariables,
     bones: &[RuntimeBone],
-    mut channel_bones: ChannelBones<'_>,
+    mut channel_bones: ChannelBones<'a>,
     clips: &[WeightedClip],
     budget: &mut EvalBudget<'_>,
 ) -> Result<PoseBuffer, EvalError> {
