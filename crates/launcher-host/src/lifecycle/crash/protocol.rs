@@ -188,6 +188,7 @@ impl DumpContext {
 }
 
 /// The `minidumper` name of the socket file at `path`, which the monitor's command line names.
+#[cfg(not(target_os = "ios"))]
 pub fn socket_name(path: &Path) -> minidumper::SocketName<'_> {
     minidumper::SocketName::Path(path)
 }
