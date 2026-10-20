@@ -651,7 +651,7 @@ pub(crate) fn build(
         super::targets::float_depths(depth_sampled),
         &mipmap_formats,
     );
-    let shader_storage = storage_sizes(&reflections, &translation.properties);
+    let shader_storage = storage_sizes(&reflections, &translation.properties)?;
     let max_uniform = reflections
         .iter()
         .flat_map(|r| &r.uniform_buffers)
@@ -721,10 +721,11 @@ pub(crate) fn build(
 }
 
 /// Storage-buffer sizes: the reflected minimum, raised by `bufferObject.<binding>=<size>`.
+/// Resolves whole-buffer binding sizes, rejecting requests whose alignment would overflow.
 fn storage_sizes(
     reflections: &[&ProgramReflection],
     properties: &shaderpack::ShaderProperties,
-) -> Vec<(u32, u64)> {
+) -> Result<Vec<(u32, u64)>, String> {
     let mut sizes: Vec<(u32, u64)> = vec![];
     for buffer in reflections.iter().flat_map(|r| &r.storage_buffers) {
         let declared = properties
@@ -734,11 +735,12 @@ fn storage_sizes(
         let size = u64::from(buffer.min_size)
             .max(declared)
             .max(16)
-            .next_multiple_of(16);
+            .checked_next_multiple_of(16)
+            .ok_or_else(|| format!("storage binding {} size overflows", buffer.binding))?;
         match sizes.iter_mut().find(|(b, _)| *b == buffer.binding) {
             Some((_, s)) => *s = (*s).max(size),
             None => sizes.push((buffer.binding, size)),
         }
     }
-    sizes
+    Ok(sizes)
 }
