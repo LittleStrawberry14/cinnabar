@@ -36,9 +36,12 @@ impl CandidateQueue {
         self.positions.clear();
     }
 
-    /// Replaces a key's queued candidate and restores its priority in logarithmic work.
-    pub(in crate::stream) fn push(&mut self, candidate: PendingSchedulerCandidate) {
+    /// Replaces a key's rank in logarithmic work, preserving urgency earned by the same revision.
+    pub(in crate::stream) fn push(&mut self, mut candidate: PendingSchedulerCandidate) {
         if let Some(&index) = self.positions.get(&candidate.key) {
+            if self.heap[index].revision == candidate.revision {
+                candidate.urgent |= self.heap[index].urgent;
+            }
             self.heap[index] = candidate;
             self.repair(index);
         } else {
@@ -138,7 +141,7 @@ impl Extend<PendingSchedulerCandidate> for CandidateQueue {
 }
 
 impl FromIterator<PendingSchedulerCandidate> for CandidateQueue {
-    /// Builds a priority queue, keeping only the last candidate supplied for each key.
+    /// Builds a priority queue, coalescing each key's rank and revision-specific urgency.
     fn from_iter<T: IntoIterator<Item = PendingSchedulerCandidate>>(iter: T) -> Self {
         let mut queue = Self::default();
         queue.extend(iter);
