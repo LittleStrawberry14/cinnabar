@@ -3,18 +3,35 @@
 
 use super::super::widgets;
 use super::Content;
-use launcher::menu::{MenuAction, MenuView, RendererChoice, shader_pack_status::pack_label};
+use launcher::menu::{
+    MenuAction, MenuView, RendererChoice,
+    settings_storage::{StorageAction, StorageFolder},
+    shader_pack_status::pack_label,
+};
 use ui_engine::engine::screen::PaintError;
 
 #[cfg(test)]
 mod tests;
 
-/// Draws nothing unless this build compiles an optional renderer.
+/// Draws nothing unless this build compiles an optional renderer. Shader-pack builds add
+/// the shader-pack folder's Open folder button when the host can open folders.
 pub(super) fn draw(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     if !render_model::ENHANCED_RENDERING_ENABLED && !render_model::SHADER_PACKS_ENABLED {
         return Ok(());
     }
-    renderer(content)
+    renderer(content)?;
+    if render_model::SHADER_PACKS_ENABLED && content.view.storage.opens_folders {
+        super::services::action_row(
+            content,
+            "options.cinnabar.shaderPacksFolder",
+            "options.cinnabar.shaderPacksFolder.description",
+            "options.cinnabar.openFolder.buttonLabel",
+            Some(MenuAction::SettingsStorage(StorageAction::OpenFolder(
+                StorageFolder::ShaderPacks,
+            ))),
+        )?;
+    }
+    Ok(())
 }
 
 /// The compiled renderer choices in display order with their labels.

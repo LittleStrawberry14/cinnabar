@@ -19,15 +19,24 @@ use bevy::{
     render::{extract_component::ExtractComponent, extract_resource::ExtractResource},
 };
 
-/// The pack the settings ask for. The render host loads it on a worker whenever `pack`
-/// changes and reports progress through [`ShaderPackStatus`].
+/// The pack the settings ask for. The render host loads it on a worker whenever `pack` or
+/// `revision` changes and reports progress through [`ShaderPackStatus`].
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShaderPackRequest {
     /// Pack folder or zip; `None` unloads the current pack.
     pub pack: Option<PathBuf>,
     /// Private directory for cached translations; `None` disables the cache.
     pub cache_dir: Option<PathBuf>,
+    /// Bumped to reload `pack` from disk. A reload of the shown pack keeps drawing it until
+    /// the reloaded pipelines are ready.
+    pub revision: u64,
 }
+
+/// The [`ShaderPackRequest::revision`] whose load last finished, ready or failed. Written by
+/// the render host so a reload can tell when its own load has settled, since reloading the
+/// shown pack leaves [`ShaderPackStatus`] at `Ready` throughout.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderPackSettledRevision(pub u64);
 
 /// Load state of the requested pack, written by the render host.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]

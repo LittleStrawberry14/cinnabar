@@ -7,8 +7,8 @@ publish = false
 
 [features]
 test-support = ["protocol/test-support", "render-model/test-support", "ui-screens/test-support"]
-# Captures the Video Renderer row's shader-pack choices.
-shaderpacks = ["render-model/shaderpacks"]
+# Captures the shader-pack Video settings a `shaderpacks` client build shows.
+shaderpacks = ["render-model/shaderpacks", "launcher/shaderpacks"]
 
 [dependencies]
 cosmetics = { path = "../../crates/cosmetics" }

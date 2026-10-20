@@ -135,6 +135,8 @@ pub struct MenuRuntime {
     shader_pack: Option<String>,
     shader_pack_request: Option<String>,
     shader_pack_status: shader_pack_status::ShaderPackStatusUi,
+    /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
+    shader_pack_reload: bool,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
