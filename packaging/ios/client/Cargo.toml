@@ -1,0 +1,16 @@
+[package]
+name = "cinnabar-ios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true
