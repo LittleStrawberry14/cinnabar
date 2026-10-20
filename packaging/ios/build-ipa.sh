@@ -19,6 +19,13 @@ rm -rf "$out"
 mkdir -p "$app"
 
 echo "Preparing required runtime asset carriers..." | tee "$log"
+# The iOS client was recently added as a workspace member, but Cargo.lock may predate
+# that member. Resolve workspace metadata once so the new package is recorded before
+# the asset Makefile invokes Cargo with --locked. This keeps subsequent builds locked.
+cargo metadata --format-version 1 > /dev/null 2>> "$log" || {
+  echo "Cargo workspace metadata resolution failed. See build.log" | tee -a "$log"
+  exit 1
+}
 # This is the repository's supported asset pipeline. It obtains the pinned sample pack
 # under the project's existing asset/EULA flow and builds the exact carriers the client loads.
 set +e
