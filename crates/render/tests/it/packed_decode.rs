@@ -220,20 +220,7 @@ fn packed_liquid_vertices_mask_route_flags_and_use_the_records_section_tint() {
     let storage = wgpu::BufferUsages::STORAGE;
     let uniform = wgpu::BufferUsages::UNIFORM;
     let record = liquid_biome_record();
-    let expected_tint = record.blend_samples([0, 4, 5]).unwrap().into_iter().fold(
-        [0.0_f32; 4],
-        |mut colour, sample| {
-            let tint = if sample.tint_index == 1 {
-                [0.0, 0.0, 1.0, 0.625]
-            } else {
-                [1.0, 0.0, 0.0, 1.0]
-            };
-            for channel in 0..4 {
-                colour[channel] += tint[channel] * sample.weight;
-            }
-            colour
-        },
-    );
+    let expected_tint = liquid_expected_tint(&record);
     assert!(
         expected_tint[0] > 0.0 && expected_tint[2] > 0.0,
         "fixture must blend the edge biomes"
@@ -354,6 +341,53 @@ fn packed_liquid_vertices_mask_route_flags_and_use_the_records_section_tint() {
             );
         }
     }
+}
+
+/// Computes linear RGB and blended opacity at the liquid fixture's owning block.
+fn liquid_expected_tint(record: &meshing::PackedBiomeRecord) -> [f32; 4] {
+    let gamma = record.blend_samples([0, 4, 5]).unwrap().into_iter().fold(
+        [0.0_f32; 4],
+        |mut colour, sample| {
+            let tint = if sample.tint_index == 1 {
+                [0.0, 0.0, 1.0, 0.625]
+            } else {
+                [1.0, 0.0, 0.0, 1.0]
+            };
+            for channel in 0..4 {
+                colour[channel] += tint[channel] * sample.weight;
+            }
+            colour
+        },
+    );
+    let [red, green, blue] = render_model::celestial::rgb_to_linear([gamma[0], gamma[1], gamma[2]]);
+    [red, green, blue, gamma[3]]
+}
+
+#[test]
+fn liquid_tint_oracle_converts_blended_rgb_without_changing_opacity() {
+    let record = liquid_biome_record();
+    let blue_gamma: f32 = record
+        .blend_samples([0, 4, 5])
+        .unwrap()
+        .into_iter()
+        .filter(|sample| sample.tint_index == 1)
+        .map(|sample| sample.weight)
+        .sum();
+    assert!(blue_gamma > 0.0 && blue_gamma < 1.0);
+    let expected = liquid_expected_tint(&record);
+    assert!(
+        expected[0] + 1.0e-4 < 1.0 - blue_gamma,
+        "mixed red must be converted from gamma to linear"
+    );
+    assert!(
+        expected[2] + 1.0e-4 < blue_gamma,
+        "mixed blue must be converted from gamma to linear"
+    );
+    assert_eq!(expected[1], 0.0);
+    assert!(
+        (expected[3] - (1.0 - 0.375 * blue_gamma)).abs() < 1.0e-6,
+        "RGB transfer must preserve blended opacity"
+    );
 }
 
 /// Encodes a biome-one section whose absent neighbours contribute biome zero.
