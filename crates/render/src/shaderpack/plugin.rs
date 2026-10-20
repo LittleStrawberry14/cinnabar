@@ -240,6 +240,31 @@ fn replaced_effects(pack: &PackGpu) -> ShaderPackEffects {
     }
 }
 
+/// Hands out the revisions [`ShaderpackBlockIds`] are published under, each one no earlier
+/// table had. The geometry adapter keeps the revision it last derived terrain attributes from
+/// while Vanilla shows between two packs, so counting on from the current resource, which
+/// Vanilla removes, would hand the next pack that same revision and leave its terrain with the
+/// previous pack's ids.
+#[derive(Default)]
+pub(super) struct BlockIdRevisions(u64);
+
+impl BlockIdRevisions {
+    /// `table`'s ids by sequential block state ([`UNASSIGNED_BLOCK_ID`] past its end) under a
+    /// revision no earlier table had.
+    pub(super) fn publish(&mut self, table: Arc<Vec<i32>>) -> ShaderpackBlockIds {
+        self.0 += 1;
+        ShaderpackBlockIds {
+            block_entity_id: Arc::new(move |state| {
+                table
+                    .get(state as usize)
+                    .copied()
+                    .unwrap_or(UNASSIGNED_BLOCK_ID)
+            }),
+            revision: self.0,
+        }
+    }
+}
+
 /// Replaces native queues only after every pack view and terrain category is ready.
 fn configure_replacement(
     pack: Option<Res<LoadedShaderPack>>,
@@ -268,31 +293,6 @@ fn configure_replacement(
             .is_some_and(|geometry| geometry.supported() && geometry.all_sections_fit())
             && super::draws::complete_terrain(draws),
     });
-}
-
-/// Hands out the revisions [`ShaderpackBlockIds`] are published under, each one no earlier
-/// table had. The geometry adapter keeps the revision it last derived terrain attributes from
-/// while Vanilla shows between two packs, so counting on from the current resource, which
-/// Vanilla removes, would hand the next pack that same revision and leave its terrain with the
-/// previous pack's ids.
-#[derive(Default)]
-pub(super) struct BlockIdRevisions(u64);
-
-impl BlockIdRevisions {
-    /// `table`'s ids by sequential block state ([`UNASSIGNED_BLOCK_ID`] past its end) under a
-    /// revision no earlier table had.
-    pub(super) fn publish(&mut self, table: Arc<Vec<i32>>) -> ShaderpackBlockIds {
-        self.0 += 1;
-        ShaderpackBlockIds {
-            block_entity_id: Arc::new(move |state| {
-                table
-                    .get(state as usize)
-                    .copied()
-                    .unwrap_or(UNASSIGNED_BLOCK_ID)
-            }),
-            revision: self.0,
-        }
-    }
 }
 
 /// Allocates or resizes view targets, writes this frame's uniforms and builds each view's
