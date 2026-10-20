@@ -68,7 +68,7 @@ impl WorldStream {
             .then_some((
                 PendingSchedulerCandidate::new(key, pending.revision, view, pending.urgent),
                 pending,
-                false,
+                MeshCandidateOrigin::Probe,
             ))
         };
         let mut resident_candidates = if probe_near {
@@ -89,17 +89,21 @@ impl WorldStream {
                 resident_candidates.push(candidate);
             }
         }
+        if view.startup_center.is_none() {
+            let already_probed = resident_candidates
+                .iter()
+                .map(|(candidate, _, _)| candidate.key)
+                .collect();
+            resident_candidates.extend(self.mesh_retry_candidates(view, &already_probed));
+        }
         resident_candidates.sort_unstable_by_key(|candidate| std::cmp::Reverse(candidate.0));
         let truncated = resident_candidates.split_off(
             resident_candidates
                 .len()
                 .min(MAX_PENDING_SCHEDULER_SCANS_PER_POLL),
         );
-        for (candidate, _, _) in truncated {
-            self.mesh_jobs.refresh.requeue_woken(candidate.key);
-        }
-        if view.startup_center.is_none() {
-            self.promote_ready_deferred_meshes(view);
+        for (candidate, _, origin) in truncated {
+            self.requeue_mesh_candidate(candidate, origin);
         }
         let mut dispatch = workers::WORKERS.batch(workers::Lane::Mesh);
         let mut dispatched = 0;
@@ -118,7 +122,7 @@ impl WorldStream {
                     .ready
                     .peek()
                     .is_some_and(|ready| probed.peek().is_none_or(|(next, _, _)| ready > next));
-            let (candidate, pending, queued) = if ready_first {
+            let (candidate, pending, origin) = if ready_first {
                 ready_pops += 1;
                 let mut candidate = self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                     .ready
@@ -162,7 +166,7 @@ impl WorldStream {
                         .push(candidate);
                     continue;
                 }
-                (candidate, pending, true)
+                (candidate, pending, MeshCandidateOrigin::Queued)
             } else if let Some(next) = probed.next() {
                 next
             } else {
@@ -170,7 +174,7 @@ impl WorldStream {
             };
             let key = candidate.key;
             if !seen.insert(key) {
-                if queued {
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -181,20 +185,20 @@ impl WorldStream {
                 || dispatched >= worker_budget
                 || (examined && self.poll_budget_exhausted());
             if exhausted || (dispatched >= regular_budget && !candidate.urgent) {
-                self.requeue_mesh_candidate(candidate, queued);
+                self.requeue_mesh_candidate(candidate, origin);
                 // Only a transfer candidate can rank above urgent work still to come.
                 if !exhausted && candidate.transfer {
                     continue;
                 }
-                for (candidate, _, queued) in probed {
-                    self.requeue_mesh_candidate(candidate, queued);
+                for (candidate, _, origin) in probed {
+                    self.requeue_mesh_candidate(candidate, origin);
                 }
                 break;
             }
             if !self.revisions.is_current(key, pending.revision)
                 || self.mesh_jobs.in_flight.contains_key(&key)
             {
-                if queued {
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -204,7 +208,8 @@ impl WorldStream {
             examined = true;
             self.mesh_jobs.retries.enqueue(key, pending.revision);
             if self.mesh_neighbour_is_due(key, now) {
-                if queued {
+                self.mesh_jobs.retries.block(key, pending.revision);
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -212,7 +217,8 @@ impl WorldStream {
                 continue;
             }
             let Some(center) = self.authority.terrain().sub_chunk(key) else {
-                if queued {
+                self.mesh_jobs.retries.block(key, pending.revision);
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -220,7 +226,8 @@ impl WorldStream {
                 continue;
             };
             let Some(light_halo) = self.mesh_light_halo(key) else {
-                if queued {
+                self.mesh_jobs.retries.block(key, pending.revision);
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -232,7 +239,8 @@ impl WorldStream {
                 self.authority.runtime_assets(),
                 self.authority.network_id_mode(),
             ) else {
-                if queued {
+                self.mesh_jobs.retries.block(key, pending.revision);
+                if origin == MeshCandidateOrigin::Queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .deferred
                         .push(candidate);
@@ -450,73 +458,6 @@ impl WorldStream {
         }
         dispatched
     }
-    /// Checks bounded FIFO retries and promotes eligible work at its current camera rank.
-    fn promote_ready_deferred_meshes(&mut self, view: SchedulerView) {
-        let budget = self
-            .mesh_jobs
-            .retries
-            .begin_poll()
-            .min(MAX_PENDING_SCHEDULER_SCANS_PER_POLL);
-        let now = Instant::now();
-        let mut examined = false;
-        for _ in 0..budget {
-            if examined && self.poll_budget_exhausted() {
-                break;
-            }
-            let Some(retry) = self.mesh_jobs.retries.pop() else {
-                break;
-            };
-            let Some(pending) = self
-                .mesh_jobs
-                .pending
-                .get(&retry.key)
-                .copied()
-                .filter(|pending| pending.revision == retry.revision)
-            else {
-                continue;
-            };
-            if !self.mesh_requires_geometry(retry.key) {
-                continue;
-            }
-            if !self.mesh_jobs.retries.is_due(&retry) {
-                self.mesh_jobs.retries.requeue(retry);
-                continue;
-            }
-            let candidate =
-                PendingSchedulerCandidate::new(retry.key, retry.revision, view, pending.urgent);
-            let ready_leads = self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
-                .ready
-                .peek()
-                .copied()
-                .filter(|ready| {
-                    self.mesh_jobs
-                        .pending
-                        .get(&ready.key)
-                        .is_some_and(|pending| pending.revision == ready.revision)
-                })
-                .is_some_and(|mut ready| {
-                    ready.refresh_rank(view);
-                    ready >= candidate
-                });
-            if ready_leads {
-                self.mesh_jobs.retries.requeue(retry);
-                continue;
-            }
-            examined = true;
-            let ready = self.revisions.is_current(retry.key, retry.revision)
-                && !self.mesh_jobs.in_flight.contains_key(&retry.key)
-                && !self.mesh_neighbour_is_due(retry.key, now)
-                && self.mesh_light_halo(retry.key).is_some();
-            if ready {
-                self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
-                    .ready
-                    .push(candidate);
-            } else {
-                self.mesh_jobs.retries.defer(retry);
-            }
-        }
-    }
-
     /// Moves due air sections from the keyed set into the removal lane, where removals order by
     /// priority under the poll deadline. Bounded attempts resume after the last key examined, so
     /// stale entries are cleared and sections that need geometry again return to the worker queue
@@ -621,15 +562,18 @@ impl WorldStream {
             key,
         )
     }
-    /// Returns an undispatched candidate to the ready lane it came from, or to the woken set when
-    /// it was probed or woken outside any queue.
-    fn requeue_mesh_candidate(&mut self, candidate: PendingSchedulerCandidate, queued: bool) {
-        if queued {
-            self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+    /// Returns an unexamined lane or probe record; FIFO retries are already retained.
+    fn requeue_mesh_candidate(
+        &mut self,
+        candidate: PendingSchedulerCandidate,
+        origin: MeshCandidateOrigin,
+    ) {
+        match origin {
+            MeshCandidateOrigin::Queued => self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                 .ready
-                .push(candidate);
-        } else {
-            self.mesh_jobs.refresh.requeue_woken(candidate.key);
+                .push(candidate),
+            MeshCandidateOrigin::Probe => self.mesh_jobs.refresh.requeue_woken(candidate.key),
+            MeshCandidateOrigin::Retry => {}
         }
     }
     /// Faces, AO and smooth light sample all 26 neighbours; meshing before one the server still

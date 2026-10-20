@@ -12,6 +12,15 @@ pub(in crate::stream) struct DeferredRetry {
     not_before: u64,
 }
 
+impl DeferredRetry {
+    /// Advances backoff for one readiness or admission check that actually failed.
+    fn block(&mut self, polls: u64) {
+        let delay = (1_u64 << self.attempts.min(5)).min(MAX_RECHECK_BACKOFF_POLLS);
+        self.attempts = self.attempts.saturating_add(1);
+        self.not_before = polls + delay;
+    }
+}
+
 /// A FIFO retry rotation with one removable record per key, independent of camera heaps.
 #[derive(Default)]
 pub(in crate::stream) struct RecheckQueue {
@@ -90,9 +99,17 @@ impl RecheckQueue {
 
     /// Records an actual blocked readiness check before rotating the revision to the back.
     pub(in crate::stream) fn defer(&mut self, mut retry: DeferredRetry) {
-        let delay = (1_u64 << retry.attempts.min(5)).min(MAX_RECHECK_BACKOFF_POLLS);
-        retry.attempts = retry.attempts.saturating_add(1);
-        retry.not_before = self.polls + delay;
+        retry.block(self.polls);
         self.requeue(retry);
+    }
+
+    /// Applies an actual admission failure only to the matching queued revision.
+    pub(in crate::stream) fn block(&mut self, key: SubChunkKey, revision: u64) {
+        if let Some(sequence) = self.positions.get(&key) {
+            let retry = self.entries.get_mut(sequence).expect("indexed retry");
+            if retry.revision == revision {
+                retry.block(self.polls);
+            }
+        }
     }
 }

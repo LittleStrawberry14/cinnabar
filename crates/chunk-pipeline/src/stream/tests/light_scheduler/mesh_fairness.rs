@@ -2,7 +2,13 @@ use super::*;
 
 /// Queues a visible mesh outside local probes ahead of a lower-priority ready generation.
 fn deferred_mesh_stream() -> (WorldStream, SchedulerView, SubChunkKey, SubChunkKey) {
-    let mut stream = lit_stream(1);
+    seed_deferred_meshes(lit_stream(1))
+}
+
+/// Queues a visible far mesh ahead of lower-priority work in a dimension-one test stream.
+fn seed_deferred_meshes(
+    mut stream: WorldStream,
+) -> (WorldStream, SchedulerView, SubChunkKey, SubChunkKey) {
     stream.set_view_forward([1.0, 0.0, 0.0]);
     let view = stream.scheduler_view([8.0; 3]);
     assert!(view.startup_center.is_none());
@@ -180,4 +186,110 @@ fn far_settled_retry_precedes_continuous_fresh_ingress() {
         "fresh lower-priority ingress hid the settled retry"
     );
     assert!(stream.mesh_jobs.pending.contains_key(&backlog));
+}
+
+/// Output-memory pressure must not starve a smaller ready mesh or duplicate retry heap records.
+#[test]
+fn memory_blocked_retry_keeps_ready_progress_and_bounded_storage() {
+    let base = light_test_assets();
+    let model_id = u32::try_from(base.visual_count()).unwrap();
+    let side = assets::MODEL_POSITION_SCALE;
+    let uv = assets::MODEL_UV_SCALE;
+    let overlay = assets::BlockOverlay {
+        visuals: vec![BlockVisual {
+            native_material: assets::native_material::NativeMaterialFacts::Unresolved,
+            support: assets::VisualSupport::Exact,
+            faces: [0; 6],
+            flags: BlockFlags::empty(),
+            kind: VisualKind::Model,
+            contributor_role: ContributorRole::Primary,
+            model_template: 0,
+            animation: NO_ANIMATION,
+            variant: 0,
+            destroy: assets::compiled::block_destroy::BlockDestroyFacts::Unresolved,
+        }],
+        light_properties: vec![LightProperties::new(0, 0).unwrap()],
+        materials: vec![Material {
+            texture: TextureRef::DIAGNOSTIC,
+            flags: 0,
+            animation: NO_ANIMATION,
+            ..Material::unvaried()
+        }],
+        model_templates: vec![assets::ModelTemplate {
+            quad_start: 0,
+            quad_count: 1,
+            flags: 0,
+        }],
+        model_quads: vec![assets::ModelQuad {
+            positions: [[0, 0, 0], [0, side, 0], [side, side, 0], [side, 0, 0]],
+            uvs: [[0, 0], [0, uv], [uv, uv], [uv, 0]],
+            material: 0,
+            flags: 0,
+        }],
+        ..assets::BlockOverlay::default()
+    };
+    let assets = base.with_block_overlay(model_id, &overlay).unwrap();
+    let (mut stream, view, visible, backlog) =
+        seed_deferred_meshes(lit_stream_with_assets(1, assets));
+    stream
+        .authority
+        .commit_sub_chunk(visible, super::uniform_sub_chunk(model_id))
+        .unwrap();
+    install_current_light(&mut stream, visible, 0, 0, false);
+    let revision = stream.mark_dirty_exact(visible, Instant::now());
+    let source = stream.authority.terrain().sub_chunk(visible).unwrap();
+    let small = stream.authority.terrain().sub_chunk(backlog).unwrap();
+    let reserve = |source| {
+        stream
+            .mesh_memory
+            .try_admit(
+                source,
+                stream.authority.runtime_assets(),
+                stream.authority.network_id_mode(),
+            )
+            .unwrap()
+    };
+    let large_permit = reserve(&source);
+    let large_bytes = stream.mesh_memory.retained.load(Ordering::Acquire);
+    drop(large_permit);
+    let small_permit = reserve(&small);
+    let small_bytes = stream.mesh_memory.retained.load(Ordering::Acquire);
+    drop(small_permit);
+    assert!(large_bytes > small_bytes);
+    let held = crate::stream::meshing::memory::MAX_MESH_OUTPUT_BYTES - small_bytes;
+    stream.mesh_memory.retained.store(held, Ordering::Release);
+    assert!(
+        stream
+            .mesh_memory
+            .try_admit(
+                &source,
+                stream.authority.runtime_assets(),
+                stream.authority.network_id_mode()
+            )
+            .is_none()
+    );
+    drop(reserve(&small));
+    let lane = &stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+    let storage_limit = lane.ready.len() + lane.deferred.len() + stream.mesh_jobs.scan.len();
+    let mut published = false;
+    for _ in 0..12 {
+        stream.poll_deadline = Some(Instant::now());
+        if stream.dispatch_mesh_jobs(view.position, 1) != 0 {
+            let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_ne!(completion.key, visible);
+            published |= completion.key == backlog;
+            stream.accept_mesh_completion(completion);
+            stream.take_mesh_changes();
+        }
+        let lane = &stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+        assert!(
+            lane.ready.len() + lane.deferred.len() <= storage_limit,
+            "unchanged retry accumulated heap records"
+        );
+        assert_eq!(stream.mesh_jobs.pending[&visible].revision, revision);
+    }
+    assert!(
+        published,
+        "a memory-blocked retry starved admissible ready work"
+    );
 }
