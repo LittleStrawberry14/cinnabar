@@ -6,6 +6,7 @@ on:
     paths:
       - packaging/ios/**
       - .github/workflows/ios.yml
+      - Cargo.toml
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    name: aarch64-apple-ios
+    name: unsigned IPA
     runs-on: macos-14
     timeout-minutes: 90
     steps:
@@ -26,33 +27,14 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
-      - name: Build ios client
+      - name: Build unsigned IPA
         run: |
-          cargo build -p cinnabar-ios --target aarch64-apple-ios --release --locked || true
-
-      - name: Package stub IPA
-        run: |
-          mkdir -p Payload/Cinnabar.app
-          echo 'stub' > Payload/Cinnabar.app/cinnabar
-          cat > Payload/Cinnabar.app/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleIdentifier</key><string>com.cinnabar.ios</string>
-            <key>CFBundleName</key><string>Cinnabar</string>
-            <key>CFBundleExecutable</key><string>cinnabar</string>
-            <key>CFBundleVersion</key><string>0.1.0</string>
-            <key>CFBundleShortVersionString</key><string>0.1.0</string>
-            <key>MinimumOSVersion</key><string>15.0</string>
-          </dict>
-          </plist>
-          EOF
-          zip -r cinnabar-ios-unsigned.ipa Payload
+          chmod +x packaging/ios/build-ipa.sh
+          bash packaging/ios/build-ipa.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: cinnabar-ios-unsigned
-          path: cinnabar-ios-unsigned.ipa
-          if-no-files-found: ignore
+          path: target/ios/cinnabar-ios-unsigned.ipa
+          if-no-files-found: error
           retention-days: 7
