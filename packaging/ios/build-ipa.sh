@@ -16,18 +16,30 @@ rm -rf "$out"
 mkdir -p "$app"
 
 echo "Building cinnabar-ios for $triple ($profile)..."
-cargo build -p cinnabar-ios --target "$triple" --profile "$profile" --locked || {
-  echo "Rust build failed (expected while the port is incomplete). Continuing with stub."
-}
 
-# Prefer the real staticlib if it exists, otherwise drop a placeholder binary.
+# Don't use --locked yet — the ios crate is new and the lockfile needs to settle.
+if cargo build -p cinnabar-ios --target "$triple" --profile "$profile"; then
+  echo "Rust build succeeded"
+  built=1
+else
+  echo "Rust build failed. Continuing with stub."
+  built=0
+fi
+
+# Prefer the real staticlib if it exists
 lib_path="target/$triple/$profile/libcinnabar_ios.a"
 if [[ -f "$lib_path" ]]; then
   cp "$lib_path" "$app/libcinnabar_ios.a"
+  echo "Included static library"
 fi
 
 # Minimal executable placeholder so the IPA structure is valid.
-printf '#!/bin/sh\necho "Cinnabar iOS stub – not a real client yet"\n' > "$app/cinnabar"
+# Real binary will replace this later.
+cat > "$app/cinnabar" << 'EOF'
+#!/bin/sh
+echo "Cinnabar iOS stub – not a real client yet"
+echo "This is only packaging scaffolding."
+EOF
 chmod +x "$app/cinnabar"
 
 # Info.plist
@@ -68,4 +80,5 @@ EOF
 
 # Package
 (cd "$out" && zip -qr cinnabar-ios-unsigned.ipa Payload)
-echo "Wrote $out/cinnabar-ios-unsigned.ipa"
+size=$(wc -c < "$out/cinnabar-ios-unsigned.ipa" | tr -d ' ')
+echo "Wrote $out/cinnabar-ios-unsigned.ipa ($size bytes)"
