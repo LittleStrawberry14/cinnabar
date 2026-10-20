@@ -259,7 +259,7 @@ fn repeated_air_invalidations_without_credit_keep_one_removal() {
         removal_lane
             .ready
             .iter()
-            .chain(&removal_lane.deferred)
+            .chain(removal_lane.deferred.iter())
             .all(|candidate| candidate.key != key)
     );
     assert!(stream.pop_mesh_change().is_none());
@@ -366,7 +366,7 @@ fn air_geometry_flips_without_worker_capacity_keep_one_returned_record() {
         let lane = &stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
         lane.ready
             .iter()
-            .chain(&lane.deferred)
+            .chain(lane.deferred.iter())
             .filter(|candidate| candidate.key == flipping)
             .count()
     };
