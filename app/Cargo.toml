@@ -113,7 +113,6 @@ test-alloc = { path = "../crates/test-alloc", optional = true }
 mimalloc = { workspace = true, optional = true }
 client-extensions = { path = "../crates/client-extensions" }
 bootstrap-ui = { path = "../crates/bootstrap-ui" }
-crash-monitor = { path = "../crates/crash-monitor" }
 first-run = { path = "../crates/first-run" }
 launcher-host = { path = "../crates/launcher-host" }
 experience-sdk = { path = "../crates/experience-sdk", default-features = false, features = ["declarations"] }
@@ -136,6 +135,10 @@ thiserror.workspace = true
 uuid.workspace = true
 wgpu.workspace = true
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+
+# Out-of-process minidumper monitor is not available on iOS (minidump-writer unsupported).
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "ios")))'.dependencies]
+crash-monitor = { path = "../crates/crash-monitor" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgpu"] }
