@@ -82,6 +82,7 @@ pub(crate) struct NativeReader {
     tail: PendingInput,
     failure: Option<tokio::task::JoinError>,
     stop: Option<oneshot::Sender<()>>,
+    close_deadline: Option<tokio::time::Instant>,
     closed: bool,
 }
 
@@ -94,19 +95,20 @@ impl Drop for NativeReader {
 }
 
 impl NativeReader {
-    /// Drains accepted writes and bounds teardown; cancellation retains the join handle.
+    /// Drains accepted writes; cancellation retains the original cutoff and join handle.
     pub(super) async fn close(&mut self) -> io::Result<()> {
         if self.closed {
             return Ok(());
         }
+        let deadline = *self
+            .close_deadline
+            .get_or_insert_with(|| tokio::time::Instant::now() + CLOSE_TIMEOUT);
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
-        let result = tokio::time::timeout(
-            CLOSE_TIMEOUT,
-            std::future::poll_fn(|cx| self.poll_driver(cx)),
-        )
-        .await;
+        let result =
+            tokio::time::timeout_at(deadline, std::future::poll_fn(|cx| self.poll_driver(cx)))
+                .await;
         self.closed = true;
         match result {
             Ok(Ok(pending)) => {
@@ -432,6 +434,7 @@ impl SessionTransport {
                 tail: None,
                 failure: None,
                 stop: Some(stop),
+                close_deadline: None,
                 closed: false,
             }),
             writer: crate::packet_relay::BatchWriter::direct(PacketSender::Native(sender)),
