@@ -1,8 +1,6 @@
-//! Anonymous original-cosmetic fixtures for the dressing-room painters.
+//! Original cosmetic wardrobe fixtures for the optional snapshot capture feature.
 
-use super::Fixture;
-use launcher::menu::{MenuScreen, MenuView};
-use std::sync::Arc;
+use super::{Arc, Fixture, MenuScreen, MenuView};
 
 /// Shows an anonymous wardrobe with the first original cosmetic equipped.
 pub(super) fn wardrobe() -> Fixture {
