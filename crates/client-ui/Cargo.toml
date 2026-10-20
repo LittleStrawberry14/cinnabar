@@ -64,8 +64,10 @@ resource-pack = { path = "../resource-pack" }
 launcher-host = { path = "../launcher-host" }
 server-experience = { path = "../server-experience", features = ["host"] }
 
-# Android has no clipboard adapter yet; its chat copy and paste report unavailable.
-[target.'cfg(not(any(target_os = "android", target_arch = "wasm32")))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))'.dependencies]
+arboard = { version = "3", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
