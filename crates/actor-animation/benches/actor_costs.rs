@@ -170,5 +170,8 @@ fn actor_costs(c: &mut Criterion) {
     }
     group.finish();
 }
-criterion_group!(benches, actor_costs);
+#[path = "actor_costs/frame_workers.rs"]
+mod frame_workers;
+
+criterion_group!(benches, actor_costs, frame_workers::costs);
 criterion_main!(benches);
