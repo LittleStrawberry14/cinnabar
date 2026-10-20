@@ -337,6 +337,7 @@ fn oversized_nearest_section_preserves_residents_and_can_retry_after_a_change() 
             .is_none()
     );
     assert_eq!(residency.sections.get(&far), Some(&previous));
+    assert!(residency.has_unplaceable());
     residency.wait(near);
     residency.enqueue(near);
     assert_eq!(residency.take_queue(), [near]);
@@ -346,6 +347,7 @@ fn oversized_nearest_section_preserves_residents_and_can_retry_after_a_change() 
             .is_some()
     );
     assert_eq!(residency.sections.get(&far), Some(&previous));
+    assert!(!residency.has_unplaceable());
 }
 
 #[test]
@@ -364,4 +366,43 @@ fn a_request_larger_than_the_total_budget_cannot_evict_residents() {
             .is_none()
     );
     assert!(residency.sections.contains_key(&entity(1)));
+}
+
+#[test]
+fn a_budget_change_retries_unplaceable_sections_without_evicting_other_pages() {
+    let mut residency = Residency::new(200 * FACE_BYTES, 100 * FACE_BYTES, STRIDE);
+    let placement = residency.place(entity(1), &plan(10)).unwrap();
+    residency.commit(entity(1), &placement, &plan(10), [320, 0, 0]);
+    let mut eviction = Eviction::default();
+    let near = Some((DVec3::ZERO, 0.0));
+    assert!(
+        residency
+            .place_nearest(entity(2), &plan(101), near, &mut eviction)
+            .is_none()
+    );
+    assert!(residency.has_unplaceable());
+    residency.wait(entity(2));
+    residency.set_budget(200 * FACE_BYTES);
+    assert_eq!(residency.take_queue(), [entity(2)]);
+    assert!(
+        residency
+            .place_nearest(entity(2), &plan(101), near, &mut eviction)
+            .is_none()
+    );
+    assert!(
+        residency.sections.contains_key(&entity(1)),
+        "the existing small page cannot grow by eviction"
+    );
+    residency.wait(entity(2));
+    residency.set_budget(201 * FACE_BYTES);
+    assert_eq!(residency.take_queue(), [entity(2)]);
+    assert!(
+        residency
+            .place_nearest(entity(2), &plan(101), near, &mut eviction)
+            .is_some()
+    );
+    assert!(!residency.has_unplaceable());
+    assert!(residency.sections.contains_key(&entity(1)));
+    residency.remove(entity(2));
+    assert!(!residency.has_unplaceable());
 }
