@@ -16,6 +16,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+bevy.workspace = true
 cinnabar = { path = "../../../app", default-features = false }
 launcher = { path = "../../../crates/launcher" }
 
