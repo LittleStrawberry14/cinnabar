@@ -11,6 +11,10 @@ fn crowd(
     mode: &str,
     extra_variables: usize,
 ) -> (ActorAnimationStore, HashMap<u64, test_actor::TestActor>) {
+    let (mode, named) = mode
+        .strip_prefix("named_")
+        .map_or((mode, false), |mode| (mode, true));
+    let bone_count = if named { 64 } else { 6 };
     let mut compiled =
         test_support::counting_random_compiled(assets::facts::VanillaEntity::Player.identifier());
     compiled.rig_bindings[0].pre_animation = None;
@@ -20,10 +24,10 @@ fn crowd(
     } else {
         [Some(3), None, None]
     };
-    if mode == "swing" {
+    if mode.ends_with("swing") {
         compiled.molang_symbols[7].identifier = "variable.attack_time".into();
         compiled.molang_ops[11] = MolangOp::LoadVariable(7);
-    } else if mode == "walk" {
+    } else if mode.ends_with("walk") {
         compiled.molang_symbols[4].identifier = "query.modified_distance_moved".into();
         compiled.molang_ops[11] = MolangOp::LoadQuery(4);
     }
@@ -34,7 +38,7 @@ fn crowd(
     }));
     compiled.molang_symbols = symbols.into();
     let seed = compiled.geometries[0].bones[0].clone();
-    compiled.geometries[0].bones = (0..6)
+    compiled.geometries[0].bones = (0..bone_count)
         .map(|index| {
             let mut bone = seed.clone();
             if index > 0 {
@@ -44,6 +48,20 @@ fn crowd(
             bone
         })
         .collect();
+    if named {
+        let channel = compiled.animation_channels[0].clone();
+        compiled.animation_channels = compiled.geometries[0]
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(index, bone)| assets::EntityAnimationChannel {
+                bone: index as u32,
+                bone_name: Some(bone.name.clone()),
+                ..channel.clone()
+            })
+            .collect();
+        compiled.animation_clips[0].channel_count = bone_count as u32;
+    }
     let assets = Arc::new(
         RuntimeEntityAssets::from_compiled(compiled.with_unresolved_admissions()).unwrap(),
     );
@@ -69,25 +87,28 @@ fn crowd(
         ActorTickContext::default()
     });
     for actor in actors.values_mut() {
-        if mode == "walk" {
+        if mode.ends_with("walk") {
             actor.position[0] = 0.2;
             actor.velocity[0] = 4.0;
         }
-        if mode == "swing" {
+        if mode.ends_with("swing") {
             store.start_swing(actor.runtime_id, 6, 6);
         }
     }
     store.advance_tick(&actors, None, None, true, false, |_| {
         ActorTickContext::default()
     });
-    if mode == "swing" {
+    if mode.ends_with("swing") {
         store.advance_tick(&actors, None, None, true, false, |_| {
             ActorTickContext::default()
         });
     }
     if mode != "idle" {
         let mut frame = ActorRenderFrame::new(&store, &actors, [0.0; 2], [0.0; 3], 0.5);
-        assert_eq!(frame.layers_with_skin(1).unwrap().render[0].pose.len(), 6);
+        assert_eq!(
+            frame.layers_with_skin(1).unwrap().render[0].pose.len(),
+            bone_count
+        );
         assert_eq!(store.frame_fallbacks(), 0);
     }
     (store, actors)
@@ -106,7 +127,7 @@ fn actor_costs(c: &mut Criterion) {
         } else {
             format!("_variables_{extra_variables}")
         };
-        for mode in ["idle", "walk", "swing"] {
+        for mode in ["idle", "walk", "swing", "named_walk", "named_swing"] {
             for repeated in [false, true] {
                 let (store, actors) = crowd(mode, extra_variables);
                 let mut alpha = 0.25;
@@ -138,18 +159,18 @@ fn actor_costs(c: &mut Criterion) {
                 );
             }
         }
-        for mode in ["idle", "walk", "swing"] {
+        for mode in ["idle", "walk", "swing", "named_walk", "named_swing"] {
             let (mut store, mut actors) = crowd(mode, extra_variables);
             group.bench_function(
                 BenchmarkId::new(format!("tick_and_six_frames_128{suffix}"), mode),
                 |b| {
                     b.iter(|| {
                         for actor in actors.values_mut() {
-                            if mode == "walk" {
+                            if mode.ends_with("walk") {
                                 actor.previous_position = actor.position;
                                 actor.position[0] += 0.2;
                             }
-                            if mode == "swing" {
+                            if mode.ends_with("swing") {
                                 store.start_swing(actor.runtime_id, 6, 6);
                             }
                         }

@@ -9,6 +9,8 @@ pub(crate) struct GeometryCheckpoint {
     binding: usize,
     bones: Vec<RuntimeBone>,
     names: Vec<Box<str>>,
+    channels: Arc<pose::ChannelBindings>,
+    attachments: Arc<render_model::ActorAttachmentBindings>,
     controllers: Vec<ControllerState>,
     ui_pose: Option<Vec<BoneTransform>>,
     ui_animation: Option<hud::UiAnimationState>,
@@ -33,6 +35,8 @@ impl GeometryCheckpoint {
             binding: state.geometry_binding,
             bones: std::mem::take(&mut state.bones),
             names: std::mem::take(&mut state.bone_names),
+            channels: Arc::clone(&state.channel_bindings),
+            attachments: Arc::clone(&state.attachment_bindings),
             controllers: std::mem::take(&mut state.controllers),
             ui_pose: state.ui_pose.take(),
             ui_animation: state.ui_animation.take(),
@@ -56,6 +60,8 @@ impl GeometryCheckpoint {
         state.geometry_binding = self.binding;
         state.bones = self.bones;
         state.bone_names = self.names;
+        state.channel_bindings = self.channels;
+        state.attachment_bindings = self.attachments;
         state.controllers = self.controllers;
         state.ui_pose = self.ui_pose;
         state.ui_animation = self.ui_animation;

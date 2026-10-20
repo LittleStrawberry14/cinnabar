@@ -213,7 +213,8 @@ with [client presentation](crates/client-presentation/src/lib.rs) and
 [rendering](crates/render/src/lib.rs). The open gates require complete behavioral
 and rendered qualification, not initial implementation of those systems.
 Frame sampling retains matching expression, layer and composition results; equipment
-placement reuses unchanged owner and attachment inputs. Hardware crowd captures and
+placement reuses unchanged owner and attachment inputs. Rig plans retain clip masks and
+named channel indices; appearance bindings retain cape and cosmetic anchors. Hardware crowd captures and
 full temporal/visual qualification remain open.
 
 - [ ] `P4.3-RIGS` — Close bounded asset admission, Molang/controllers, protocol-driven

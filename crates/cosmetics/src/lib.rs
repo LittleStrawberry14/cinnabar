@@ -72,7 +72,7 @@ pub struct Descriptor {
 }
 
 /// An immutable admitted item; handles remain valid when a catalog refreshes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Item(u16);
 static ITEMS: RwLock<Vec<&'static Descriptor>> = RwLock::new(Vec::new());
 static ACTIVE: RwLock<Option<Vec<Item>>> = RwLock::new(None);
@@ -122,6 +122,12 @@ impl Item {
                     .then_some(Self(index as u16))
             })
             .collect()
+    }
+
+    /// Lists every admitted handle, including revisions still equipped by existing actors.
+    pub fn registered() -> Vec<Self> {
+        let items = ITEMS.read().unwrap_or_else(|error| error.into_inner());
+        (0..items.len()).map(|index| Self(index as u16)).collect()
     }
 
     /// Returns immutable metadata shared by the gallery, renderer and wire selection.

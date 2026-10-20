@@ -284,3 +284,28 @@ fn assert_custom_attack(pose: &[BoneTransform], baseline: &[BoneTransform], name
         ])
     );
 }
+
+#[test]
+fn appearance_binding_indices_follow_skin_install_replacement_and_removal() {
+    let assets = crate::test_support::counting_random_assets();
+    let mut store = ActorAnimationStore::with_assets(Arc::clone(&assets));
+    let actor = super::super::tests::actor_with_metadata(HashMap::new());
+    store.insert(1, 0, &actor);
+    let lifetime = store.runtime_to_lifetime[&actor.runtime_id];
+    let initial = Arc::new(render_model::ActorAttachmentBindings::from_cape(
+        &assets.geometries()[0].bones,
+        &store.rigs[&lifetime].bone_names,
+    ));
+    store.rigs.get_mut(&lifetime).unwrap().attachment_bindings = Arc::clone(&initial);
+    let changed = SKIN_MODEL.replace("\"body\"", "\"rightitem\"");
+    for model in [Some(SKIN_MODEL), Some(changed.as_str()), None] {
+        let source = model.map(skin_source);
+        if let Some(source) = &source {
+            warm_source(&mut store, source);
+        }
+        store.sync_skin_model(actor.runtime_id, source.as_ref());
+        let rig = store.get(actor.runtime_id).unwrap();
+        let expected = initial.rebind(rig.bone_names);
+        assert_eq!(rig.attachments.unwrap().cape(), expected.cape());
+    }
+}

@@ -46,6 +46,7 @@ pub struct RenderTextureLayer {
 pub(super) struct LayerSkeleton {
     pub(super) bones: Vec<RuntimeBone>,
     pub(super) names: Vec<Box<str>>,
+    pub(super) channels: pose::ChannelBindings,
 }
 
 pub(super) fn bind_attachable_roots(state: &mut ActorRigState, owner_names: &[Box<str>]) {
@@ -83,7 +84,11 @@ pub(super) fn cache_layer_skeletons(assets: &RuntimeEntityAssets, state: &mut Ac
                 .entry(choice.geometry)
                 .or_insert_with(|| {
                     let (bones, names) = resolve_bones(assets, choice.geometry as usize)?;
-                    Some(Arc::new(LayerSkeleton { bones, names }))
+                    Some(Arc::new(LayerSkeleton {
+                        channels: pose::ChannelBindings::new(assets, &names),
+                        bones,
+                        names,
+                    }))
                 });
         }
     }
@@ -162,7 +167,7 @@ pub(super) fn sample_layer_local(
         evaluator,
         &mut scratch,
         &skeleton.bones,
-        &skeleton.names,
+        pose::ChannelBones::bound(&skeleton.names, &skeleton.channels),
         &mapped,
         budget,
     )?;

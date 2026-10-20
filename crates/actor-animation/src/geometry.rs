@@ -138,6 +138,8 @@ pub(super) fn resolve_binding(
         geometry_binding,
         bones,
         bone_names,
+        attachment_bindings: Arc::clone(&plan.attachments),
+        channel_bindings: Arc::clone(&plan.channels),
         render: Vec::new(),
         may_use_always_depth_material: plan.always_depth,
         scale: None,
@@ -535,6 +537,11 @@ fn reselect_geometry_with_checkpoint(
     state.geometry_binding = selected;
     state.bones = bones;
     state.bone_names = bone_names;
+    state.channel_bindings = Arc::clone(&plan.channels);
+    state.attachment_bindings = Arc::clone(&plan.attachments);
+    if state.skin_skeleton().is_some() {
+        state.rebind_attachments();
+    }
     state.controllers = controllers;
     state.reset_to_skeleton(pose);
     checkpoint
