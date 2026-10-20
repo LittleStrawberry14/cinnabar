@@ -23,6 +23,9 @@ use std::{
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(test)]
+pub(super) mod tests;
+
 type Work = Pin<Box<dyn Future<Output = Completion> + Send>>;
 type ServiceLoop = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
 
@@ -61,16 +64,6 @@ struct Limiter {
 }
 
 impl Registry {
-    /// Observes the actual owning admission and session collections in socket fixtures.
-    #[cfg(test)]
-    pub(super) fn test_counts(&self) -> (usize, usize) {
-        let state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (state.active, state.sessions.len())
-    }
-
     /// Creates bounded application state without a worker, runtime or credential acquisition.
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {

@@ -32,7 +32,6 @@ mod movement;
 mod nbt_tree;
 mod packet;
 mod packet_relay;
-pub use bedrock_packs::RelayPack;
 pub use packet_relay::{PacketRelay, RELAY_TICK, RelayOutput};
 pub mod packet_tap;
 mod particle;
@@ -173,22 +172,19 @@ pub use inventory::{
 };
 pub use item::{
     ActorActionEvent, ActorActionKind, ActorHandedness, ArmorEquipmentEvent, EquipmentEvent,
-    FoodProperties, HOTBAR_SLOT_COUNT, ItemActorEvent, ItemAttackCooldown, ItemAttackTiming,
-    ItemBannerPattern, ItemBook, ItemComponents, ItemDisplay, ItemPacketError, ItemRegistryEntry,
-    ItemRegistryEvent, ItemRegistryVersion, ItemStackFacts, ItemStackFactsCache, ItemUseCooldown,
-    KineticWeaponTiming, MAX_ACTION_IDENTIFIER_BYTES, MAX_ANIMATE_ENTITY_IDS,
-    MAX_ANIMATION_IDENTIFIER_BYTES, MAX_BOOK_PAGES, MAX_ITEM_EXTRA_BYTES,
-    MAX_ITEM_REGISTRY_ENTRIES, NetworkItemStack, held_items_match, item_banner_patterns,
-    item_banner_type, item_book, item_bundle_id, item_charged_projectile, item_custom_color,
-    item_display, item_enchantment_level, item_enchantment_level_value, item_extra_damage,
-    item_extra_damage_integer, item_extra_damage_value, item_extra_unbreakable,
-    item_has_enchantment_list, item_stack_damage, item_use_progress_packet,
-    offhand_equipment_packet, select_hotbar_slot_packet, vanilla_item_registry,
-};
-pub use item::{
-    ItemAnvilData, ItemNbtEdit, book_init_extra, book_needs_init, edit_item_extra, item_anvil_data,
-    item_custom_name, item_extra_lock, item_extra_slot_locked, item_filtered_custom_name,
-    item_repair_cost, item_user_data_equal,
+    FoodProperties, HOTBAR_SLOT_COUNT, ItemActorEvent, ItemAnvilData, ItemAttackCooldown,
+    ItemAttackTiming, ItemBannerPattern, ItemBook, ItemComponents, ItemDisplay, ItemNbtEdit,
+    ItemPacketError, ItemRegistryEntry, ItemRegistryEvent, ItemRegistryVersion, ItemStackFacts,
+    ItemStackFactsCache, ItemUseCooldown, KineticWeaponTiming, MAX_ACTION_IDENTIFIER_BYTES,
+    MAX_ANIMATE_ENTITY_IDS, MAX_ANIMATION_IDENTIFIER_BYTES, MAX_BOOK_PAGES, MAX_ITEM_EXTRA_BYTES,
+    MAX_ITEM_REGISTRY_ENTRIES, NetworkItemStack, book_init_extra, book_needs_init, edit_item_extra,
+    held_items_match, item_anvil_data, item_banner_patterns, item_banner_type, item_book,
+    item_bundle_id, item_charged_projectile, item_custom_color, item_custom_name, item_display,
+    item_enchantment_level, item_enchantment_level_value, item_extra_damage,
+    item_extra_damage_integer, item_extra_damage_value, item_extra_lock, item_extra_slot_locked,
+    item_extra_unbreakable, item_filtered_custom_name, item_has_enchantment_list, item_repair_cost,
+    item_stack_damage, item_use_progress_packet, item_user_data_equal, offhand_equipment_packet,
+    select_hotbar_slot_packet, vanilla_item_registry,
 };
 pub use item_capacity::{ITEM_DEFAULT_MAX_STACK_SIZE, vanilla_item_capacity};
 pub use respawn::{respawn_ready_packet, respawn_request_packet};
@@ -291,10 +287,6 @@ pub use fast_transfer_action::FastTransferAction;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-
-#[cfg(test)]
-#[global_allocator]
-static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
 
 // Wire suites that inspect packet internals remain unit tests.
 #[cfg(test)]

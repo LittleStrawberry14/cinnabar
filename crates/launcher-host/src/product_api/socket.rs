@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::native_account::{ApiCredential, ApiScope, NativeAccount};
+use bridge::contract::CINNABAR_API_MAX_FRAME_BYTES;
 use futures::{SinkExt, StreamExt};
 use std::{io, time::Duration};
 use tokio::time::Instant as Deadline;
@@ -172,10 +173,10 @@ impl Client {
                 .capture_rejected_response(true)
                 .config(
                     Config::default()
-                        .frame_size(policy::FRAME_BYTES)
+                        .frame_size(CINNABAR_API_MAX_FRAME_BYTES)
                         .flush_threshold(1),
                 )
-                .limits(Limits::default().max_payload_len(Some(policy::FRAME_BYTES)));
+                .limits(Limits::default().max_payload_len(Some(CINNABAR_API_MAX_FRAME_BYTES)));
             let (mut socket, response) = builder.connect().await.map_err(Failure::dial)?;
             if Deadline::now() >= auth_until {
                 return Err(Failure::at("token"));

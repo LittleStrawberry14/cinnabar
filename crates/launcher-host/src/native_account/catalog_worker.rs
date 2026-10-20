@@ -75,13 +75,6 @@ impl CatalogWorker {
         })
     }
 
-    /// Observes an actual queued result without consuming the stale-publication fixture's item.
-    #[cfg(feature = "test-support")]
-    #[doc(hidden)]
-    pub fn test_has_result(&self) -> bool {
-        !self.result.is_empty()
-    }
-
     /// Signals only this actual request; its Operation still owns protected persistence.
     pub fn cancel(&mut self) {
         if let Some(cancel) = self.cancel.take() {

@@ -17,6 +17,7 @@ struct Read {
     dropping: mpsc::Sender<std::thread::ThreadId>,
     release: mpsc::Receiver<()>,
     complete: bool,
+    result_owner: Arc<()>,
 }
 
 impl Future for Read {
@@ -27,12 +28,28 @@ impl Future for Read {
             let _ = started.send(());
         }
         if self.complete {
-            Poll::Ready(Err(io::Error::other("synthetic catalog section failure")))
+            Poll::Ready(Err(io::Error::other(CompletedResult {
+                _lifetime: Arc::clone(&self.result_owner),
+            })))
         } else {
             Poll::Pending
         }
     }
 }
+
+/// The completed error retains this receipt until its actual queued result is consumed.
+#[derive(Debug)]
+struct CompletedResult {
+    _lifetime: Arc<()>,
+}
+
+impl std::fmt::Display for CompletedResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("synthetic catalog section failure")
+    }
+}
+
+impl std::error::Error for CompletedResult {}
 
 impl Drop for Read {
     fn drop(&mut self) {
@@ -83,12 +100,14 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
         let (started, running) = mpsc::channel();
         let (dropping, held) = mpsc::channel();
         let (release, blocked) = mpsc::channel();
+        let result_owner = Arc::new(());
         let worker = CatalogWorker::start_test_read(
             Read {
                 started: Some(started),
                 dropping,
                 release: blocked,
                 complete,
+                result_owner: Arc::clone(&result_owner),
             },
             runtime.handle().clone(),
             tasks.clone(),
@@ -145,16 +164,13 @@ fn actual_catalog_retirement_coalesces_refresh_and_rejects_stale_publication() {
         });
         assert!(wait.as_mut().poll(&mut context).is_ready());
         assert_eq!(
-            menu.native_catalog
-                .retiring
-                .as_ref()
-                .unwrap()
-                .test_has_result(),
-            complete,
+            Arc::strong_count(&result_owner),
+            if complete { 2 } else { 1 },
             "the selected stale result must remain queued for the real controller"
         );
         menu.poll_native_catalog(now);
         assert!(menu.native_catalog.retiring.is_none());
+        assert_eq!(Arc::strong_count(&result_owner), 1);
         assert!(
             menu.native_catalog.request.is_some(),
             "retired cleanup still blocked real replacement admission"

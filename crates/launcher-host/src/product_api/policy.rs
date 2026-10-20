@@ -4,7 +4,6 @@ use bridge::contract::*;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
 
-pub(super) use bridge::contract::CINNABAR_API_MAX_FRAME_BYTES as FRAME_BYTES;
 pub(super) const MAX_BUILD: u64 = (1 << 53) - 1;
 pub(super) const EMOTE_TTL: Duration = Duration::from_secs(15);
 pub(super) const EMOTE_SPACING: Duration = Duration::from_millis(500);

@@ -284,4 +284,4 @@ fn timed_out() -> io::Error {
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(crate) mod tests;

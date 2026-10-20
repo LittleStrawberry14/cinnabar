@@ -4,13 +4,11 @@ use bedrock_net::{
     BatchCodec, BatchHeader, BatchLimits, BatchPhase, CompressionAlgorithm, CompressionSettings,
     DecodeOutcome,
 };
-use bedrock_protocol_1_26_51::{
-    enums::{PlayStatusType, TextPacketType},
-    packets::{self, Packet},
-    types::{ActorRuntimeID, TextData},
-    wire,
-};
 use bytes::Bytes;
+use protocol::{
+    Packet,
+    test_support::negotiation::{self, ClientPacket},
+};
 use raknet::prelude::{
     Established, RakClock, RakPriority, RakReliability, RakServer, RakServerConfig, RakServerInput,
     RakServerOutput, RakSession, RakSessionInput, RakSessionOutput, Sans,
@@ -35,23 +33,16 @@ impl Peer {
         let codec = BatchCodec::new(BatchHeader::RakNet, BatchLimits::default());
         assert!(matches!(
             self.packet(&codec).await,
-            Packet::RequestNetworkSettings(_)
+            ClientPacket::RequestNetworkSettings
         ));
-        self.send(
-            &codec,
-            &[Packet::NetworkSettings(packets::NetworkSettings {
-                compression_threshold: wire::U16LE(u16::MAX),
-                ..Default::default()
-            })],
-        )
-        .await;
+        self.send(&codec, &[negotiation::network_settings(u16::MAX)])
+            .await;
         let codec = codec.negotiate(CompressionSettings {
             algorithm: CompressionAlgorithm::Deflate,
             threshold: u16::MAX,
         });
-        assert!(matches!(self.packet(&codec).await, Packet::Login(_)));
-        self.send(&codec, &[Packet::Disconnect(Default::default())])
-            .await;
+        assert!(matches!(self.packet(&codec).await, ClientPacket::Login));
+        self.send(&codec, &[negotiation::disconnect()]).await;
         assert!(
             matches!(self.next().await, Input::Closed),
             "refused Login produced another application message"
@@ -81,68 +72,36 @@ impl Peer {
         let codec = BatchCodec::new(BatchHeader::RakNet, BatchLimits::default());
         assert!(matches!(
             self.packet(&codec).await,
-            Packet::RequestNetworkSettings(_)
+            ClientPacket::RequestNetworkSettings
         ));
-        self.send(
-            &codec,
-            &[Packet::NetworkSettings(packets::NetworkSettings {
-                compression_threshold: wire::U16LE(u16::MAX),
-                ..Default::default()
-            })],
-        )
-        .await;
+        self.send(&codec, &[negotiation::network_settings(u16::MAX)])
+            .await;
         let codec = codec.negotiate(CompressionSettings {
             algorithm: CompressionAlgorithm::Deflate,
             threshold: u16::MAX,
         });
-        assert!(matches!(self.packet(&codec).await, Packet::Login(_)));
-        self.send(
-            &codec,
-            &[
-                Packet::PlayStatus(packets::PlayStatus {
-                    status: PlayStatusType::Loginsuccess,
-                }),
-                Packet::ResourcePacksInfo(packets::ResourcePacksInfo::default()),
-            ],
-        )
-        .await;
+        assert!(matches!(self.packet(&codec).await, ClientPacket::Login));
+        self.send(&codec, &negotiation::login_success_and_pack_info())
+            .await;
         assert!(matches!(
             self.packet(&codec).await,
-            Packet::ClientCacheStatus(_)
+            ClientPacket::ClientCacheStatus
         ));
         assert!(matches!(
             self.packet(&codec).await,
-            Packet::ResourcePackClientResponse(_)
+            ClientPacket::ResourcePackClientResponse
         ));
-        self.send(
-            &codec,
-            &[
-                Packet::ResourcePackStack(packets::ResourcePackStack::default()),
-                Packet::StartGame(Box::new(packets::StartGame {
-                    runtime_id: ActorRuntimeID(42),
-                    ..Default::default()
-                })),
-            ],
-        )
-        .await;
+        self.send(&codec, &negotiation::empty_stack_and_start_game(42))
+            .await;
         assert!(matches!(
             self.packet(&codec).await,
-            Packet::ResourcePackClientResponse(_)
+            ClientPacket::ResourcePackClientResponse
         ));
         // A bounded batch repeats valid text to exercise the real browser writer.
-        let text = Packet::Text(packets::Text {
-            body: TextData::MessageOnly {
-                message_type: TextPacketType::Raw,
-                message: "x"
-                    .repeat(BatchLimits::default().max_decoded_bytes / 1024)
-                    .into(),
-            },
-            ..Default::default()
-        });
+        let text =
+            negotiation::raw_text("x".repeat(BatchLimits::default().max_decoded_bytes / 1024));
         let limits = BatchLimits::default();
-        let mut encoded = Vec::new();
-        text.encode_frame(wire::Peer::Server, 0, 0, &mut encoded)
-            .unwrap();
+        let encoded = negotiation::server_frame(&text);
         let count = (limits.max_decoded_bytes / 2 / encoded.len()).min(limits.max_packets);
         assert!(count > 1, "fixture must offer repeated legal text packets");
         let text = vec![text; count];
@@ -158,7 +117,7 @@ impl Peer {
     }
 
     /// Decodes the original client batch using the same public codec and generated decoder.
-    async fn packet<S: BatchPhase>(&mut self, codec: &BatchCodec<S>) -> Packet {
+    async fn packet<S: BatchPhase>(&mut self, codec: &BatchCodec<S>) -> ClientPacket {
         let Input::Message(message) = self.next().await else {
             panic!("peer retired before the native negotiation completed")
         };
@@ -167,33 +126,14 @@ impl Peer {
         };
         assert_eq!(packets.len(), 1);
         let packet = packets.next().unwrap();
-        let mut reader = wire::Reader::from_shared(&packet);
-        let header = wire::PacketHeader::from_raw(reader.read_var_u32().unwrap());
-        let id = packets::PacketId::from_raw(header.id).unwrap();
-        let packet = Packet::decode_body(id, &mut reader).unwrap();
-        reader.expect_consumed().unwrap();
-        packet
+        negotiation::client_packet(&packet)
     }
 
     /// Frames generated server packets and submits them through the actual established core.
     async fn send<S: BatchPhase>(&mut self, codec: &BatchCodec<S>, packets: &[Packet]) {
         let limits = BatchLimits::default();
-        assert!(packets.len() <= limits.max_packets);
-        let mut body = Vec::new();
-        for packet in packets {
-            packet
-                .encode_frame(wire::Peer::Server, 0, 0, &mut body)
-                .unwrap();
-        }
-        assert!(body.len() <= limits.max_decoded_bytes);
-        let entries = wire::Frames::new(Bytes::from(body), limits.max_packets)
-            .map(|entry| {
-                let entry = entry.unwrap();
-                let mut reader = wire::Reader::from_shared(entry.frame());
-                reader.read_var_u32().unwrap();
-                entry.frame().slice(reader.position()..)
-            })
-            .collect::<Vec<_>>();
+        let entries =
+            negotiation::server_entries(packets, limits.max_packets, limits.max_decoded_bytes);
         let messages = codec.encode(&entries).unwrap();
         assert_eq!(messages.len(), 1, "fixture input must fit one real batch");
         for message in messages {

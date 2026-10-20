@@ -1,14 +1,13 @@
 //! Actual Quinn/h3 codec peers exercise the gateway's original admission and stream owners.
 
 mod packs;
-mod peer;
+pub(crate) mod peer;
 
 use super::*;
 use bridge::relay_control::{Capability, Event, Hello, Request as ControlRequest};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use peer::Fixture;
-pub(crate) use peer::Peer;
+use peer::{Fixture, Peer};
 use protocol::session_wire::{self, CoreMessage, SessionDisconnect};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -123,7 +122,7 @@ async fn paired_control_survives_sequential_plays_and_a_retained_partial_prefix(
             }
         }
         assert_eq!(
-            fixture.registry.test_counts(),
+            crate::registry::tests::retained_counts(&fixture.registry),
             (1, 1),
             "one QUIC connection owns both plays and its one account"
         );
@@ -162,7 +161,10 @@ async fn one_session_refuses_extra_connect_and_client_uni() {
             .await
             .unwrap();
         assert!(matches!(event(&mut control).await, Event::Account { .. }));
-        assert_eq!(fixture.registry.test_counts(), (1, 1));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&fixture.registry),
+            (1, 1)
+        );
         drop(control);
         drop(extra);
         peer.close();
@@ -215,7 +217,7 @@ async fn actual_connect_refuses_origin_and_path_before_account_attachment() {
             peer.close();
             test_time::eventually(
                 "refused QUIC handler releases admission without an account",
-                || fixture.registry.test_counts() == (0, 0),
+                || crate::registry::tests::retained_counts(&fixture.registry) == (0, 0),
             );
         }
         fixture.finish().await;
@@ -234,13 +236,16 @@ async fn paired_transports_share_pre_tls_admission() {
             held.push(tokio::net::TcpStream::connect(fixture.tcp).await.unwrap());
         }
         test_time::eventually("same pre-TLS TCP admission fills paired capacity", || {
-            fixture.registry.test_counts().0 == RELAY_MAX_PER_IP
+            crate::registry::tests::retained_counts(&fixture.registry).0 == RELAY_MAX_PER_IP
         });
         assert!(
             fixture.connect().await.is_err(),
             "QUIC TLS bypassed the original TCP/IP permit"
         );
-        assert_eq!(fixture.registry.test_counts(), (RELAY_MAX_PER_IP, 0));
+        assert_eq!(
+            crate::registry::tests::retained_counts(&fixture.registry),
+            (RELAY_MAX_PER_IP, 0)
+        );
         fixture.finish().await;
         for mut stream in held {
             assert!(matches!(stream.read(&mut [0]).await, Ok(0) | Err(_)));

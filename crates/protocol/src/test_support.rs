@@ -2,6 +2,7 @@
 //! private to this crate; callers build and observe packets through owned values only.
 
 pub mod items;
+pub mod negotiation;
 pub mod packets;
 pub mod recipes;
 pub mod remote_equipment;

@@ -97,7 +97,7 @@ async fn accepted_tls_play_refuses_a_newer_protocol_and_preserves_its_original_c
             Err(error) => upgrade_error = Some(error.to_string()),
         }
         test_time::eventually("actual play handler released its accepted socket", || {
-            fixture.registry.test_counts() == (1, 1)
+            crate::registry::tests::retained_counts(&fixture.registry) == (1, 1)
         });
         // The original control, bearer generation and ephemeral account remain usable after refusal.
         control
