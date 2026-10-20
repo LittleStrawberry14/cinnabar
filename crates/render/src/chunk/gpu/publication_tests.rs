@@ -1078,6 +1078,6 @@ fn growth_after_a_committed_upload_migrates_and_publishes_next_frame() {
     assert_eq!(acknowledgements.drain().len(), 1);
     let arena = gpu_app.world().resource::<ChunkGpuArena>();
     assert!(arena.migration.is_none());
-    assert_eq!(arena.quad_capacity, capacity * 2);
+    assert_eq!(arena.quad_capacity, capacity + capacity / 4);
     assert_eq!(arena.allocations.len(), 2);
 }
