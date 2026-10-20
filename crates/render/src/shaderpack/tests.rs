@@ -202,7 +202,7 @@ fn render_frames(
         format,
         wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
     );
-    let mut state = ViewState::new(&gpu.device, Arc::clone(&pack), size);
+    let mut state = ViewState::new(&gpu.device, Arc::clone(&pack), size).unwrap();
     let game = ShaderPackFrameInputs::default();
     let frame = FrameUniforms::new(
         ViewCamera {

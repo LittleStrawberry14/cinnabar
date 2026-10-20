@@ -12,7 +12,9 @@ use super::loader::{PackGpu, ProgramPipeline};
 use super::pipelines::SCREEN_FORMAT;
 use super::plan::{BufferReads, MAX_COLOR_BUFFERS, PassStep};
 use super::resources::{AtlasLayer, ImageSource, TextureSource};
-use shaderpack::{ImageSize, ProgramKind};
+use shaderpack::ProgramKind;
+
+mod admission;
 use std::sync::Arc;
 use wgpu::{Device, TextureFormat, TextureUsages, TextureView};
 
@@ -128,7 +130,27 @@ pub(crate) fn exchanged_by(pack: &PackGpu, program: usize) -> Vec<u32> {
 }
 
 impl ViewTargets {
-    pub(crate) fn new(device: &Device, pack: &PackGpu, screen_size: [u32; 2]) -> Self {
+    /// Allocates exact requests, returning device validation or allocation failures to the host.
+    pub(crate) fn new(
+        device: &Device,
+        pack: &PackGpu,
+        screen_size: [u32; 2],
+    ) -> Result<Self, String> {
+        admission::validate(pack, screen_size, &device.limits())?;
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let render_device = bevy::render::renderer::RenderDevice::from(device.clone());
+        let targets =
+            crate::gpu_allocation::checked(&render_device, "shader pack view targets", 0, || {
+                Self::allocate(device, pack, screen_size)
+            });
+        if let Some(error) = bevy::tasks::block_on(scope.pop()) {
+            return Err(error.to_string());
+        }
+        targets.ok_or_else(|| "shader pack view targets ran out of GPU memory".to_owned())
+    }
+
+    /// Creates preflighted targets inside the caller's validation and allocation scopes.
+    fn allocate(device: &Device, pack: &PackGpu, screen_size: [u32; 2]) -> Self {
         let mut buffers: Vec<Option<ColorBuffer>> = (0..MAX_COLOR_BUFFERS).map(|_| None).collect();
         for plan in &pack.buffers {
             let Some(format) = pack.buffer_formats[plan.index as usize] else {
@@ -260,37 +282,13 @@ impl ViewTargets {
             .zip(&pack.atomic_images)
             .zip(&image_snapshotted)
             .map(|(((image, format), &atomic), &snapshotted)| {
-                let (dimension, size) = match image.size {
-                    ImageSize::Relative { width, height } => (
-                        wgpu::TextureDimension::D2,
-                        [
-                            ((screen_size[0] as f32 * width) as u32).max(1),
-                            ((screen_size[1] as f32 * height) as u32).max(1),
-                            1,
-                        ],
-                    ),
-                    ImageSize::Absolute {
-                        width,
-                        height: Some(height),
-                        depth: Some(depth),
-                    } => (wgpu::TextureDimension::D3, [width, height, depth]),
-                    ImageSize::Absolute {
-                        width,
-                        height: Some(height),
-                        depth: None,
-                    } => (wgpu::TextureDimension::D2, [width, height, 1]),
-                    ImageSize::Absolute {
-                        width,
-                        height: None,
-                        ..
-                    } => (wgpu::TextureDimension::D1, [width, 1, 1]),
-                };
+                let (dimension, size) = admission::image_extent(image.size, screen_size);
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some(&image.name),
                     size: wgpu::Extent3d {
-                        width: size[0].clamp(1, 8192),
-                        height: size[1].clamp(1, 8192),
-                        depth_or_array_layers: size[2].clamp(1, 2048),
+                        width: size[0],
+                        height: size[1],
+                        depth_or_array_layers: size[2],
                     },
                     mip_level_count: 1,
                     sample_count: 1,

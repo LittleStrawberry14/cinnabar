@@ -169,7 +169,10 @@ fn drive_loader(
 
 /// Render-world state of every view drawing through the pack.
 #[derive(Resource, Default)]
-struct ShaderPackViews(Mutex<HashMap<Entity, ViewState>>);
+struct ShaderPackViews {
+    states: Mutex<HashMap<Entity, ViewState>>,
+    failed: HashMap<Entity, (Arc<PackGpu>, [u32; 2])>,
+}
 
 type PreparedView = (Entity, &'static ExtractedView);
 
@@ -253,9 +256,11 @@ fn prepare_views(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::ShaderpackUniforms));
-    let states = views.0.get_mut().unwrap_or_else(|e| e.into_inner());
+    let ShaderPackViews { states, failed } = &mut *views;
+    let states = states.get_mut().unwrap_or_else(|e| e.into_inner());
     let (Some(pack), Some(inputs)) = (pack.and_then(|p| p.0.clone()), inputs) else {
         states.clear();
+        failed.clear();
         return;
     };
     states.retain(|entity, _| cameras.contains(*entity));
@@ -264,17 +269,36 @@ fn prepare_views(
     if let Some(geometry) = geometry.as_deref_mut() {
         geometry.retain_shadow_views(|view| cameras.contains(view) && pack.shadow.is_some());
     }
+    failed.retain(|entity, _| cameras.contains(*entity));
     let clock = FrameClock {
         delta_seconds: time.map_or(0.0, |t| t.delta_secs()),
     };
     for (entity, view) in &cameras {
         let screen = [view.viewport.z.max(1), view.viewport.w.max(1)];
-        let state = states
-            .entry(entity)
-            .or_insert_with(|| ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen));
-        if !state.matches(&pack, screen) {
-            *state = ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen);
+        if failed
+            .get(&entity)
+            .is_some_and(|(previous, size)| Arc::ptr_eq(previous, &pack) && *size == screen)
+        {
+            continue;
         }
+        failed.remove(&entity);
+        if states
+            .get(&entity)
+            .is_none_or(|state| !state.matches(&pack, screen))
+        {
+            match ViewState::new(device.wgpu_device(), Arc::clone(&pack), screen) {
+                Ok(state) => {
+                    states.insert(entity, state);
+                }
+                Err(error) => {
+                    states.remove(&entity);
+                    failed.insert(entity, (Arc::clone(&pack), screen));
+                    warn!(pack = %pack.name, "shader pack view could not be prepared: {error}");
+                    continue;
+                }
+            }
+        }
+        let state = states.get_mut(&entity).expect("the view was prepared");
         let (_, rotation, position) = view.world_from_view.to_scale_rotation_translation();
         let camera = ViewCamera {
             position,
@@ -310,7 +334,7 @@ fn prepare_views(
                 .inverse()
                 .transform_vector3(Vec3::Z);
             let frustum = ShadowFrustum::new(
-                &pack.shadow_culling,
+                &pack.settings.shadow,
                 render_distance,
                 position.as_dvec3(),
                 frame.projection() * frame.model_view(),
@@ -400,7 +424,7 @@ fn shaderpack_post(
     let Some(views) = world.get_resource::<ShaderPackViews>() else {
         return Ok(());
     };
-    let mut states = views.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut states = views.states.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = states.get_mut(&entity) else {
         return Ok(());
     };
