@@ -35,6 +35,7 @@ pub(super) fn build_draws(
     let revisions = (
         geometry.residency.revision(),
         epoch,
+        geometry.residency.generation,
         sources.hidden_revision(),
         reach.map(f64::to_bits),
     );
@@ -78,6 +79,7 @@ pub(super) fn build_draws(
                 .filter(|faces| within(faces)),
             Some(eye),
             epoch,
+            geometry.residency.generation,
             Some(eye),
         );
         let key = inputs.key();
