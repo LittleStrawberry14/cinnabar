@@ -145,7 +145,6 @@ pub(crate) struct PackGpu {
     pub shadowcomp: Vec<PassStep>,
     /// Present when some shadow draw resolved.
     pub shadow: Option<ShadowMaps>,
-    /// How the shadow pass culls terrain sections.
     /// `shadowTerrain` and `shadowTranslucent`: whether the shadow pass draws opaque and
     /// translucent terrain (both by default).
     pub shadow_terrain: bool,

@@ -185,11 +185,7 @@ fn configure_geometry(
     mut commands: Commands,
     pack: Option<Res<LoadedShaderPack>>,
     cameras: Query<(), With<ShaderPackRendering>>,
-    (mut settings, geometry): (
-        ResMut<ShaderpackGeometrySettings>,
-        Option<Res<ShaderpackGeometry>>,
-    ),
-    mut drawn: ResMut<ShaderPackDrawnCategories>,
+    mut settings: ResMut<ShaderpackGeometrySettings>,
     ids: Option<Res<ShaderpackBlockIds>>,
     memory: Option<Res<DedicatedGraphicsMemory>>,
     mut shown: Local<Option<usize>>,
@@ -209,15 +205,6 @@ fn configure_geometry(
     if *settings != wanted {
         *settings = wanted;
     }
-    let draws = |kind: DrawKind| {
-        pack.as_ref()
-            .is_some_and(|p| p.draws.iter().any(|d| d.kind == kind))
-    };
-    let expands_terrain = geometry.is_some_and(|geometry| geometry.supported());
-    drawn.set_if_neq(ShaderPackDrawnCategories {
-        terrain: expands_terrain
-            && (draws(DrawKind::TerrainSolid) || draws(DrawKind::TerrainCutout)),
-    });
     let key = pack.as_ref().map(|p| Arc::as_ptr(p) as usize);
     if *shown == key {
         return;
@@ -236,6 +223,33 @@ fn configure_geometry(
         }
         None => commands.remove_resource::<ShaderpackBlockIds>(),
     }
+}
+
+/// Replaces native queues only after every pack view and terrain category is ready.
+fn configure_replacement(
+    pack: Option<Res<LoadedShaderPack>>,
+    cameras: Query<Entity, With<ShaderPackRendering>>,
+    geometry: Option<Res<ShaderpackGeometry>>,
+    views: Res<ShaderPackViews>,
+    mut drawn: ResMut<ShaderPackDrawnCategories>,
+) {
+    let states = views.states.lock().unwrap_or_else(|e| e.into_inner());
+    let ready = pack
+        .as_ref()
+        .and_then(|pack| pack.0.as_ref())
+        .filter(|pack| {
+            !cameras.is_empty()
+                && cameras.iter().all(|entity| {
+                    states
+                        .get(&entity)
+                        .is_some_and(|state| Arc::ptr_eq(&state.pack, pack))
+                })
+        });
+    let draws = |kind| ready.is_some_and(|pack| pack.draws.iter().any(|draw| draw.kind == kind));
+    drawn.set_if_neq(ShaderPackDrawnCategories {
+        terrain: geometry.is_some_and(|geometry| geometry.supported())
+            && super::draws::complete_terrain(draws),
+    });
 }
 
 /// Allocates or resizes view targets, writes this frame's uniforms and builds each view's
@@ -391,6 +405,9 @@ impl TerrainDraws for ViewTerrain<'_> {
 /// Vanilla scene instead (`passes::copy_scene`).
 fn pack_terrain(world: &World) -> Option<&ShaderpackGeometry> {
     world
+        .get_resource::<ShaderPackDrawnCategories>()
+        .filter(|drawn| drawn.terrain)?;
+    world
         .get_resource::<ShaderpackGeometry>()
         .filter(|geometry| geometry.supported() && geometry.origin().is_some())
 }
@@ -404,7 +421,7 @@ pub(crate) fn draws_world(world: &World, view: Entity) -> bool {
             .get_resource::<ShaderPackViews>()
             .is_some_and(|views| {
                 views
-                    .0
+                    .states
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&view)
@@ -572,6 +589,9 @@ pub(super) fn finish(app: &mut App) {
                     .in_set(RenderSystems::PrepareResources)
                     .after(bevy::render::view::prepare_view_targets)
                     .after(super::geometry::prepare_shaderpack_geometry),
+                configure_replacement
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(prepare_views),
                 super::lightmap::update_lightmap.in_set(RenderSystems::PrepareResources),
             ),
         );
