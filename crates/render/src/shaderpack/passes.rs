@@ -62,9 +62,24 @@ pub(crate) struct ViewState {
 }
 
 impl ViewState {
-    pub(crate) fn new(device: &Device, pack: Arc<PackGpu>, screen: [u32; 2]) -> Self {
-        let mut targets = ViewTargets::new(device, &pack, screen);
-        let bindings = ViewBindings::new(device, &pack, &mut targets);
+    /// Prepares a view, leaving the native scene available when resource creation fails.
+    pub(crate) fn new(
+        device: &Device,
+        pack: Arc<PackGpu>,
+        screen: [u32; 2],
+    ) -> Result<Self, String> {
+        let mut targets = ViewTargets::new(device, &pack, screen)?;
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let render_device = bevy::render::renderer::RenderDevice::from(device.clone());
+        let bindings =
+            crate::gpu_allocation::checked(&render_device, "shader pack view bindings", 0, || {
+                ViewBindings::new(device, &pack, &mut targets)
+            });
+        if let Some(error) = bevy::tasks::block_on(scope.pop()) {
+            return Err(error.to_string());
+        }
+        let bindings =
+            bindings.ok_or_else(|| "shader pack view bindings ran out of GPU memory".to_owned())?;
         let (custom, errors) = CustomUniforms::new(&pack.custom_uniforms);
         for error in errors {
             bevy::log::debug!(
@@ -73,7 +88,7 @@ impl ViewState {
                 "custom uniform dropped: {}", error.message
             );
         }
-        Self {
+        Ok(Self {
             pack,
             targets,
             bindings,
@@ -88,7 +103,7 @@ impl ViewState {
             atlas_generation: None,
             effects: Default::default(),
             in_world: false,
-        }
+        })
     }
 
     /// Whether the state still matches `pack` and the screen size.

@@ -83,15 +83,18 @@ impl<'a> DrawInputs<'a> {
     /// `sections` for one view: translucent far to near from the section `eye` is in, as
     /// Iris draws translucent terrain by section (in page order without an eye); with
     /// `facing`, the camera position, solid and cutout faces it can only see from behind are
-    /// left out. Sections of other epochs than `epoch` are skipped.
+    /// left out. Faces from other origin epochs or expansion generations are skipped.
     pub(crate) fn new(
         sections: impl Iterator<Item = &'a ResidentFaces>,
         eye: Option<DVec3>,
         epoch: u64,
+        generation: u64,
         facing: Option<DVec3>,
     ) -> Self {
         Self {
-            sections: sections.filter(|section| section.epoch == epoch).collect(),
+            sections: sections
+                .filter(|section| section.epoch == epoch && section.generation == generation)
+                .collect(),
             eye: eye.map(eye_section_centre),
             facing,
         }
@@ -365,6 +368,7 @@ mod tests {
             categories,
             origin,
             epoch: 1,
+            generation: 0,
             stamp: 0,
             slot: origin[0] as u32,
         }
@@ -380,6 +384,7 @@ mod tests {
             [&near, &far, &stale].into_iter(),
             Some(DVec3::ZERO),
             1,
+            0,
             None,
         ));
         let translucent: Vec<_> = draws.runs[GeometryCategory::Translucent.index()]
@@ -411,6 +416,7 @@ mod tests {
             [&section].into_iter(),
             Some(eye),
             1,
+            0,
             Some(eye),
         ));
         let solid: Vec<_> = draws
@@ -429,6 +435,7 @@ mod tests {
             [&section].into_iter(),
             Some(inside),
             1,
+            0,
             Some(inside),
         ));
         assert_eq!(draws.commands.len(), 1);
@@ -449,6 +456,7 @@ mod tests {
             [&section].into_iter(),
             Some(eye),
             1,
+            0,
             Some(eye),
         ));
         let commands: Vec<_> = draws
@@ -467,6 +475,7 @@ mod tests {
             [&section].into_iter(),
             Some(above),
             1,
+            0,
             Some(above),
         ));
         let commands: Vec<_> = draws
@@ -496,7 +505,7 @@ mod tests {
             })
             .collect();
         let listed = |eye: DVec3| {
-            let inputs = DrawInputs::new(sections.iter(), Some(eye), 1, Some(eye));
+            let inputs = DrawInputs::new(sections.iter(), Some(eye), 1, 0, Some(eye));
             let commands: Vec<_> = ViewDraws::build(&inputs)
                 .commands
                 .iter()
@@ -520,11 +529,11 @@ mod tests {
         assert!(rebuilds <= 8, "rebuilt {rebuilds} times over 400 frames");
         // A section placed again (a new stamp) changes the key even at the same eye.
         let eye = DVec3::splat(4.0);
-        let key = DrawInputs::new(sections.iter(), Some(eye), 1, Some(eye)).key();
+        let key = DrawInputs::new(sections.iter(), Some(eye), 1, 0, Some(eye)).key();
         let mut replaced = sections.clone();
         replaced[13].stamp = 100;
         assert_ne!(
-            DrawInputs::new(replaced.iter(), Some(eye), 1, Some(eye)).key(),
+            DrawInputs::new(replaced.iter(), Some(eye), 1, 0, Some(eye)).key(),
             key
         );
     }
@@ -532,5 +541,44 @@ mod tests {
     #[test]
     fn face_indices_form_two_counter_clockwise_triangles_per_face() {
         assert_eq!(face_indices(2), [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+    }
+    #[test]
+    fn stale_atlas_faces_stay_hidden_across_packed_origin_rebases() {
+        use super::super::jobs::SectionPlan;
+        use super::super::residency::Residency;
+        let entity = bevy::prelude::Entity::from_raw_u32(1).unwrap();
+        let mut residency = Residency::new(1024, 1024, 28);
+        let plan = SectionPlan {
+            faces: 1,
+            categories: [0..1, 1..1, 1..1],
+            facing: [rest(0..1), rest(1..1), rest(1..1)],
+            ..Default::default()
+        };
+        residency.follow_camera(DVec3::ZERO);
+        let placement = residency.place(entity, &plan).unwrap();
+        residency.commit(entity, &placement, &plan, [0; 3]);
+        residency.invalidate_contents([entity]);
+        residency.follow_camera(DVec3::new(6000.0, 0.0, 0.0));
+        residency.keep_faces_across_rebase();
+        let draws = || {
+            ViewDraws::build(&DrawInputs::new(
+                residency.sections.values(),
+                None,
+                residency.epoch,
+                residency.generation,
+                None,
+            ))
+        };
+        assert!(draws().commands.is_empty());
+        let placement = residency.place(entity, &plan).unwrap();
+        residency.commit(entity, &placement, &plan, [0; 3]);
+        let current = ViewDraws::build(&DrawInputs::new(
+            residency.sections.values(),
+            None,
+            residency.epoch,
+            residency.generation,
+            None,
+        ));
+        assert_eq!(current.commands.len(), 1);
     }
 }

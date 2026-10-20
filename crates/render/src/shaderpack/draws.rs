@@ -349,6 +349,27 @@ pub(crate) fn resolve_program(
     None
 }
 
+/// Whether every camera terrain category has a usable draw.
+pub(crate) fn complete_terrain(mut draws: impl FnMut(DrawKind) -> bool) -> bool {
+    GeometryCategory::ALL.into_iter().all(|category| {
+        let kind = match category {
+            GeometryCategory::Solid => DrawKind::TerrainSolid,
+            GeometryCategory::Cutout => DrawKind::TerrainCutout,
+            GeometryCategory::Translucent => DrawKind::Translucent,
+        };
+        draws(kind)
+    })
+}
+
+/// Requires every camera terrain, actor, block-entity and hand draw before replacing the scene.
+pub(crate) fn complete_world(mut draws: impl FnMut(DrawKind) -> bool) -> bool {
+    complete_terrain(&mut draws)
+        && DrawKind::ALL
+            .into_iter()
+            .filter(|kind| kind.actor() && !kind.shadow())
+            .all(draws)
+}
+
 /// The geometry programs the frame's draws use, each once, with the program index of every
 /// draw that resolved. Only enabled render programs that translated count as provided, so a
 /// failed program falls back like a missing one; draws `wanted` rejects (directives such as
@@ -382,10 +403,7 @@ pub(crate) fn select_draws(
         };
         draws.push((kind, index));
     }
-    if !draws
-        .iter()
-        .any(|(kind, _)| *kind == DrawKind::TerrainSolid)
-    {
+    if !complete_world(|kind| draws.iter().any(|(draw, _)| *draw == kind)) {
         return (vec![], vec![]);
     }
     (selected, draws)
@@ -664,10 +682,7 @@ pub(crate) fn geometry_draws(
             ),
         }
     }
-    if !draws
-        .iter()
-        .any(|d| d.kind == super::draws::DrawKind::TerrainSolid)
-    {
+    if !complete_world(|kind| draws.iter().any(|draw| draw.kind == kind)) {
         draws.clear();
     }
     draws
@@ -680,6 +695,45 @@ mod tests {
 
     fn resolve(kind: DrawKind, provided: &[&str]) -> Option<&'static str> {
         resolve_program(kind.program(), |name| provided.contains(&name))
+    }
+
+    #[test]
+    fn partial_actor_and_hand_programs_preserve_the_native_scene() {
+        let mut files = Vec::new();
+        for name in ["gbuffers_terrain", "gbuffers_entities", "gbuffers_hand"] {
+            files.push((
+                format!("{name}.vsh"),
+                "#version 120\nvoid main() { gl_Position = gl_Vertex; }".to_owned(),
+            ));
+            files.push((
+                format!("{name}.fsh"),
+                "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }".to_owned(),
+            ));
+        }
+        let pack = shaderpack::ShaderPack::new(shaderpack::PackSource::from_files(files));
+        let translation = pack.translate(&shaderpack::TranslateConfig::default());
+        assert!(translation.programs.iter().all(|program| program.is_ok()));
+        let (_, draws) = select_draws(&translation.programs);
+        assert!(draws.is_empty());
+    }
+
+    #[test]
+    fn a_solid_only_pack_preserves_the_native_scene_copy() {
+        let pack = shaderpack::ShaderPack::new(shaderpack::PackSource::from_files([
+            (
+                "gbuffers_terrain_solid.vsh",
+                "#version 120\nvoid main() { gl_Position = gl_Vertex; }",
+            ),
+            (
+                "gbuffers_terrain_solid.fsh",
+                "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }",
+            ),
+        ]));
+        let translation = pack.translate(&shaderpack::TranslateConfig::default());
+        assert!(translation.programs.iter().all(|program| program.is_ok()));
+        let (selected, draws) = select_draws(&translation.programs);
+        assert!(selected.is_empty());
+        assert!(draws.is_empty());
     }
 
     #[test]
