@@ -19,7 +19,6 @@ test-support = []
 cosmetics = { path = "../cosmetics" }
 anyhow.workspace = true
 bridge = { path = "../bridge" }
-crash-handler = "0.8.1"
 crash-report = { path = "../crash-report" }
 crossbeam-channel = "0.5"
 ctrlc = { version = "3.4", features = ["termination"] }
@@ -43,8 +42,9 @@ update-manifest = { path = "../update-manifest" }
 url = "2"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
-# minidump-writer (via minidumper) does not support apple-ios.
+# crash-handler / minidumper / minidump-writer do not support apple-ios.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
+crash-handler = "0.8.1"
 minidumper = "0.11"
 
 [target.'cfg(unix)'.dependencies]
