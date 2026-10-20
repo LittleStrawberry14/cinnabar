@@ -83,6 +83,10 @@ pub struct Element {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     Loading,
+    /// Edits are waiting for storage to accept them.
+    Saving,
+    /// Edits remain available and can be saved again.
+    SaveFailed(String),
     Ready,
     /// The pack could not be read; the reason is shown.
     Failed(String),

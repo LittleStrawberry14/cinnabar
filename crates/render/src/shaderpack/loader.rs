@@ -6,6 +6,10 @@
 //! dominates the load, so the cache keeps the backend pipeline cache (Vulkan) in a private
 //! directory, keyed by the pack's content hash, the translation settings and the adapter.
 
+mod planning;
+
+use planning::{planned, storage_sizes};
+
 use super::draws::{GeometryDraw, GeometryStage, geometry_draws, select_draws};
 use super::effects::EffectSettings;
 use super::host_pipelines::{HostPipelines, host_pipelines};
@@ -30,9 +34,9 @@ use bevy::log::warn;
 use render_scene::shaderpack::LoadProgress;
 use sha2::{Digest, Sha256};
 use shaderpack::{
-    BlendMode, BufferId, CustomUniform, Environment, OptionValues, ProgramGroup, ProgramKind,
-    ProgramReflection, ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack,
-    ShaderProperties, StageKind, TranslateConfig,
+    CustomUniform, Environment, OptionValues, ProgramGroup, ProgramKind, ProgramReflection,
+    ProgramTranslation, SamplerBinding, SamplerClass, ScaleRule, ShaderPack, StageKind,
+    TranslateConfig,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -292,101 +296,6 @@ pub(crate) fn translate_config(pack: &ShaderPack, dimension: &str) -> TranslateC
     }
 }
 
-/// Destination buffer per fragment output location.
-fn outputs_by_location(reflection: &ProgramReflection) -> Vec<Option<u32>> {
-    let len = reflection
-        .color_outputs
-        .iter()
-        .map(|o| o.location as usize + 1)
-        .max()
-        .unwrap_or(0);
-    let mut outputs = vec![None; len];
-    for output in &reflection.color_outputs {
-        outputs[output.location as usize] = output.buffer;
-    }
-    outputs
-}
-
-/// Whether some function of `module` can discard a fragment.
-fn discards(module: &naga::Module) -> bool {
-    fn kills(block: &naga::Block) -> bool {
-        block.iter().any(|statement| match statement {
-            naga::Statement::Kill => true,
-            naga::Statement::Block(inner) => kills(inner),
-            naga::Statement::If { accept, reject, .. } => kills(accept) || kills(reject),
-            naga::Statement::Switch { cases, .. } => cases.iter().any(|c| kills(&c.body)),
-            naga::Statement::Loop {
-                body, continuing, ..
-            } => kills(body) || kills(continuing),
-            _ => false,
-        })
-    }
-    module.functions.iter().any(|(_, f)| kills(&f.body))
-        || module.entry_points.iter().any(|e| kills(&e.function.body))
-}
-
-fn planned(
-    program: &ProgramTranslation,
-    reflection: &ProgramReflection,
-    properties: &ShaderProperties,
-) -> PlannedProgram {
-    let name = program.program.name.as_str();
-    let mipmaps = program
-        .consts
-        .iter()
-        .filter(|c| c.value.trim() == "true")
-        .filter_map(|c| c.name.strip_suffix("MipmapEnabled"))
-        .filter_map(|b| match BufferId::parse(b) {
-            Some(BufferId::Color(i)) if i < MAX_COLOR_BUFFERS => Some(i),
-            _ => None,
-        })
-        .collect();
-    let outputs = if reflection.kind == ProgramKind::Render {
-        outputs_by_location(reflection)
-    } else {
-        vec![]
-    };
-    let whole = properties.scales.iter().all(|s| s.program != name)
-        && !program
-            .stages
-            .iter()
-            .filter_map(|s| s.result.as_ref().ok())
-            .any(|c| c.stage == StageKind::Fragment && discards(&c.module));
-    let blends = |buffer: u32| {
-        let rule = |per_buffer: bool| {
-            properties.blends.iter().rev().find(|r| {
-                r.program == name
-                    && match r.buffer.as_deref() {
-                        Some(b) => per_buffer && color_buffer_of(b) == Some(buffer),
-                        None => !per_buffer,
-                    }
-            })
-        };
-        rule(true)
-            .or_else(|| rule(false))
-            .is_some_and(|r| r.mode != BlendMode::Off)
-    };
-    let partial = outputs
-        .iter()
-        .flatten()
-        .filter(|&&b| !whole || blends(b))
-        .fold(0u32, |mask, b| mask | (1 << b));
-    PlannedProgram {
-        name: name.to_owned(),
-        group: program.program.group,
-        outputs,
-        reads: reflection
-            .textures
-            .iter()
-            .map(|t| t.name.as_str())
-            .chain(reflection.storage_images.iter().map(|i| i.name.as_str()))
-            .filter_map(color_buffer_of)
-            .collect(),
-        mipmaps,
-        partial,
-    }
-}
-
 /// Opens, translates and builds `path` for `dimension` (a Java dimension id) with the values
 /// saved in `options` (the pack's Iris option file, if any); `vanilla` answers the pack's
 /// `minecraft:` texture references. As Iris does on every load, the file is rewritten to
@@ -407,7 +316,9 @@ pub(crate) fn load(
         |n| n.to_string_lossy().into_owned(),
     );
     let values = options.map_or_else(OptionValues::new, |file| saved_options(&pack, file));
-    build(&pack, &name, dimension, &values, cache_dir, gpu, vanilla, progress)
+    build(
+        &pack, &name, dimension, &values, cache_dir, gpu, vanilla, progress,
+    )
 }
 
 /// The pack's values saved in `file`, normalized and written back when that changed them; an
@@ -972,29 +883,4 @@ pub(crate) fn build(
         lightmap,
         effects,
     })
-}
-
-/// Storage-buffer sizes: the reflected minimum, raised by `bufferObject.<binding>=<size>`.
-/// Resolves whole-buffer binding sizes, rejecting requests whose alignment would overflow.
-fn storage_sizes(
-    reflections: &[&ProgramReflection],
-    properties: &shaderpack::ShaderProperties,
-) -> Result<Vec<(u32, u64)>, String> {
-    let mut sizes: Vec<(u32, u64)> = vec![];
-    for buffer in reflections.iter().flat_map(|r| &r.storage_buffers) {
-        let declared = properties
-            .get(&format!("bufferObject.{}", buffer.binding))
-            .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
-            .unwrap_or(0);
-        let size = u64::from(buffer.min_size)
-            .max(declared)
-            .max(16)
-            .checked_next_multiple_of(16)
-            .ok_or_else(|| format!("storage binding {} size overflows", buffer.binding))?;
-        match sizes.iter_mut().find(|(b, _)| *b == buffer.binding) {
-            Some((_, s)) => *s = (*s).max(size),
-            None => sizes.push((buffer.binding, size)),
-        }
-    }
-    Ok(sizes)
 }

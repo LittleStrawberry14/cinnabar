@@ -72,6 +72,10 @@ pub(super) fn body<'v>(
         )?
         .max(content.canvas.r(SECTION_HEADER.line));
     let status = match &options.status {
+        Status::Saving => Some("Saving changes…".to_owned()),
+        Status::SaveFailed(reason) => Some(format!(
+            "Could not save options: {reason}. Select Apply to retry."
+        )),
         Status::Loading => Some(format!("Reading {}…", options.pack)),
         Status::Failed(reason) => Some(format!("{} has no usable options: {reason}", options.pack)),
         Status::Ready if options.elements.is_empty() => {
@@ -84,8 +88,10 @@ pub(super) fn body<'v>(
             .canvas
             .text(&status, [left, top], width, CAPTION, TEXT_DIMMER, false)?
             .max(content.canvas.r(CAPTION.line));
-        content.y = top + content.canvas.r(2.4);
-        return Ok(None);
+        if !matches!(options.status, Status::SaveFailed(_)) {
+            content.y = top + content.canvas.r(2.4);
+            return Ok(None);
+        }
     }
     top += content.canvas.r(1.2);
     let gap = content.canvas.r(GAP);
@@ -356,12 +362,13 @@ pub(super) fn footer(
         right,
         b[3] - canvas.r(PAD),
     ];
-    let ready = options.status == Status::Ready;
+    let ready = matches!(options.status, Status::Ready | Status::SaveFailed(_));
+    let available = options.status != Status::Saving;
     let buttons = [
         ("Reset", ready.then_some(Action::Reset)),
-        ("Cancel", Some(Action::Cancel)),
+        ("Cancel", available.then_some(Action::Cancel)),
         ("Apply", (ready && options.changed).then_some(Action::Apply)),
-        ("Done", Some(Action::Done)),
+        ("Done", available.then_some(Action::Done)),
     ];
     let gap = canvas.r(GAP);
     let slots = buttons.len() + usize::from(options.nested);
@@ -373,7 +380,7 @@ pub(super) fn footer(
             view,
             [row[0], row[1], row[0] + button_width, row[3]],
             "Back",
-            Some(MenuAction::ShaderOptions(Action::Back)),
+            available.then_some(MenuAction::ShaderOptions(Action::Back)),
         )?;
     }
     for (slot, (text, action)) in buttons.iter().rev().enumerate() {
