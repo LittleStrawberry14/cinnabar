@@ -56,3 +56,83 @@ async fn public_close_preserves_the_pending_fifth_body_before_any_receive() {
     .await
     .expect("ordinary close and its accepted input did not retire");
 }
+
+/// Cancelling a close borrow cannot extend the same driver's original retirement cutoff.
+#[tokio::test(start_paused = true)]
+async fn cancelled_close_retry_keeps_the_original_driver_cutoff() {
+    use crate::{ProtocolError, SessionError, codec::SessionFailure};
+
+    let (entered, closing) = oneshot::channel();
+    let (release, held) = oneshot::channel();
+    let (dropped, retired) = oneshot::channel();
+    let mut transport = SessionTransport::from_native(HeldClose {
+        entered: Some(entered),
+        release: held,
+        dropped: Some(dropped),
+    });
+    {
+        let mut first = std::pin::pin!(transport.close());
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        closing.await.unwrap();
+        tokio::time::advance(CLOSE_TIMEOUT / 2).await;
+        assert!(futures::poll!(first.as_mut()).is_pending());
+    }
+    let at_original_cutoff = {
+        let mut retry = std::pin::pin!(transport.close());
+        assert!(futures::poll!(retry.as_mut()).is_pending());
+        tokio::time::advance(CLOSE_TIMEOUT / 2).await;
+        match futures::poll!(retry.as_mut()) {
+            Poll::Ready(result) => Some(result),
+            Poll::Pending => None,
+        }
+    };
+
+    // Release a still-pending close and join the original task before checking the cutoff.
+    let _ = release.send(());
+    let Reader::Native(reader) = &mut transport.reader else {
+        panic!("native fixture reader")
+    };
+    let joined = std::future::poll_fn(|cx| reader.poll_driver(cx)).await;
+    retired.await.unwrap();
+    drop(transport);
+    assert!(joined.is_ok() || joined.is_err_and(|error| error.is_cancelled()));
+    assert!(
+        matches!(
+            &at_original_cutoff,
+            Some(Err(ProtocolError::Session(SessionError(SessionFailure::NativeTransport(error)))))
+                if error.kind() == io::ErrorKind::TimedOut
+        ),
+        "cancelled close retry extended the original driver cutoff: {at_original_cutoff:?}"
+    );
+}
+
+/// Holds the actual pump's final close until released or the original driver is aborted.
+struct HeldClose {
+    entered: Option<oneshot::Sender<()>>,
+    release: oneshot::Receiver<()>,
+    dropped: Option<oneshot::Sender<()>>,
+}
+
+impl PacketConnection for HeldClose {
+    async fn send_body(&mut self, _: Bytes) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn recv_body(&mut self) -> io::Result<Bytes> {
+        std::future::pending().await
+    }
+
+    async fn close(&mut self) -> io::Result<()> {
+        self.entered.take().unwrap().send(()).unwrap();
+        let _ = (&mut self.release).await;
+        Ok(())
+    }
+}
+
+impl Drop for HeldClose {
+    fn drop(&mut self) {
+        if let Some(dropped) = self.dropped.take() {
+            let _ = dropped.send(());
+        }
+    }
+}
