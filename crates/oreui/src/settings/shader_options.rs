@@ -73,9 +73,7 @@ pub(super) fn body<'v>(
         .max(content.canvas.r(SECTION_HEADER.line));
     let status = match &options.status {
         Status::Saving => Some("Saving changes…".to_owned()),
-        Status::SaveFailed(reason) => Some(format!(
-            "Could not save options: {reason}. Select Apply to retry."
-        )),
+        Status::SaveFailed(reason) => Some(format!("Could not save options: {reason}. Try again.")),
         Status::Loading => Some(format!("Reading {}…", options.pack)),
         Status::Failed(reason) => Some(format!("{} has no usable options: {reason}", options.pack)),
         Status::Ready if options.elements.is_empty() => {

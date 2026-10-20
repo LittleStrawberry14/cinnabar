@@ -76,7 +76,7 @@ impl Writer {
 impl Drop for Writer {
     /// Flushes accepted work when the host shuts down.
     fn drop(&mut self) {
-        self.requests.take();
+        drop(self.requests.take());
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }

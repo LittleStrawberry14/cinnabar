@@ -151,8 +151,11 @@ impl Open {
         let State::Ready(editor) = &mut self.state else {
             return matches!(action, Action::Back | Action::Cancel | Action::Done);
         };
-        let saves = matches!(action, Action::Apply | Action::Done | Action::Reset)
-            || (action == Action::Back && editor.session().screen_id().is_none());
+        let saves = match action {
+            Action::Apply | Action::Done | Action::Reset => true,
+            Action::Back => editor.session().screen_id().is_none(),
+            Action::Open | Action::Element { .. } | Action::Cancel => false,
+        };
         if !saves {
             return editor.handle(action).close;
         }
