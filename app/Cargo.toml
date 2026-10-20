@@ -24,35 +24,24 @@ reads = [
     "examples/mods/screen-probe",
 ]
 
-# No doctests here; skipping rustdoc's pass over the crate saves a full re-parse.
 [lib]
 doctest = false
 
-# main.rs only dispatches into the library; its tests live there.
 [[bin]]
 name = "cinnabar"
 path = "src/main.rs"
 test = false
 
 [features]
-# Counts allocation requests and labelled GPU writes for diagnostic runs.
 alloc-stats = ["dep:test-alloc", "test-alloc/global-stats", "render/alloc-stats", "render-scene/alloc-stats"]
-# Developer runs and client MCP keep acceptance; packaging opts out with --no-default-features.
 default = ["acceptance"]
 acceptance = ["dep:acceptance", "bridge/join-profile"]
 enhanced = ["render/enhanced"]
 enhanced-diagnostics = ["enhanced", "developer-control", "acceptance", "render/enhanced-diagnostics"]
-# Loopback control endpoint for scripted driving and recording; never in release builds.
 developer-control = ["dep:developer-control", "dep:sadness-generator", "client-shell/developer-control"]
-# Records Bevy schedules, systems, render graph, submission and presentation spans as a
-# Chrome trace through the app's own subscriber layer.
 frame-trace = ["bevy/trace", "bevy/debug", "dep:tracing-chrome"]
-# Live CPU attribution through Bevy, wgpu's encoding and submission scopes, and the owned
-# streaming/render hot paths.
 tracy = ["bevy/trace", "bevy/debug", "dep:tracing-tracy", "dep:profiling", "chunk-pipeline/tracy", "render/tracy", "client-ui/tracy"]
-# Compiles the offline pack reports and benchmarks into the test build.
 reports = []
-# Opt-in allocator for release-profile measurements.
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
@@ -153,6 +142,9 @@ wgpu = { workspace = true, features = ["webgpu"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 wgpu = { workspace = true, features = ["gles"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bevy = { workspace = true, features = ["wayland", "x11"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
