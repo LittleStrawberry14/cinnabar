@@ -266,7 +266,12 @@ async fn graceful_close_keeps_the_actual_pending_fifth_ingress_body() {
     let super::super::Reader::Native(reader) = &mut transport.reader else {
         panic!("native reader")
     };
-    reader.stop.take().unwrap().send(()).unwrap();
+    reader
+        .stop
+        .take()
+        .unwrap()
+        .send(tokio::time::Instant::now() + CLOSE_TIMEOUT)
+        .unwrap();
     observed_close.await.unwrap();
     for index in 0..=QUEUED_BATCHES {
         let item = transport
