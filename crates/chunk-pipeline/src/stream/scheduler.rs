@@ -1,6 +1,9 @@
 use super::*;
 
+mod candidates;
 pub(super) mod rechecks;
+
+use candidates::CandidateQueue;
 
 pub(super) const NEAR_CAMERA_RADIUS: i32 = 4;
 /// Horizontal light halo around the directly prioritized mesh area.
@@ -12,8 +15,8 @@ pub(in crate::stream) const MAX_RECHECK_BACKOFF_POLLS: u64 = 32;
 /// Ready work leads during ordinary streaming; startup also rechecks higher-priority deferred work.
 #[derive(Default)]
 pub(super) struct Lane {
-    pub(super) ready: BinaryHeap<PendingSchedulerCandidate>,
-    pub(super) deferred: BinaryHeap<PendingSchedulerCandidate>,
+    pub(super) ready: CandidateQueue,
+    pub(super) deferred: CandidateQueue,
     /// Promoted startup revisions: attempts and the poll before which a blocked one stays deferred.
     rechecks: HashMap<SubChunkKey, Recheck>,
     polls: u64,
@@ -32,7 +35,7 @@ impl Lane {
         self.ready.is_empty() && self.deferred.is_empty()
     }
 
-    fn heap_mut(&mut self, deferred: bool) -> &mut BinaryHeap<PendingSchedulerCandidate> {
+    fn heap_mut(&mut self, deferred: bool) -> &mut CandidateQueue {
         if deferred {
             &mut self.deferred
         } else {
@@ -262,10 +265,12 @@ impl<P: PendingJob, J, const L: usize> KeyedJobs<P, J, L> {
         }
     }
 
-    /// Removes a pending job and its ordinary and startup retry history.
+    /// Removes a pending job and retires its lane ownership and retry history.
     pub(super) fn remove_pending(&mut self, key: &SubChunkKey) -> Option<P> {
         self.retries.remove(key);
         for lane in self.lanes.iter_mut().chain(&mut self.refresh.previous) {
+            lane.ready.remove(key);
+            lane.deferred.remove(key);
             lane.rechecks.remove(key);
         }
         self.pending.remove(key)
@@ -476,7 +481,7 @@ mod tests {
                     )
                 })
                 .collect(),
-            deferred: BinaryHeap::new(),
+            deferred: CandidateQueue::default(),
             ..Lane::default()
         }];
         let mut refresh = SchedulerRefresh::<1>::default();

@@ -336,3 +336,24 @@ fn assert_memory_blocked_retry_progress(blocked: usize) {
         "memory-blocked retries starved admissible ready work across rotations: {published}"
     );
 }
+
+/// Successful far retries must retire lane ownership while a lower-ranked ready backlog stays busy.
+#[test]
+fn repeated_far_retry_publications_keep_storage_bounded_by_live_work() {
+    let (mut stream, view, visible, backlog) = deferred_mesh_stream();
+    for _ in 0..MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
+        stream.poll_deadline = Some(Instant::now());
+        assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 1);
+        let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(completion.key, visible);
+        stream.accept_mesh_completion(completion);
+        stream.take_mesh_changes();
+        assert!(stream.mesh_jobs.pending.contains_key(&backlog));
+        let lane = &stream.mesh_jobs.lanes[RESIDENT_MESH_LANE];
+        assert!(
+            lane.ready.len() + lane.deferred.len() <= stream.mesh_jobs.pending.len(),
+            "published retry retained obsolete lane ownership"
+        );
+        stream.mark_dirty_exact(visible, Instant::now());
+    }
+}

@@ -149,3 +149,39 @@ fn camera_refresh_preserves_deferred_retry_backoff() {
     assert!(jobs.retries.is_due(&retry));
     assert_eq!(retry.revision, 1);
 }
+
+/// Replacing ranks and removing interior keys preserves max-priority order with one record per key.
+#[test]
+fn candidate_queue_replacements_and_removals_match_current_priorities() {
+    let view = SchedulerView {
+        position: [8.0; 3],
+        forward: None,
+        startup_center: None,
+    };
+    let mut queue = CandidateQueue::default();
+    let mut expected = HashMap::new();
+    for revision in 1..=3 {
+        for x in 0..MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
+            let key = SubChunkKey::new(0, x as i32, 0, 0);
+            let mut candidate = PendingSchedulerCandidate::new(key, revision, view, x % 5 == 0);
+            candidate.transfer = (x + revision as usize) % 7 == 0;
+            queue.push(candidate);
+            expected.insert(key, candidate);
+        }
+        for x in (0..MAX_PENDING_SCHEDULER_SCANS_PER_POLL).step_by(3) {
+            let key = SubChunkKey::new(0, x as i32, 0, 0);
+            assert_eq!(queue.remove(&key), expected.remove(&key));
+            assert!(queue.remove(&key).is_none());
+        }
+        assert_eq!(queue.len(), expected.len());
+    }
+    let mut expected: Vec<_> = expected.into_values().collect();
+    expected.sort_unstable_by(|left, right| right.cmp(left));
+    let actual: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
+    assert_eq!(actual, expected);
+    assert!(queue.is_empty());
+    queue.clear();
+    let candidate = PendingSchedulerCandidate::new(SubChunkKey::new(0, 0, 0, 0), 4, view, false);
+    queue.push(candidate);
+    assert_eq!(queue.pop(), Some(candidate));
+}
