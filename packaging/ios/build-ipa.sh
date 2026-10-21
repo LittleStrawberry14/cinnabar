@@ -165,21 +165,65 @@ if command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - --deep "$app" 2>&1 | tee -a "$log" || true
 fi
 
-(cd "$out" && zip -qr cinnabar-ios-unsigned.ipa Payload build.log)
+# Keep only Payload at the IPA root. The build log is uploaded as a separate artifact file.
+rm -f "$out/cinnabar-ios-unsigned.ipa"
+(cd "$out" && zip -qry -y cinnabar-ios-unsigned.ipa Payload)
 
-# Validate the actual archive, not just the source directory.
-if ! unzip -t "$out/cinnabar-ios-unsigned.ipa" 2>&1 | tee -a "$log"; then
+# Validate the archive itself: layout, plist values, architecture, and Unix executable mode.
+ipa="$out/cinnabar-ios-unsigned.ipa"
+if ! unzip -t "$ipa" 2>&1 | tee -a "$log"; then
   echo "IPA archive validation failed" | tee -a "$log"
   exit 1
 fi
-archive_bundle_id=$(unzip -p "$out/cinnabar-ios-unsigned.ipa" "Payload/App.app/Info.plist" | plutil -extract CFBundleIdentifier raw -o - - 2>> "$log") || {
-  echo "Could not read CFBundleIdentifier from archived IPA" | tee -a "$log"
-  exit 1
-}
-if [[ "$archive_bundle_id" != "$bundle_id" ]]; then
-  echo "IPA bundle ID mismatch: $archive_bundle_id" | tee -a "$log"
+
+entries=$(unzip -Z1 "$ipa")
+if printf '%s\n' "$entries" | grep -Eq '(^/|(^|/)\.\./|^__MACOSX/)'; then
+  echo "Unexpected path found in IPA archive" | tee -a "$log"
   exit 1
 fi
-echo "Validated archived IPA bundle ID: $archive_bundle_id" | tee -a "$log"
-size=$(wc -c < "$out/cinnabar-ios-unsigned.ipa" | tr -d ' ')
-echo "Wrote $out/cinnabar-ios-unsigned.ipa ($size bytes)" | tee -a "$log"
+if ! printf '%s\n' "$entries" | grep -Fxq "Payload/App.app/Info.plist" ||
+   ! printf '%s\n' "$entries" | grep -Fxq "Payload/App.app/$bin_name"; then
+  echo "IPA is missing Info.plist or the app executable at the expected path" | tee -a "$log"
+  exit 1
+fi
+if printf '%s\n' "$entries" | grep -Ev '^Payload(/|$)' | grep -q .; then
+  echo "IPA contains entries outside Payload" | tee -a "$log"
+  exit 1
+fi
+
+tmp_plist="$out/archived-Info.plist"
+unzip -p "$ipa" "Payload/App.app/Info.plist" > "$tmp_plist"
+plutil -lint "$tmp_plist" 2>&1 | tee -a "$log"
+archive_bundle_id=$(plutil -extract CFBundleIdentifier raw -o - "$tmp_plist")
+archive_executable=$(plutil -extract CFBundleExecutable raw -o - "$tmp_plist")
+for key in CFBundleName CFBundleVersion CFBundleShortVersionString CFBundlePackageType MinimumOSVersion; do
+  value=$(plutil -extract "$key" raw -o - "$tmp_plist")
+  [[ -n "$value" ]] || { echo "Empty required plist key: $key" | tee -a "$log"; exit 1; }
+done
+[[ "$archive_bundle_id" == "com.cinnabar.ios" ]] || { echo "Bad archived bundle ID: $archive_bundle_id" | tee -a "$log"; exit 1; }
+[[ "$archive_executable" == "$bin_name" ]] || { echo "Bad archived executable name: $archive_executable" | tee -a "$log"; exit 1; }
+if plutil -p "$tmp_plist" | grep -Eq '\$\((PRODUCT_BUNDLE_IDENTIFIER|EXECUTABLE_NAME)\)'; then
+  echo "Unresolved Xcode placeholder in Info.plist" | tee -a "$log"
+  exit 1
+fi
+plutil -p "$tmp_plist" | tee -a "$log"
+
+archive_bin="$out/archived-$bin_name"
+unzip -p "$ipa" "Payload/App.app/$archive_executable" > "$archive_bin"
+file "$archive_bin" | tee -a "$log"
+if ! file "$archive_bin" | grep -q 'Mach-O 64-bit arm64'; then
+  echo "Archived executable is not Mach-O 64-bit arm64" | tee -a "$log"
+  exit 1
+fi
+if ! otool -l "$archive_bin" | grep -A5 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS' | grep -q 'platform IOS'; then
+  echo "Archived executable does not declare an iOS device platform" | tee -a "$log"
+  exit 1
+fi
+zipinfo -l "$ipa" "Payload/App.app/$archive_executable" | tee -a "$log"
+if ! zipinfo -l "$ipa" "Payload/App.app/$archive_executable" | grep -Eq '^-rwx'; then
+  echo "Executable permission was not preserved in IPA" | tee -a "$log"
+  exit 1
+fi
+echo "Verified IPA layout, plist, iOS arm64 executable, and executable mode" | tee -a "$log"
+size=$(wc -c < "$ipa" | tr -d ' ')
+echo "Wrote $ipa ($size bytes)" | tee -a "$log"
