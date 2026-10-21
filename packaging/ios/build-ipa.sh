@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unsigned IPA: real Mach-O client binary plus the required runtime asset carriers.
+# Unsigned IPA: LiveContainer-compatible App.app containing the client binary and runtime assets.
 set -euo pipefail
 
 here="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ cd "$repo_root"
 triple=aarch64-apple-ios
 profile="${CINNABAR_IOS_PROFILE:-release}"
 out="$repo_root/target/ios"
-app="$out/Payload/Cinnabar.app"
+app="$out/Payload/App.app"
 log="$out/build.log"
 bin_name=cinnabar
 
@@ -145,8 +145,8 @@ cat > "$app/Info.plist" << PLIST
 </plist>
 PLIST
 
-# Normalize and verify the app metadata before archiving. A successful Rust compile
-# does not guarantee that iOS/LiveContainer can discover the bundle identifier.
+# LiveContainer looks for Payload/App.app during import, so preserve that exact archive path.
+# Normalize and verify the bundle metadata before archiving.
 if ! plutil -lint "$app/Info.plist" 2>&1 | tee -a "$log"; then
   echo "Generated Info.plist is invalid" | tee -a "$log"
   exit 1
@@ -172,7 +172,7 @@ if ! unzip -t "$out/cinnabar-ios-unsigned.ipa" 2>&1 | tee -a "$log"; then
   echo "IPA archive validation failed" | tee -a "$log"
   exit 1
 fi
-archive_bundle_id=$(unzip -p "$out/cinnabar-ios-unsigned.ipa" "Payload/Cinnabar.app/Info.plist" | plutil -extract CFBundleIdentifier raw -o - - 2>> "$log") || {
+archive_bundle_id=$(unzip -p "$out/cinnabar-ios-unsigned.ipa" "Payload/App.app/Info.plist" | plutil -extract CFBundleIdentifier raw -o - - 2>> "$log") || {
   echo "Could not read CFBundleIdentifier from archived IPA" | tee -a "$log"
   exit 1
 }
