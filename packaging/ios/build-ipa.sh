@@ -211,11 +211,11 @@ plutil -p "$tmp_plist" | tee -a "$log"
 archive_bin="$out/archived-$bin_name"
 unzip -p "$ipa" "Payload/App.app/$archive_executable" > "$archive_bin"
 file "$archive_bin" | tee -a "$log"
-if ! file "$archive_bin" | grep -q 'Mach-O 64-bit arm64'; then
+if ! file "$archive_bin" | grep -Eq 'Mach-O 64-bit (executable )?arm64'; then
   echo "Archived executable is not Mach-O 64-bit arm64" | tee -a "$log"
   exit 1
 fi
-if ! otool -l "$archive_bin" | grep -A5 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS' | grep -q 'platform IOS'; then
+if ! otool -l "$archive_bin" | grep -A8 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS' | grep -Eq 'platform IOS([[:space:]]|$)|LC_VERSION_MIN_IPHONEOS'; then
   echo "Archived executable does not declare an iOS device platform" | tee -a "$log"
   exit 1
 fi
