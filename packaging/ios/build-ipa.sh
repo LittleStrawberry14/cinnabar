@@ -217,7 +217,7 @@ if ! file "$archive_bin" | grep -Eq 'Mach-O 64-bit (executable )?arm64'; then
 fi
 # Log the load commands so platform-check failures are diagnosable from Actions.
 otool -l "$archive_bin" | tee "$out/archived-otool.txt" | tee -a "$log"
-if ! grep -A8 -Ei 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS' "$out/archived-otool.txt" | grep -Eiq 'platform[[:space:]]+IOS([[:space:]]|$)|LC_VERSION_MIN_IPHONEOS'; then
+if ! grep -A8 -Ei 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS' "$out/archived-otool.txt" | grep -Eiq 'platform[[:space:]]+2([[:space:]]|$)|LC_VERSION_MIN_IPHONEOS'; then
   echo "Archived executable does not declare an iOS device platform (see archived-otool.txt in the build artifacts)" | tee -a "$log"
   exit 1
 fi
