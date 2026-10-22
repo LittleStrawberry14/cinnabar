@@ -34,6 +34,21 @@ jobs:
           rustup default 1.99.0
           rustc --version
 
+      # Reuse Cargo downloads and compiled dependencies between runs. The lockfile and
+      # toolchain define the cache generation; target-specific artifacts stay isolated.
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/release
+            target/aarch64-apple-ios
+          key: ios-rust-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ios-rust-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            ios-rust-${{ runner.os }}-
+
       - name: Build unsigned IPA
         run: |
           chmod +x packaging/ios/build-ipa.sh
