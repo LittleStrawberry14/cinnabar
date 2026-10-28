@@ -9,7 +9,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{ClassType, DeclaredClass, declare_class, msg_send_id, mutability};
 use objc2_foundation::{MainThreadMarker, NSArray, NSObject, NSOperationQueue, NSString, NSURL};
-use objc2_ui_kit::{UIApplication, UIDocumentPickerViewController, UIViewController};
+use objc2_ui_kit::{
+    UIApplication, UIDocumentPickerDelegate, UIDocumentPickerViewController, UIViewController,
+};
 use objc2_uniform_type_identifiers::UTType;
 
 use super::{Filter, PickedFile};
