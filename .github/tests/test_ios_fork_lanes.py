@@ -113,6 +113,12 @@ class IosForkLaneTests(unittest.TestCase):
                     f"{name} never caches {cache_dir}",
                 )
 
+    def test_the_carrier_upload_is_gated_to_the_fork(self):
+        assets_job = self.assets["jobs"]["assets"]
+        self.assertIn("github.repository != 'cinnabar-mc/cinnabar'", assets_job["if"])
+        sim_jobs = {name: job["if"] for name, job in self.sim["jobs"].items() if "if" in job}
+        self.assertEqual(sim_jobs, {}, "the launch gate must also run on upstream's pushes")
+
     def test_lanes_claim_disjoint_artifact_names(self):
         expected = {
             "ios-sim": {"ios-sim-launch"},

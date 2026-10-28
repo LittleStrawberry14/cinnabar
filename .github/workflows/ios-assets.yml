@@ -24,6 +24,9 @@ permissions:
 jobs:
   assets:
     name: Build and inject the phone IPA
+    # The carriers baked in here are per-user local artifacts (`artifact_policy: local-only` in
+    # assets/vanilla-source.json), so an upstream hosting never adopts this lane by fork sync.
+    if: github.repository != 'cinnabar-mc/cinnabar'
     runs-on: macos-26
     timeout-minutes: 120
     env:
