@@ -237,6 +237,7 @@ jobs:
         env:
           UDID: ${{ steps.device.outputs.udid }}
           BUNDLE_ID: ${{ steps.package.outputs.bundle_id }}
+          EXECUTABLE: ${{ steps.package.outputs.executable }}
           RUN_DIR: run
           RUN_SECONDS: ${{ github.event.inputs.run_seconds || '45' }}
         run: |
@@ -262,8 +263,10 @@ jobs:
           : > "$console/stderr.log"
 
           # Unified-log streaming is best-effort evidence beside the app's own files.
+          # `processPath` is not a log field; `processImagePath` is, and the bundle id
+          # catches the launch refusals FrontBoard logs under other processes.
           xcrun simctl spawn "$UDID" log stream --style compact \
-            --predicate 'processPath CONTAINS "Cinnabar"' \
+            --predicate '(processImagePath CONTAINS[c] "cinnabar") OR (eventMessage CONTAINS[c] "app.cinnabar.client")' \
             > "$console/unified.log" 2>&1 &
           log_pid=$!
           trap 'kill "$log_pid" 2>/dev/null || true' EXIT
@@ -279,6 +282,27 @@ jobs:
             if ! out="$(launch)"; then
               sleep 3
               printf 'LAUNCH: FAIL\nsimctl launch refused twice to start %s:\n%s\n' "$BUNDLE_ID" "$out" | record
+              # FrontBoard refuses before exec when the binary cannot load, so ask the
+              # loader directly and keep the system's refusal context beside the verdict.
+              app_dir="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" app 2>/dev/null || true)"
+              if [[ -n "$app_dir" && -x "$app_dir/$EXECUTABLE" ]]; then
+                xcrun simctl spawn "$UDID" "$app_dir/$EXECUTABLE" > "$RUN_DIR/spawn.log" 2>&1 &
+                spawn_pid=$!
+                sleep 8
+                kill "$spawn_pid" 2>/dev/null || true
+                wait "$spawn_pid" 2>/dev/null || true
+                {
+                  echo "--- direct loader check of $EXECUTABLE (8s window) ---"
+                  head -30 "$RUN_DIR/spawn.log"
+                } | tee -a "$RUN_DIR/verdict" >&2 || true
+              fi
+              xcrun simctl spawn "$UDID" log show --last 3m --style compact \
+                > "$RUN_DIR/console/sim-system.log" 2>&1 || true
+              {
+                echo "--- sim system log around the refusal ---"
+                grep -iE 'cinnabar|dyld|amfi|runningboard|springboard' \
+                  "$RUN_DIR/console/sim-system.log" | tail -40
+              } | tee -a "$RUN_DIR/verdict" >&2 || true
               echo "::error::simctl launch refused to start $BUNDLE_ID"
               exit 1
             fi
@@ -355,8 +379,11 @@ jobs:
           fi
           for report in "$RUN_DIR/reports/"*.ips; do
             [[ -e "$report" ]] || continue
-            grep -qE "\"process\"[[:space:]]*:[[:space:]]*\"$EXECUTABLE\"" "$report" || rm -f "$report"
+            # Refusals and early deaths can name a helper process instead of the app, so
+            # match either the executable or the bundle id anywhere in the report.
+            grep -qiE "$EXECUTABLE|$BUNDLE_ID" "$report" || rm -f "$report"
           done
+          ls -t "$RUN_DIR/reports" 2>/dev/null | head -10 || true
 
       - name: Stop the simulator
         if: always()
