@@ -3,6 +3,9 @@ actions, so an edit that silently splits the pinned toolchain, carrier compile, 
 or artifact names fails these checks."""
 
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 import yaml
@@ -136,6 +139,83 @@ class IosForkLaneTests(unittest.TestCase):
                 self.assertEqual(uploads, expected[name])
             all_names |= uploads
         self.assertEqual(len(all_names), len({*all_names}), "artifact names must stay disjoint")
+
+    RUNNER_DEVICE_LINES = (
+        ("iOS 26.2", (
+            ("iPhone 17 Pro", "B34C2F57-B98B-4C84-96E2-3170887BA2DB"),
+            ("iPhone 17 Pro Max", "8B500E0C-CA36-4F12-853D-3B697FBEA084"),
+            ("iPhone Air", "3E8A6C6F-3253-4050-8CF7-715CB81ADF06"),
+            ("iPad Pro 13-inch (M5)", "3E32E66C-0037-43D0-BA3B-F54380A0040D"),
+        )),
+        ("iOS 26.4", (
+            ("iPhone 17 Pro", "0183276C-C5F7-4A53-B0AF-C3D9117595F6"),
+            ("iPhone 17e", "49A10376-191D-4B27-82E7-4EC71948B0BB"),
+        )),
+        ("tvOS 26.2", (("Apple TV", "D5618DF6-404A-4F88-9963-6D20E40FAF13"),)),
+    )
+
+    def runner_listing(self, state):
+        """The macos-26 runner's `simctl list devices available` shape: every device line
+        ends with a space and current Xcode spells the idle state `Shutdown`."""
+        lines = ["== Devices =="]
+        for section, devices in self.RUNNER_DEVICE_LINES:
+            lines.append(f"-- {section} --")
+            lines.extend(f"    {name} ({udid}) ({state}) " for name, udid in devices)
+        return "\n".join(lines) + "\n"
+
+    def boot_step_script(self):
+        return next(
+            step["run"]
+            for job in self.sim["jobs"].values()
+            for step in job["steps"]
+            if step.get("name") == "Boot an available simulator"
+        )
+
+    def pick_device(self, script, want, state):
+        """Runs the boot step against a fake xcrun serving the canned listing and returns
+        the udid it wrote to GITHUB_OUTPUT."""
+        with tempfile.TemporaryDirectory() as bin_dir:
+            listing = Path(bin_dir, "listing.txt")
+            listing.write_text(self.runner_listing(state))
+            shim = Path(bin_dir, "xcrun")
+            shim.write_text(
+                '#!/bin/sh\n'
+                '[ "$1 $2 $3 $4" = "simctl list devices available" ] && cat "$FAKE_LISTING"\n'
+                'exit 0\n'
+            )
+            shim.chmod(0o755)
+            github_output = Path(bin_dir, "github_output")
+            env = dict(
+                os.environ,
+                PATH=f"{bin_dir}:{os.environ['PATH']}",
+                FAKE_LISTING=str(listing),
+                GITHUB_OUTPUT=str(github_output),
+                SIM_DEVICE_INPUT=want,
+            )
+            run = subprocess.run(["bash", "-c", script], env=env, text=True,
+                                 capture_output=True, timeout=60)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            written = dict(
+                line.split("=", 1) for line in github_output.read_text().splitlines()
+            )
+            return written["udid"]
+
+    def test_the_boot_step_picks_a_device_from_the_runner_listing(self):
+        script = self.boot_step_script()
+        newest = "B34C2F57-B98B-4C84-96E2-3170887BA2DB"
+        for want, expected in (
+            ("iPhone 17 Pro", newest),
+            ("iPad Pro 13-inch (M5)", "3E32E66C-0037-43D0-BA3B-F54380A0040D"),
+            ("iPhone 17e", "49A10376-191D-4B27-82E7-4EC71948B0BB"),
+            ("Nothing Real", newest),
+        ):
+            with self.subTest(device=want):
+                self.assertEqual(self.pick_device(script, want, "Shutdown"), expected)
+
+    def test_the_boot_step_reuses_a_booted_device(self):
+        script = self.boot_step_script()
+        picked = self.pick_device(script, "iPhone 17 Pro", "Booted")
+        self.assertEqual(picked, "B34C2F57-B98B-4C84-96E2-3170887BA2DB")
 
 
 if __name__ == "__main__":

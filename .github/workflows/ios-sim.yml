@@ -194,15 +194,20 @@ jobs:
           # The first iOS section is the newest runtime, so the first device of each rank wins.
           runtime, chosen = None, {}
           for line in listing.splitlines():
-              heading = re.match(r"--\s*iOS\s+(.*?)\s*--", line)
+              heading = re.match(r"--\s*(.+?)\s*--", line)
               if heading:
-                  runtime = heading.group(1)
+                  # Only iOS sections hold candidates; tvOS and friends must not inherit
+                  # the last iOS runtime.
+                  runtime = heading.group(1) if heading.group(1).startswith("iOS") else None
                   continue
-              device = re.match(r"\s+(.+?) \(([0-9A-Fa-f-]{36})\) \((.+)\)$", line)
+              # A device line ends with a space after the state parentheses.
+              device = re.match(r"\s+(.+?) \(([0-9A-Fa-f-]{36})\) \((.+?)\)\s*$", line)
               if not device or runtime is None:
                   continue
               name, udid, state = device.groups()
-              if state != "Shut down":
+              # Current simctl spells the idle state "Shutdown" ("Shut down" on older
+              # Xcode); a booted device is equally usable, bootstatus just returns.
+              if state not in ("Shutdown", "Shut down", "Booted"):
                   continue
               if name == want:
                   rank = 0
@@ -212,16 +217,16 @@ jobs:
                   rank = 2
               else:
                   rank = 3
-              chosen.setdefault(rank, (name, udid))
+              chosen.setdefault(rank, (name, udid, runtime))
               if rank == 0:
                   break
 
           if not chosen:
               sys.exit("no available iOS simulator device in the runner's image")
-          rank, (name, udid) = min(chosen.items())
+          rank, (name, udid, device_runtime) = min(chosen.items())
           if rank > 0:
               print(f"requested simulator {want!r} unavailable; using {name!r}", file=sys.stderr)
-          print(f"simulator: iOS {runtime}, device {name}, {udid}", file=sys.stderr)
+          print(f"simulator: iOS {device_runtime}, device {name}, {udid}", file=sys.stderr)
           print(udid)
           PY
           )"
