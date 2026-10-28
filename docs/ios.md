@@ -20,7 +20,12 @@ bash packaging/ios/build-ipa.sh
 ```
 
 The IPA lands in `target/ios/`. Pinned values (bundle id, deployment target, Xcode major) live in
-`packaging/ios/runtime.json`.
+`packaging/ios/runtime.json`. On this fork the `iOS assets` workflow does the asset work too:
+every push to an `ios/*` branch (or a run started by hand) attaches a carrier-complete
+`Cinnabar-<version>-assets.ipa` to the run as `cinnabar-ios-assets` — the compiled carriers the
+build pins plus the vanilla resource pack, injected by `add-assets.py` inside CI. Sideload
+that one directly; a bare `unsigned` IPA exits at startup with the missing-carrier message
+described in the launch section below.
 
 ## Add your assets
 

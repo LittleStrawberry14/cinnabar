@@ -1,0 +1,97 @@
+name: iOS assets
+
+# The sideload-ready phone package for iOS branches (docs/ios.md). The device lane builds a
+# bare unsigned IPA and the iOS Simulator lane tests its launch, but both leave the carrier
+# work to the user, and iOS fails a carrier-less app at startup with only a console line.
+# This fork lane instead does the whole job here: it builds the device package, compiles the
+# carriers that binary pins together with the pinned vanilla resource pack (the same assetc
+# runs the user would make), and injects them with packaging/ios/add-assets.py into a
+# `Cinnabar-<version>-assets.ipa` attached as `cinnabar-ios-assets`. Sideload tools sign the
+# package with the installer's identity, so it stays unsigned, as CI cannot sign it.
+on:
+  push:
+    branches:
+      - ios/**
+  workflow_dispatch:
+
+concurrency:
+  group: ios-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    name: Build and inject the phone IPA
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CINNABAR_IOS_PROFILE: play
+      CARGO_INCREMENTAL: "0"
+      FORK_CACHE_PATHS: |
+        ~/.cargo/registry/index
+        ~/.cargo/registry/cache
+        ~/.cargo/git/db
+        ~/.cargo/build
+        target/aarch64-apple-ios
+        target/debug
+        ~/go/pkg/mod
+        ~/Library/Caches/go-build
+        .local/assets/bedrock-samples
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # The fork's shared iOS lanes install the pinned toolchain and compile the carriers
+      # through these composite actions, one definition for each recipe.
+      - uses: ./.github/actions/ios-toolchain
+        with:
+          target: aarch64-apple-ios
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: false
+
+      # Forks keep their own Rust, Go and vanilla-pack caches between `ios/*` pushes, saved
+      # even when this lane fails so the next push resumes them. The device lane's `ios-`
+      # entries serve this one; neither has an upstream cache budget, so upstream runs skip it.
+      - name: Restore the fork build cache
+        id: cache
+        if: github.repository != 'cinnabar-mc/cinnabar'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.FORK_CACHE_PATHS }}
+          key: ios-assets-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'core/go.sum', 'assets/vanilla-source.json') }}-${{ github.sha }}
+          restore-keys: |
+            ios-assets-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'core/go.sum', 'assets/vanilla-source.json') }}-
+            ios-assets-${{ runner.os }}-
+            ios-${{ runner.os }}-
+
+      - name: Install the icon renderer
+        run: brew install librsvg
+
+      - name: Build the device IPA
+        run: bash packaging/ios/build-ipa.sh
+
+      # Carriers must match this binary's provenance pins, so they compile from this checkout.
+      - uses: ./.github/actions/ios-carriers
+
+      - name: Inject the carriers into the package
+        run: python3 packaging/ios/add-assets.py "$(ls target/ios/*-unsigned.ipa | head -n 1)"
+
+      - name: Save the fork build cache
+        if: always() && steps.cache.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.FORK_CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cinnabar-ios-assets
+          path: target/ios/*-assets.ipa
+          if-no-files-found: error
+          retention-days: 14

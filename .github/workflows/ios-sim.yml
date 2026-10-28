@@ -69,14 +69,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # The rust-toolchain.toml channel owns the pin; naming it for the simulator target keeps
-      # the directory override's chain from depending on the runner's rustup default.
-      - name: Install the pinned Rust toolchain with the simulator target
-        run: |
-          toolchain="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
-          [[ -n "$toolchain" ]] || { echo 'cannot read the channel from rust-toolchain.toml' >&2; exit 1; }
-          rustup toolchain install --profile minimal --no-self-update "$toolchain"
-          rustup target add --toolchain "$toolchain" aarch64-apple-ios-sim
+      # The fork's shared iOS lanes install the pinned toolchain and compile the carriers
+      # through these composite actions, one definition for each recipe.
+      - uses: ./.github/actions/ios-toolchain
+        with:
+          target: aarch64-apple-ios-sim
 
       - uses: actions/setup-go@v6
         with:
@@ -104,13 +101,11 @@ jobs:
 
       # Carriers must match the binary's provenance pins, so a package built here alone gets
       # them injected; an uploaded package arrives as tested.
-      - name: Inject the carriers for this build
+      - uses: ./.github/actions/ios-carriers
         if: github.event.inputs.ipa_url == '' && github.event.inputs.inject_assets != 'false'
-        run: |
-          cargo run --profile dev --locked -p asset-compiler --bin assetc -- \
-            vanilla-pack --source-manifest assets/vanilla-source.json --accept-eula
-          cargo run --profile dev --locked -p asset-compiler --bin assetc -- prepare --accept-eula
-          python3 packaging/ios/add-assets.py "$(ls target/ios/*-unsigned-sim.ipa | head -n 1)"
+      - name: Inject the carriers into the simulator package
+        if: github.event.inputs.ipa_url == '' && github.event.inputs.inject_assets != 'false'
+        run: python3 packaging/ios/add-assets.py "$(ls target/ios/*-unsigned-sim.ipa | head -n 1)"
 
       - name: Download the requested package
         if: github.event.inputs.ipa_url != ''

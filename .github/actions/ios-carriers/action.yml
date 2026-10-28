@@ -1,0 +1,12 @@
+name: iOS carriers
+description: Compiles every carrier the checkout's binary pins, with the pinned vanilla resource pack
+# dev-profile assetc runs bypass the Makefile's play default; the pack install precedes
+# prepare, and both accept the Mojang EULA the way docs/ios.md instructs users to.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        cargo run --profile dev --locked -p asset-compiler --bin assetc -- \
+          vanilla-pack --source-manifest assets/vanilla-source.json --accept-eula
+        cargo run --profile dev --locked -p asset-compiler --bin assetc -- prepare --accept-eula

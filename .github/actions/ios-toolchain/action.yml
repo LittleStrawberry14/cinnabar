@@ -1,0 +1,19 @@
+name: iOS toolchain
+description: Installs the rust-toolchain.toml toolchain and adds one iOS target to it explicitly
+# The manifest's channel owns the pin; naming it for the target keeps the directory override's
+# chain from depending on the runner's rustup default.
+inputs:
+  target:
+    description: Target triple to side-load into the pinned toolchain, such as aarch64-apple-ios
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TARGET_TRIPLE: ${{ inputs.target }}
+      run: |
+        toolchain="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
+        [[ -n "$toolchain" ]] || { echo 'cannot read the channel from rust-toolchain.toml' >&2; exit 1; }
+        rustup toolchain install --profile minimal --no-self-update "$toolchain"
+        rustup target add --toolchain "$toolchain" "$TARGET_TRIPLE"
