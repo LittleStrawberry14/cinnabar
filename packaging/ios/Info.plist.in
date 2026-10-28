@@ -11,12 +11,12 @@
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+  <key>CFBundleSupportedPlatforms</key><array><string>@BUNDLE_PLATFORMS@</string></array>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>MinimumOSVersion</key><string>@DEPLOYMENT_TARGET@</string>
-  <key>DTPlatformName</key><string>iphoneos</string>
+  <key>DTPlatformName</key><string>@PLATFORM_NAME@</string>
   <key>DTPlatformVersion</key><string>@SDK_VERSION@</string>
-  <key>DTSDKName</key><string>iphoneos@SDK_VERSION@</string>
+  <key>DTSDKName</key><string>@SDK_NAME@</string>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>
   <!-- An empty launch screen opts into the device's native resolution without a storyboard. -->

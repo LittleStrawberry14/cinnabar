@@ -5,9 +5,19 @@
 #
 # Needs macOS with the Xcode major runtime.json pins (an /Applications/Xcode_<major>*.app is
 # selected when present), the aarch64-apple-ios Rust target, Go, zip and librsvg or ImageMagick.
-# CINNABAR_IOS_PROFILE picks the Cargo profile (release). The IPA is signed ad hoc only:
-# sideloading tools sign it with the installer's identity.
+# CINNABAR_IOS_PROFILE picks the Cargo profile (release). CINNABAR_IOS_TARGET selects the device
+# IPA ("device", the default) or the simulator slice the CI launch test runs ("simulator"):
+# iOS forbids running device executables in its simulator, and a simulator slice in a device
+# IPA would fail device install, so the two stay separate packages. The IPA is signed ad hoc
+# only; sideloading tools sign the device IPA with the installer's identity.
 set -euo pipefail
+
+target="${CINNABAR_IOS_TARGET:-device}"
+case "$target" in
+    device) sdk_kind=iphoneos; triple=aarch64-apple-ios; simulator= ;;
+    simulator) sdk_kind=iphonesimulator; triple=aarch64-apple-ios-sim; simulator=yes ;;
+    *) echo "unknown iOS target '$target' (device|simulator)" >&2; exit 64 ;;
+esac
 
 [[ "$(uname -s)" == Darwin ]] || { echo 'build-ipa.sh needs macOS with Xcode' >&2; exit 1; }
 
@@ -20,12 +30,13 @@ pin() {
     python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$here/runtime.json" "$1"
 }
 
-triple=aarch64-apple-ios
 profile="${CINNABAR_IOS_PROFILE:-release}"
 xcode="$(pin xcode)"
 executable="$(pin executable)"
 export IPHONEOS_DEPLOYMENT_TARGET
 IPHONEOS_DEPLOYMENT_TARGET="$(pin deployment_target)"
+suffix=
+[[ -z "$simulator" ]] || suffix=-sim
 product="$(sed -n '/macro_rules! product_name/,/^}/s/^[[:space:]]*"\([^"]*\)"$/\1/p' crates/launcher/src/lib.rs | head -n 1)"
 version="$(version_of)"
 [[ -n "$product" ]] || { echo 'cannot read the launcher product name' >&2; exit 1; }
@@ -38,25 +49,30 @@ if ((${#installed[@]})); then
     DEVELOPER_DIR="$(printf '%s\n' "${installed[@]}" | sort -V | tail -n 1)/Contents/Developer"
     export DEVELOPER_DIR
 fi
-sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+sdk_version="$(xcrun --sdk "$sdk_kind" --show-sdk-version)"
 [[ "${sdk_version%%.*}" == "$xcode" ]] || {
-    echo "the iPhoneOS SDK is $sdk_version; install Xcode $xcode or point DEVELOPER_DIR at it" >&2
+    echo "the $sdk_kind SDK is $sdk_version; install Xcode $xcode or point DEVELOPER_DIR at it" >&2
     exit 1
 }
-sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
+sdk_path="$(xcrun --sdk "$sdk_kind" --show-sdk-path)"
 
 out="$repo_root/target/ios"
 stage="$out/stage"
 app="$stage/Payload/$executable.app"
-ipa="$out/$product-$version-unsigned.ipa"
+ipa="$out/$product-$version-unsigned$suffix.ipa"
 rm -rf "$stage" "$ipa"
 mkdir -p "$app"
 
 # One commit identifies both the app and the core, chosen as the Makefile does.
 export CINNABAR_BUILD_COMMIT="${CINNABAR_BUILD_COMMIT:-$(git rev-parse HEAD)}"
 
-target_flags="-isysroot $sdk_path -arch arm64 -miphoneos-version-min=$IPHONEOS_DEPLOYMENT_TARGET"
-CGO_ENABLED=1 GOOS=ios GOARCH=arm64 CC="$(xcrun --sdk iphoneos --find clang)" \
+if [[ -z "$simulator" ]]; then
+    target_flags="-isysroot $sdk_path -arch arm64 -miphoneos-version-min=$IPHONEOS_DEPLOYMENT_TARGET"
+else
+    # The simulator's slice targets its own SDK; clang takes the minimum from the triple.
+    target_flags="-isysroot $sdk_path -arch arm64 -target arm64-apple-ios$IPHONEOS_DEPLOYMENT_TARGET-simulator"
+fi
+CGO_ENABLED=1 GOOS=ios GOARCH=arm64 CC="$(xcrun --sdk "$sdk_kind" --find clang)" \
     CGO_CFLAGS="$target_flags" CGO_LDFLAGS="$target_flags" \
     go build -buildmode=c-archive -trimpath \
     -ldflags "-s -w $(bash "$here/../common/core-ldflags.sh")" \
@@ -79,21 +95,42 @@ profile_dir="$profile"
 [[ "$profile" != dev ]] || profile_dir=debug
 install -m 0755 "$target_dir/$triple/$profile_dir/$client_binary" "$app/$executable"
 
-# A thin arm64 Mach-O for the iOS device platform at the pinned minimum version.
+# A thin arm64 Mach-O for the pinned iOS platform at the pinned minimum version.
 [[ "$(lipo -archs "$app/$executable")" == arm64 ]] || { echo "$executable is not thin arm64" >&2; exit 1; }
 lipo "$app/$executable" -verify_arch arm64
+expected_platform=IOS
+[[ -z "$simulator" ]] || expected_platform=IOSSIMULATOR
 build="$(xcrun vtool -show-build "$app/$executable" | awk '$1 == "platform" || $1 == "minos" {printf "%s ", $2}')"
-[[ "$build" == "IOS $IPHONEOS_DEPLOYMENT_TARGET " ]] || {
-    echo "$executable targets '$build', expected IOS $IPHONEOS_DEPLOYMENT_TARGET" >&2
-    exit 1
-}
+if [[ -z "$simulator" ]]; then
+    [[ "$build" == "IOS $IPHONEOS_DEPLOYMENT_TARGET " ]] || {
+        echo "$executable targets '$build', expected IOS $IPHONEOS_DEPLOYMENT_TARGET" >&2
+        exit 1
+    }
+else
+    [[ "$build" == "IOSSIMULATOR "* ]] || {
+        echo "$executable builds for '$build', expected IOSSIMULATOR" >&2
+        exit 1
+    }
+fi
 
 # The resource root mirrors .local/; see runtime.json's resource_dir for the names iOS forbids.
 stage_shared_resources "$app/$(pin resource_dir)"
 
+# The simulator's manifest names its platform; device installs reject anything else.
+if [[ -z "$simulator" ]]; then
+    platform_name=iphoneos
+    bundle_platforms=iPhoneOS
+    sdk_name="iphoneos$sdk_version"
+else
+    platform_name=iphonesimulator
+    bundle_platforms=iPhoneSimulator
+    sdk_name="iphonesimulator$sdk_version"
+fi
 sed -e "s|@EXECUTABLE@|$executable|g" -e "s|@BUNDLE_ID@|$(pin bundle_id)|g" \
     -e "s|@PRODUCT_NAME@|$product|g" -e "s|@VERSION@|$version|g" \
     -e "s|@DEPLOYMENT_TARGET@|$IPHONEOS_DEPLOYMENT_TARGET|g" -e "s|@SDK_VERSION@|$sdk_version|g" \
+    -e "s|@PLATFORM_NAME@|$platform_name|g" -e "s|@BUNDLE_PLATFORMS@|$bundle_platforms|g" \
+    -e "s|@SDK_NAME@|$sdk_name|g" \
     "$here/Info.plist.in" >"$app/Info.plist"
 if grep -q '@[A-Z_]*@' "$app/Info.plist"; then
     echo "unfilled template token in $app/Info.plist" >&2

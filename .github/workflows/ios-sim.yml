@@ -1,0 +1,389 @@
+name: iOS Simulator
+
+# The launch-survival gate for iOS packaging (docs/ios.md). iOS runs device executables only on
+# a device and simulator slices only in its simulator, so packaging/ios/build-ipa.sh produces a
+# separate package per target and this lane needs the simulator one. It launches the app on an
+# iOS simulator and requires the process to stay alive for the requested window, catching every
+# ends-at-launch regression the phone does, whatever the cause (dyld, panics, watchdogs, kills).
+# Pushes to `ios/*` branches build the branch's simulator package, inject the same compiled
+# carriers add-assets.py would (they must match the binary's provenance pins), and test that
+# launch. Use workflow_dispatch to test a package built elsewhere through `ipa_url`: a GitHub
+# release URL of this workflow's repository uses the workflow token, other URLs are fetched
+# as-is. A package from another build is tested as uploaded, so no injection runs for it.
+# A device-only package cannot run in any simulator; the preflight reports that and asks for
+# the `-sim` package or the auto-build.
+#
+# Nothing here depends on other workflow files and only the two packaging scripts below touch
+# the platform packaging, so this fork's lane keeps working through upstream updates.
+on:
+  push:
+    branches:
+      - ios/**
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: HTTPS URL of the -sim .ipa (or .zip/.tar) to test; empty builds it from this ref
+        required: false
+        default: ''
+      run_seconds:
+        description: Seconds the app must stay alive after launch
+        required: false
+        default: '45'
+      sim_device:
+        description: Simulator device name, falling back to any available iPhone
+        required: false
+        default: 'iPhone 17 Pro'
+      inject_assets:
+        description: Compile and inject the carriers for a locally built package
+        required: false
+        default: 'true'
+
+concurrency:
+  group: ios-sim-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    name: Launch the IPA on a simulator
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      # Parallel codegen without LTO keeps this build affordable, like the device lane.
+      CINNABAR_IOS_PROFILE: play
+      CARGO_INCREMENTAL: "0"
+      FORK_CACHE_PATHS: |
+        ~/.cargo/registry/index
+        ~/.cargo/registry/cache
+        ~/.cargo/git/db
+        ~/.cargo/build
+        target/aarch64-apple-ios-sim
+        target/debug
+        ~/go/pkg/mod
+        ~/Library/Caches/go-build
+        .local/assets/bedrock-samples
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # The rust-toolchain.toml channel owns the pin; naming it for the simulator target keeps
+      # the directory override's chain from depending on the runner's rustup default.
+      - name: Install the pinned Rust toolchain with the simulator target
+        run: |
+          toolchain="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
+          [[ -n "$toolchain" ]] || { echo 'cannot read the channel from rust-toolchain.toml' >&2; exit 1; }
+          rustup toolchain install --profile minimal --no-self-update "$toolchain"
+          rustup target add --toolchain "$toolchain" aarch64-apple-ios-sim
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: false
+
+      # Forks keep their own Rust, Go and vanilla-pack caches between `ios/*` pushes, saved even
+      # when this lane fails so the next push resumes them. The device lane's `ios-` entries
+      # serve this one; neither has an upstream cache budget, so upstream runs skip it.
+      - name: Restore the fork build cache
+        id: cache
+        if: github.repository != 'cinnabar-mc/cinnabar'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.FORK_CACHE_PATHS }}
+          key: ios-sim-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'core/go.sum', 'assets/vanilla-source.json') }}-${{ github.sha }}
+          restore-keys: |
+            ios-sim-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'core/go.sum', 'assets/vanilla-source.json') }}-
+            ios-sim-${{ runner.os }}-
+            ios-${{ runner.os }}-
+
+      - name: Build the simulator package
+        if: github.event.inputs.ipa_url == ''
+        run: bash packaging/ios/build-sim.sh
+
+      # Carriers must match the binary's provenance pins, so a package built here alone gets
+      # them injected; an uploaded package arrives as tested.
+      - name: Inject the carriers for this build
+        if: github.event.inputs.ipa_url == '' && github.event.inputs.inject_assets != 'false'
+        run: |
+          cargo run --profile dev --locked -p asset-compiler --bin assetc -- \
+            vanilla-pack --source-manifest assets/vanilla-source.json --accept-eula
+          cargo run --profile dev --locked -p asset-compiler --bin assetc -- prepare --accept-eula
+          python3 packaging/ios/add-assets.py "$(ls target/ios/*-unsigned-sim.ipa | head -n 1)"
+
+      - name: Download the requested package
+        if: github.event.inputs.ipa_url != ''
+        env:
+          PACKAGE_URL: ${{ github.event.inputs.ipa_url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/ios/downloaded
+          case "$PACKAGE_URL" in
+            https://github.com/*/releases/download/*)
+              spec="${PACKAGE_URL#https://github.com/}"
+              repo="${spec%%/releases/download/*}"
+              tail="${spec#"$repo"/releases/download/}"
+              gh release download -R "$repo" "${tail%%/*}" \
+                --pattern "${tail#*/}" --dir target/ios/downloaded --clobber ;;
+            *)
+              curl --fail --location --retry 3 --retry-delay 2 \
+                --output target/ios/downloaded/package.bin "$PACKAGE_URL" ;;
+          esac
+          ls -hl target/ios/downloaded
+
+      - name: Pick a package and preflight its bundle
+        id: package
+        env:
+          RUN_DIR: run
+        run: |
+          mkdir -p "$RUN_DIR"/{console,logs,shots,reports,package}
+          package="$(ls -t target/ios/*-unsigned-sim-assets.ipa target/ios/*-unsigned-sim.ipa 2>/dev/null | head -n 1)"
+          injected=yes
+          if [[ -z "$package" ]]; then
+            package="$(ls -t target/ios/downloaded/* 2>/dev/null | head -n 1)"
+            injected=
+          fi
+          if [[ -z "$package" ]]; then
+            echo '::error::no package was built or downloaded; pass an ipa_url or let this ref build its -sim package' >&2
+            exit 1
+          fi
+          echo "package: $package"
+          case "$(head -c 2 "$package")" in
+            PK) unzip -o -q "$package" -d "$RUN_DIR/package" ;;
+            *) tar -x -f "$package" -C "$RUN_DIR/package" ;;
+          esac
+          apps="$(find "$RUN_DIR/package" -mindepth 1 -maxdepth 3 -type d -name '*.app' | sort)"
+          count="$(printf '%s\n' "$apps" | grep -c . || true)"
+          if (( count != 1 )); then
+            echo "::error::expected one Payload/<App>.app inside the package, found ${count:-0}"
+            [[ -n "$apps" ]] && echo "$apps"
+            exit 1
+          fi
+          app="$apps"
+          if [[ -z "$injected" && "$package" != *unsigned-sim-assets* ]]; then
+            echo "::warning::the package carries no compiled carriers; unless it was built with them, the app reports the missing-carrier failure described in docs/ios.md"
+          fi
+          bundle_id="$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")"
+          executable="$(plutil -extract CFBundleExecutable raw "$app/Info.plist")"
+          slices="$(xcrun vtool -show-build "$app/$executable" | awk '$1 == "platform" {print $2}' | sort -u | tr '\n' ' ')"
+          echo "executable slices: $slices"
+          [[ "$slices" == *IOSSIMULATOR* ]] || {
+            echo "::error::$app/$executable only targets device slices ($slices); iOS runs device executables on a device only"
+            echo "::error::upload a *-sim.ipa (packaging/ios/build-sim.sh) or leave ipa_url empty to build and test this ref's simulator package here"
+            exit 1
+          }
+          {
+            echo "app=$app"
+            echo "bundle_id=$bundle_id"
+            echo "executable=$executable"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Boot an available simulator
+        id: device
+        env:
+          SIM_DEVICE_INPUT: ${{ github.event.inputs.sim_device || 'iPhone 17 Pro' }}
+        run: |
+          xcrun simctl list devices available
+          udid="$(python3 - "$SIM_DEVICE_INPUT" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          want = sys.argv[1]
+          listing = subprocess.run(
+              ["xcrun", "simctl", "list", "devices", "available"], check=True,
+              text=True, capture_output=True).stdout
+
+          # The first iOS section is the newest runtime, so the first device of each rank wins.
+          runtime, chosen = None, {}
+          for line in listing.splitlines():
+              heading = re.match(r"--\s*iOS\s+(.*?)\s*--", line)
+              if heading:
+                  runtime = heading.group(1)
+                  continue
+              device = re.match(r"\s+(.+?) \(([0-9A-Fa-f-]{36})\) \((.+)\)$", line)
+              if not device or runtime is None:
+                  continue
+              name, udid, state = device.groups()
+              if state != "Shut down":
+                  continue
+              if name == want:
+                  rank = 0
+              elif name.startswith(want):
+                  rank = 1
+              elif name.startswith("iPhone"):
+                  rank = 2
+              else:
+                  rank = 3
+              chosen.setdefault(rank, (name, udid))
+              if rank == 0:
+                  break
+
+          if not chosen:
+              sys.exit("no available iOS simulator device in the runner's image")
+          rank, (name, udid) = min(chosen.items())
+          if rank > 0:
+              print(f"requested simulator {want!r} unavailable; using {name!r}", file=sys.stderr)
+          print(f"simulator: iOS {runtime}, device {name}, {udid}", file=sys.stderr)
+          print(udid)
+          PY
+          )"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl bootstatus "$udid" -b
+
+      - name: Install, launch and watch the app
+        env:
+          UDID: ${{ steps.device.outputs.udid }}
+          BUNDLE_ID: ${{ steps.package.outputs.bundle_id }}
+          RUN_DIR: run
+          RUN_SECONDS: ${{ github.event.inputs.run_seconds || '45' }}
+        run: |
+          set -euo pipefail
+
+          case "$RUN_SECONDS" in ''|*[!0-9]*)
+            echo "::error::run_seconds must be a whole number of seconds, got '$RUN_SECONDS'" >&2
+            exit 1 ;;
+          esac
+          window="$RUN_SECONDS"
+          if (( window > 300 )); then
+            echo "::warning::clamping the requested ${RUN_SECONDS}s window to the 300s CI window"
+            window=300
+          fi
+          if (( window < 1 )); then
+            echo "::error::run_seconds must be at least 1 second" >&2
+            exit 1
+          fi
+
+          console="$RUN_DIR/console"
+          mkdir -p "$console"
+          : > "$console/stdout.log"
+          : > "$console/stderr.log"
+
+          # Unified-log streaming is best-effort evidence beside the app's own files.
+          xcrun simctl spawn "$UDID" log stream --style compact \
+            --predicate 'processPath CONTAINS "Cinnabar"' \
+            > "$console/unified.log" 2>&1 &
+          log_pid=$!
+          trap 'kill "$log_pid" 2>/dev/null || true' EXIT
+
+          record() { tee "$RUN_DIR/verdict"; }
+          launch () {
+            xcrun simctl launch --terminate-running-process \
+              --stdout="$PWD/$console/stdout.log" --stderr="$PWD/$console/stderr.log" \
+              "$UDID" "$BUNDLE_ID" 2>&1
+          }
+          if ! out="$(launch)"; then
+            sleep 5
+            if ! out="$(launch)"; then
+              sleep 3
+              printf 'LAUNCH: FAIL\nsimctl launch refused twice to start %s:\n%s\n' "$BUNDLE_ID" "$out" | record
+              echo "::error::simctl launch refused to start $BUNDLE_ID"
+              exit 1
+            fi
+          fi
+          pid="$(printf '%s' "$out" | awk 'END {print $NF}')"
+          case "$pid" in ''|*[!0-9]*)
+            sleep 3
+            printf 'LAUNCH: FAIL\nsimctl launch printed no pid:\n%s\n' "$out" | record
+            echo "::error::simctl launch printed no pid"
+            exit 1 ;;
+          esac
+          echo "$BUNDLE_ID launched as pid $pid"
+          xcrun simctl io "$UDID" screenshot "$RUN_DIR/shots/launched.png" 2>/dev/null || true
+
+          start="$(date +%s)"
+          next_shot=$(( start + 10 ))
+          while :; do
+            now="$(date +%s)"
+            elapsed=$(( now - start ))
+            if ! ps -p "$pid" >/dev/null 2>&1; then
+              sleep 3
+              printf 'LAUNCH: FAIL\n%s (pid %s) exited after %ss; see reports/ and the collected logs\n' \
+                "$BUNDLE_ID" "$pid" "$elapsed" | record
+              echo "::error::$BUNDLE_ID exited after ${elapsed}s (pid $pid)"
+              exit 1
+            fi
+            if (( now >= next_shot )); then
+              xcrun simctl io "$UDID" screenshot "$RUN_DIR/shots/${elapsed}s.png" 2>/dev/null || true
+              next_shot=$(( now + 10 ))
+            fi
+            if (( elapsed >= window )); then
+              printf 'LAUNCH: PASS\n%s stayed alive the whole %ss window on simulator %s (pid %s)\n' \
+                "$BUNDLE_ID" "$window" "$UDID" "$pid" | record
+              exit 0
+            fi
+            sleep 2
+          done
+
+      - name: Write the launch verdict into the summary
+        if: always()
+        env:
+          RUN_DIR: run
+        run: |
+          echo "## iOS simulator launch" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$RUN_DIR/verdict" ]]; then
+            cat "$RUN_DIR/verdict" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The launch step never wrote a verdict; see what the steps above captured." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          grep -q '^LAUNCH: PASS' "$RUN_DIR/verdict" || {
+            echo "::error::the app did not stay alive for the requested window; download the ios-sim-launch artifact for the console and crash reports"
+            exit 1
+          }
+
+      - name: Collect the client logs and crash reports
+        if: always()
+        env:
+          UDID: ${{ steps.device.outputs.udid }}
+          BUNDLE_ID: ${{ steps.package.outputs.bundle_id }}
+          EXECUTABLE: ${{ steps.package.outputs.executable }}
+          RUN_DIR: run
+        run: |
+          data_dir="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
+          if [[ -n "$data_dir" ]]; then
+            mkdir -p "$RUN_DIR/logs" "$RUN_DIR/reports/app"
+            cp -R "$data_dir/Documents/data/logs/." "$RUN_DIR/logs/" 2>/dev/null || true
+            cp -R "$data_dir/Documents/data/crashes/." "$RUN_DIR/reports/app/" 2>/dev/null || true
+          fi
+          # Simulator processes crash into the host's reports; keep the freshest client ones.
+          if [[ -d "$HOME/Library/Logs/DiagnosticReports" ]]; then
+            find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -name '*.ips' -mmin -40 \
+              -exec cp {} "$RUN_DIR/reports/" \; 2>/dev/null || true
+          fi
+          for report in "$RUN_DIR/reports/"*.ips; do
+            [[ -e "$report" ]] || continue
+            grep -qE "\"process\"[[:space:]]*:[[:space:]]*\"$EXECUTABLE\"" "$report" || rm -f "$report"
+          done
+
+      - name: Stop the simulator
+        if: always()
+        env:
+          UDID: ${{ steps.device.outputs.udid }}
+          BUNDLE_ID: ${{ steps.package.outputs.bundle_id }}
+        run: |
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
+          xcrun simctl shutdown "$UDID" 2>/dev/null || true
+          xcrun simctl delete "$UDID" 2>/dev/null || true
+
+      - name: Save the fork build cache
+        if: always() && steps.cache.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.FORK_CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Upload the launch evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-sim-launch
+          path: |
+            run/console/**
+            run/logs/**
+            run/reports/**
+            run/shots/**
+            run/verdict
+          if-no-files-found: warn
+          retention-days: 14

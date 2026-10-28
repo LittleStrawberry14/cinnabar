@@ -35,6 +35,21 @@ python packaging/ios/add-assets.py path/to/Cinnabar-<version>-unsigned.ipa
 This writes `Cinnabar-<version>-assets.ipa` beside the input (`--out` picks another path,
 `--local` another `.local` directory). The assets stay on your machine and device.
 
+## Verify a launch on the simulator
+
+A device IPA cannot run in a simulator: iOS executes simulator slices in its simulator only,
+and a simulator slice would fail device installation instead. The packager therefore keeps the
+two apart: `CINNABAR_IOS_TARGET=simulator bash packaging/ios/build-ipa.sh` writes
+`Cinnabar-<version>-unsigned-sim.ipa` (or run `packaging/ios/build-sim.sh`, the same wrapper),
+inject the carriers with `add-assets.py` as above, and open the result in Xcode's simulator.
+
+The `iOS Simulator` workflow (`.github/workflows/ios-sim.yml`) launches and watches one on
+every push to an `ios/*` branch, or from the Actions tab: leave `ipa_url` empty to build and
+launch this ref's `-sim` package, or pass a URL to test a package built elsewhere (a device
+IPA is refused with an explanation). The verdict is pass only when the process stays alive for
+the whole `run_seconds` window; the `ios-sim-launch` artifact carries the captured console,
+the client's own `data/logs`, crash reports and periodic screenshots.
+
 ## Sideload from Windows
 
 Either tool signs the IPA with your Apple ID. A free Apple ID signs it for 7 days; sideload it
