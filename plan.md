@@ -1276,17 +1276,18 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   Menu scroll regions and chat history accept captured finger drags; swipes cancel pending taps, and form slider gestures retain their own control. Native gesture calibration and full route/device acceptance remain open.
   Menu text editors request platform keyboards again on field changes and retaps. Android keyboard overlap reduces the UI layout viewport and reveals unchanged menu focus after resize. The People drawer filters the current friend list by gamertag. Global people lookup, gameplay text entry, full composition support and device IME acceptance remain open.
 - The iOS IPA (`docs/ios.md`) runs each Go core in-process from a linked C archive and loads
-  carriers injected into the bundle. On an iPhone 18 Pro Max (iOS 27) it launches full screen,
-  renders with Metal, signs in and joins servers, including a Java shader pack; servers that
-  send large packs need the increased-memory-limit capability. The 120 Hz display link and
-  Game Mode have no device evidence yet. Safe-area insets are not applied, so the Dynamic Island
-  can cover HUD edges, and there is no render-scale option for the native 3× drawable. Touch,
-  soft-keyboard entry and keyboard overlap remain unverified. Chat requests the iOS software
-  keyboard. Shader packs compile on a background thread on iOS, with cooperative heap and
-  time checks; compiler faults can terminate the app. Device acceptance of this path remains open.
-  On-device first-run preparation,
-  native crash capture, clipboard, link opening, local worlds and mods (no JIT) remain
-  unavailable.
+  carriers injected into the bundle. On an iPhone 18 Pro Max (iOS 27) and an iPad it launches
+  full screen, renders with Metal, signs in and joins servers, including a Java shader pack;
+  servers that send large packs need the increased-memory-limit capability. The 120 Hz display
+  link and Game Mode have no device evidence yet. Safe-area insets are not applied, so the
+  Dynamic Island can cover HUD edges, and there is no render-scale option for the native 3×
+  drawable. Touch, soft-keyboard entry and keyboard overlap remain unverified. Chat requests the
+  iOS software keyboard. Shader packs compile on a background thread on iOS, with cooperative
+  heap and time checks; compiler faults can terminate the app. Device acceptance of this path
+  remains open. On-device first-run preparation, native crash capture, clipboard, local worlds
+  and running wasm mods (no JIT) remain unavailable. Sign-in hands the device code to Safari on
+  the device, and import buttons open the document picker that copies picks into app storage;
+  neither has device acceptance evidence yet.
 - Local mods and server experiences still need runtime/input isolation, reload/reorder/
   removal, consent, custom screen transitions and media qualification. Unmeasured shared
   Ordinary touch controls take focus only after a completed tap, preserving manual scroll positions during pending swipes.

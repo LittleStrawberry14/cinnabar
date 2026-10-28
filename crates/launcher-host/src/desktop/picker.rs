@@ -1,9 +1,11 @@
 //! Import buttons open the platform file picker on their worker thread.
-#[cfg(any(not(any(windows, target_os = "android")), test))]
+#[cfg(any(not(any(windows, target_os = "android", target_os = "ios")), test))]
 use std::path::PathBuf;
+#[cfg(target_os = "ios")]
+mod ios;
 mod picked;
 pub use picked::PickedFile;
-#[cfg(any(not(any(windows, target_os = "android")), test))]
+#[cfg(any(not(any(windows, target_os = "android", target_os = "ios")), test))]
 use std::process::Command;
 
 /// What one import dialog asks for.
@@ -29,8 +31,11 @@ pub fn pick_files(filter: &Filter) -> Result<Vec<PickedFile>, String> {
 }
 
 /// Shares filters and fallback tools while preserving each caller's selection mode.
-// Windows and Android compile only their own branch, so its early return is the tail.
-#[cfg_attr(any(windows, target_os = "android"), allow(clippy::needless_return))]
+// Windows, Android, and iOS compile only their own branch, so its early return is the tail.
+#[cfg_attr(
+    any(windows, target_os = "android", target_os = "ios"),
+    allow(clippy::needless_return)
+)]
 fn choose(filter: &Filter, multiple: bool) -> Result<Vec<PickedFile>, String> {
     #[cfg(windows)]
     {
@@ -70,7 +75,10 @@ fn choose(filter: &Filter, multiple: bool) -> Result<Vec<PickedFile>, String> {
         .map_err(|error| format!("{error}."))?
         .ok_or_else(|| unavailable("no document picker is available", filter))
         .and_then(|paths| selected(filter, paths.into_iter().map(PickedFile::copied).collect()));
-    #[cfg(not(any(windows, target_os = "android")))]
+    // iOS has no picker tools; the document picker copies picks into private storage.
+    #[cfg(target_os = "ios")]
+    return ios::pick_documents(multiple, filter).and_then(|paths| selected(filter, paths));
+    #[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
     selected(
         filter,
         run_tools(
@@ -128,7 +136,7 @@ fn selected<T: AsRef<std::path::Path>>(filter: &Filter, paths: Vec<T>) -> Result
 }
 
 /// Derives every platform's filter from the selected import extensions.
-#[cfg(any(not(target_os = "android"), test))]
+#[cfg(any(not(any(target_os = "android", target_os = "ios")), test))]
 fn patterns(filter: &Filter) -> Vec<String> {
     filter
         .extensions
@@ -144,7 +152,7 @@ fn windows_filter(filter: &Filter) -> String {
 }
 
 /// Runs the first picker tool that launches; a launched tool's failure counts as cancellation.
-#[cfg(not(any(windows, target_os = "android")))]
+#[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
 fn run_tools(commands: Vec<Command>, filter: &Filter) -> Result<Vec<PathBuf>, String> {
     let mut launch_error = None;
     for mut command in commands {
@@ -172,7 +180,7 @@ fn unavailable(reason: &str, filter: &Filter) -> String {
 }
 
 /// Reads one selected path per line, preserving spaces and ignoring empty output lines.
-#[cfg(any(not(any(windows, target_os = "android")), test))]
+#[cfg(any(not(any(windows, target_os = "android", target_os = "ios")), test))]
 fn output_paths(output: &[u8]) -> Vec<PathBuf> {
     String::from_utf8_lossy(output)
         .lines()
@@ -182,7 +190,7 @@ fn output_paths(output: &[u8]) -> Vec<PathBuf> {
 }
 
 /// Picker tools in fallback order; Linux reaches these only when the portal is unavailable.
-#[cfg(any(not(any(windows, target_os = "android")), test))]
+#[cfg(any(not(any(windows, target_os = "android", target_os = "ios")), test))]
 fn tool_commands(platform: &str, filter: &Filter, multiple: bool) -> Vec<Command> {
     let (title, name) = (filter.title, filter.name);
     if platform == "macos" {

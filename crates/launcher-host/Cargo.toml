@@ -58,6 +58,29 @@ rustix = { version = "1", default-features = false, features = ["fs", "process",
 jni = "0.21"
 ndk-context = "0.1"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+block2 = "0.5.1"
+objc2 = "0.5.2"
+objc2-foundation = { version = "0.2.2", features = [
+    "block2",
+    "NSArray",
+    "NSOperation",
+    "NSRange",
+    "NSString",
+    "NSURL",
+] }
+objc2-ui-kit = { version = "0.2.2", features = [
+    "UIApplication",
+    "UIDocumentPickerViewController",
+    "UIResponder",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+    "block2",
+    "objc2-uniform-type-identifiers",
+] }
+objc2-uniform-type-identifiers = "0.2.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 async-io = "2"
 futures-lite = "2"

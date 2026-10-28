@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-/// A chosen document. Android's private copy is removed after its importer finishes.
+/// A chosen document. The picker's private copy is removed after its importer finishes.
 #[derive(Debug)]
 pub struct PickedFile {
     path: PathBuf,
@@ -25,8 +25,8 @@ impl AsRef<Path> for PickedFile {
 }
 
 impl PickedFile {
-    /// Owns a copy under the Android picker's selection/index directories.
-    #[cfg(any(target_os = "android", test))]
+    /// Owns a copy under the picker's import directory.
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
     pub(super) fn copied(path: PathBuf) -> Self {
         Self { path, copied: true }
     }

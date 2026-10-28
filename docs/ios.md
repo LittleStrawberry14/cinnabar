@@ -4,7 +4,9 @@ The iOS client is the desktop client built for arm64 iPhones and iPads on iOS 17
 with Metal. iOS lets an app neither start other programs nor compile code at run time, so the Go
 core links into the app itself, and there is no prep kit: the IPA cannot prepare game assets on
 the device. You sideload it yourself; it is not on the App Store. It has run on an iPhone 18 Pro
-Max: menus, sign-in, joining servers and shader packs work; touch input is lightly tested.
+Max and an iPad: menus, joining servers and shader packs work, sign-in hands the device code to
+Safari on the device itself, and import buttons open the Files picker. Touch input is lightly
+tested.
 
 ## Get the IPA
 
@@ -90,7 +92,8 @@ keyboard and mouse work only as far as winit's UIKit backend delivers their inpu
 
 ## Not supported
 
-- Local worlds, mods and anything that needs JIT or a second process.
+- Local worlds and running mods: their files import through the Files picker, but running a local
+  world is unverified, and executing a wasm mod needs a JIT, which iOS denies.
 - Preparing assets on the device: inject them with `add-assets.py` before sideloading.
 - The crash monitor and native crash dumps; Rust panics still write crash folders.
-- Clipboard and opening links. Sign in with the device code on another device.
+- Clipboard.
