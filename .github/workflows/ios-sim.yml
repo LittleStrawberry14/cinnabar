@@ -238,6 +238,7 @@ jobs:
           UDID: ${{ steps.device.outputs.udid }}
           BUNDLE_ID: ${{ steps.package.outputs.bundle_id }}
           EXECUTABLE: ${{ steps.package.outputs.executable }}
+          APP: ${{ steps.package.outputs.app }}
           RUN_DIR: run
           RUN_SECONDS: ${{ github.event.inputs.run_seconds || '45' }}
         run: |
@@ -261,6 +262,10 @@ jobs:
           mkdir -p "$console"
           : > "$console/stdout.log"
           : > "$console/stderr.log"
+
+          # The preflight only unpacked the Payload; FBS says "returned nil" for a bundle it
+          # never registered, so install the app on this device before anything opens it.
+          xcrun simctl install "$UDID" "$APP"
 
           # Unified-log streaming is best-effort evidence beside the app's own files.
           # `processPath` is not a log field; `processImagePath` is, and the bundle id
