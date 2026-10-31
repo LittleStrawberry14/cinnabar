@@ -11,8 +11,10 @@ use objc2_ui_kit::UIApplication;
 /// the generic opener's worker dispatches to the main queue, which the window's run loop drains
 /// between frames, and blocks until the handoff completes.
 pub(super) fn open_url(url: &str) -> bool {
+    // The queue block outlives this call, so it owns the link it opens.
+    let url = url.to_owned();
     if let Some(marker) = MainThreadMarker::new() {
-        return open_on_main(marker, url);
+        return open_on_main(marker, &url);
     }
     let (sender, receiver) = bounded(1);
     let block = RcBlock::new(move || {
@@ -44,5 +46,6 @@ fn open_on_main(marker: MainThreadMarker, url: &str) -> bool {
         which keeps sign-in's manual recovery visible"
 )]
 fn open_url_selector(application: &UIApplication, url: &NSURL) -> bool {
-    application.openURL(url)
+    // SAFETY: the selector only hands the link to the system.
+    unsafe { application.openURL(url) }
 }

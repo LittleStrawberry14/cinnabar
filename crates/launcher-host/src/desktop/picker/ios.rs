@@ -53,7 +53,7 @@ pub(super) fn pick_documents(multiple: bool, filter: &Filter) -> Result<Vec<Pick
     let block = RcBlock::new(move || {
         // Main-queue operations only ever run on the main thread.
         let marker = MainThreadMarker::new().expect("main-queue operations run on the main thread");
-        present(marker, multiple, &types, sender);
+        present(marker, multiple, &types, &sender);
     });
     // SAFETY: `mainQueue` and the block argument follow the generated bindings' contracts.
     unsafe {
@@ -114,7 +114,7 @@ fn present(
     marker: MainThreadMarker,
     multiple: bool,
     types: &NSArray<UTType>,
-    sender: Sender<Selection>,
+    sender: &Sender<Selection>,
 ) {
     // SAFETY: the allocated picker is initialized with the content types before use.
     let picker = unsafe {
@@ -146,8 +146,9 @@ fn present(
         return;
     };
     let completion = RcBlock::new({
-        // The block outlives this call, so it holds its own strong reference.
+        // The block outlives this call, so it holds its own strong references.
         let picker = picker.clone();
+        let sender = sender.clone();
         move || {
             // A picker that UIKit refused to present never reaches its delegate, and only the
             // delegate reports successes and cancels.
