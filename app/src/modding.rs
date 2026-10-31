@@ -60,6 +60,10 @@ pub(crate) struct ModCueFeed(pub Vec<mod_host::ModCue>);
 #[derive(Default, Resource)]
 pub(crate) struct ModControlModes(pub(crate) Option<mod_host::GameplayControlModes>);
 
+/// Whether a granted mod supplied the current frame's resolved control vector.
+#[derive(Default, Resource)]
+pub(crate) struct ModMovementInputActive(pub(crate) bool);
+
 #[derive(Resource)]
 pub(crate) struct ModRuntime {
     hosts: ModHosts,
@@ -77,6 +81,11 @@ pub(crate) struct ModRuntime {
 }
 
 impl ModRuntime {
+    /// Borrows sound observers only while personal components are running and opted in.
+    pub(crate) fn sound_filters(&mut self) -> Option<&mut ModHosts> {
+        (!self.suspended && self.hosts.has_sound_filters()).then_some(&mut self.hosts)
+    }
+
     /// Starts a runtime with one host and its stable presentation metadata.
     fn new(host: ModHost, metadata: registration::HostMetadata) -> Self {
         Self {
@@ -417,6 +426,7 @@ fn install(app: &mut App, mut hosts: Vec<ModHost>) {
 fn configure_systems(app: &mut App, watching: bool) {
     app.init_resource::<native_input::NativeInput>();
     app.init_resource::<ModControlModes>();
+    app.init_resource::<ModMovementInputActive>();
     app.init_resource::<packet_render::Drawing>();
     app.init_resource::<render_scene::mod_scene::ActorCoverageRequests>();
     app.add_systems(

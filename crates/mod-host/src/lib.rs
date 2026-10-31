@@ -13,6 +13,8 @@ pub use declarations::{
 pub mod helper;
 pub use grants::{Capability, ModGrants};
 mod action_filter;
+mod sound_filter;
+pub use runtime::cinnabar::extension::sound_filter::{Position as SoundPosition, SoundEvent};
 mod block_search;
 pub use block_search::{BlockSearch, BlockSearchSource, FoundBlocks, refresh_block_searches};
 mod callback_budget;
@@ -54,8 +56,8 @@ pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens}
 pub use runtime::cinnabar::extension::gameplay::{
     CameraPose as GameplayCameraPose, CameraRig as GameplayCameraRig,
     ControlModes as GameplayControlModes, Mob as GameplayMob,
-    MovementIntents as GameplayMovementIntents, Player as GameplayPlayer,
-    Vector3 as GameplayVector3,
+    MovementInput as GameplayMovementInput, MovementIntents as GameplayMovementIntents,
+    Player as GameplayPlayer, Vector3 as GameplayVector3,
 };
 pub use runtime::cinnabar::extension::player_state::{
     Actor as ActorObservation, ActorLife, Bounds as ActorObservationBounds,
@@ -87,6 +89,8 @@ pub use terrain::{
 /// import still checks its own grant and gameplay frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GameplayFacts {
+    /// Admitted controls before any mod outputs, only while gameplay owns input.
+    pub movement_input: Option<GameplayMovementInput>,
     /// The presented camera pose, including third-person and rig offsets.
     pub camera: Option<GameplayCameraPose>,
     /// The full-strength native damage shake of the last presented view, in a connected world.
@@ -108,6 +112,8 @@ pub struct InteractionOutput {
 /// the vanilla screen it stands for would, and the server checks it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InventoryRequest {
+    /// Exchanges a player cell with the offhand within the observed session.
+    SwapOffhand { session: u64, slot: u8 },
     /// A creative catalog take of `count` of the item `identifier` with `aux`.
     CreativeTake {
         identifier: String,
@@ -151,6 +157,8 @@ pub const MAX_LABEL_BYTES: usize = 256;
 /// about 0.05 ms, 0.2 ms at p99; a frame's `mod_api::TOTAL_MOD_FRAME_FUEL`, two of them, about
 /// 0.1 ms, 0.5 ms at p99 and 1.7 ms at worst, well inside the live-testing main-CPU budgets.
 pub const FRAME_FUEL: u64 = 200_000;
+/// One frame callback per observed world session may use this larger allowance.
+pub const WORLD_ENTRY_FRAME_FUEL: u64 = 4 * FRAME_FUEL;
 const _: () = assert!(
     mod_api::TOTAL_MOD_FRAME_FUEL == 2 * FRAME_FUEL,
     "a frame admits two full frame callbacks"

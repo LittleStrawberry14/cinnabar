@@ -50,6 +50,8 @@ domain!(PackTexture {
     StrawBed
 });
 domain!(PackBlock {
+    RedstoneTorch,
+    UnlitRedstoneTorch,
     Beacon,
     Obsidian,
     Glass,
@@ -57,10 +59,17 @@ domain!(PackBlock {
     Beehive,
     ChiseledBookshelf,
     Cactus,
+    Sunflower,
     Cake,
     Farmland,
     ResinClump,
     Dirt,
+    SporeBlossom,
+    ChorusFlower,
+    PointedDripstone,
+    SulfurSpike,
+    WeepingVines,
+    TwistingVines,
     CobblestoneWall,
     Air,
     Stone,
@@ -183,7 +192,7 @@ fn vocabulary() -> &'static BTreeMap<&'static str, BTreeSet<&'static str>> {
     static VOCABULARY: OnceLock<BTreeMap<&str, BTreeSet<&str>>> = OnceLock::new();
     VOCABULARY.get_or_init(|| {
         let mut vocabulary = BTreeMap::<&str, BTreeSet<&str>>::new();
-        for row in include_str!("../../data/vanilla-pack-vocabulary-1.26.50.tsv").lines() {
+        for row in include_str!("../../data/vanilla-pack-vocabulary-1.26.60.tsv").lines() {
             let (domain, name) = row
                 .split_once('\t')
                 .expect("pack vocabulary rows are tabbed");

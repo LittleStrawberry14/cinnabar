@@ -142,7 +142,7 @@ fn fixture_with_entity_assets(
     let collisions = PhysicsCollisionRegistries::from_assets(
         bytes,
         &records,
-        include_bytes!("../../../crates/assets/data/block-physics-v2193.bin"),
+        include_bytes!("../../../crates/assets/data/block-physics-v2225.bin"),
         version,
     )
     .unwrap();
@@ -1148,6 +1148,9 @@ mod cooldown;
 
 #[path = "published_tests/bridging.rs"]
 mod bridging;
+
+#[path = "published_tests/seed_planting.rs"]
+mod seed_planting;
 
 /// Publishes another frame from the fixture's fixed camera ray against its updated world.
 fn publish_fixed_pick(world: &mut World) {

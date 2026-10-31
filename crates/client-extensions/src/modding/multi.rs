@@ -385,6 +385,37 @@ impl ModHosts {
         false
     }
 
+    /// Admitted sound filters see the same observations; any cancellation wins.
+    /// A failing filter is quarantined and contributes no cancellations to this batch.
+    pub fn filter_sounds(&mut self, events: &[mod_host::SoundEvent]) -> Vec<bool> {
+        let mut accepted = vec![true; events.len()];
+        let mut remaining = mod_api::TOTAL_SOUND_FILTER_FUEL;
+        for host in &mut self.hosts {
+            // Preserve the full callback allowance; later observers pass through this frame.
+            if remaining < mod_host::FRAME_FUEL {
+                break;
+            }
+            if !host.has_sound_filter() {
+                continue;
+            }
+            match host.filter_sounds(events.to_vec()) {
+                Ok(verdict) => {
+                    for (accepted, play) in accepted.iter_mut().zip(verdict) {
+                        *accepted &= play;
+                    }
+                }
+                Err(error) => bevy::log::warn!("Mod sound filter failed: {error:#}"),
+            }
+            remaining = remaining.saturating_sub(host.last_fuel_used());
+        }
+        accepted
+    }
+
+    /// Avoids constructing observations when no active component opted in.
+    pub fn has_sound_filters(&self) -> bool {
+        self.hosts.iter().any(ModHost::has_sound_filter)
+    }
+
     /// Only the earliest active, granted, explicitly exporting component filters actions.
     pub fn action_filter_owner(&self) -> Option<usize> {
         (0..self.host_count()).find(|&i| self.host(i).action_filter_identity().is_some())
@@ -589,14 +620,7 @@ pub fn run_frame_callbacks(
         }
         active = true;
         let grants = host.grants();
-        union.terrain |= grants.terrain;
-        union.players |= grants.players;
-        union.camera |= grants.camera;
-        union.item_use |= grants.item_use;
-        union.movement |= grants.movement;
-        union.interaction |= grants.interaction;
-        union.entities |= grants.entities;
-        union.commands.extend(grants.commands.iter().cloned());
+        union.include(grants);
     }
     let (snapshot, mobs, movement) = if active {
         world(&union)
@@ -614,7 +638,7 @@ pub fn run_frame_callbacks(
         let grants = host.grants();
         let snapshot = snapshot
             .as_ref()
-            .filter(|_| needs_gameplay(grants))
+            .filter(|_| grants.needs_gameplay())
             .map(|frame| GameplaySnapshot {
                 players: if grants.players {
                     frame.players.clone()
@@ -690,21 +714,11 @@ pub fn collect_frame_outputs(runtime: &mut ModHosts) -> Merged {
     merged
 }
 
-/// Whether the host may receive the common gameplay pose and input snapshot.
-fn needs_gameplay(grants: &ModGrants) -> bool {
-    grants.terrain
-        || grants.players
-        || grants.camera
-        || grants.item_use
-        || grants.movement
-        || grants.interaction
-        || grants.entities
-        || !grants.commands.is_empty()
-}
-
 /// One frame's combined output; for single-valued outputs the earliest mod wins.
 #[derive(Default)]
 pub struct Merged {
+    /// The earliest active, granted mod supplies the complete control vector.
+    pub movement_input: Option<mod_host::GameplayMovementInput>,
     pub rig: Option<GameplayCameraRig>,
     pub preserve_teleport_rotation: bool,
     pub view_scale: Option<[f32; 2]>,
@@ -727,6 +741,7 @@ pub struct Merged {
 impl Merged {
     /// Consumes `host`'s committed output, in load order.
     pub fn absorb(&mut self, host: &mut ModHost) {
+        self.movement_input = self.movement_input.or(host.movement_input());
         self.jump_pulse |= host.take_jump_pulse();
         self.jump_cancel |= host.take_jump_cancel();
         if let Some(intents) = host.movement_intents() {
