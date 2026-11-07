@@ -478,7 +478,6 @@
     }
   },
   "unresolved_retail": [
-    "minecraft:chorus_plant",
     "minecraft:disc_press",
     "minecraft:ice_crystal",
     "minecraft:icicle"
@@ -586,7 +585,7 @@
     }
   ],
   "movement_census": {
-    "identifiers_sha256": "d9dccba6808174a462af3be8b9c9a2a625675fe946891431667cc61368f4546d",
+    "identifiers_sha256": "bb2494c4bb0fe40dc1e95ded7afddf5450dfafd10c2ad83ed4530ac6ab5c1308",
     "unmodeled": [
       "minecraft:acacia_door",
       "minecraft:acacia_fence_gate",
@@ -1084,6 +1083,14 @@
       "status": "verified"
     },
     {
+      "id": "shape-straw-bed",
+      "fact": "shape:STRAW_BED",
+      "members": [
+        "minecraft:straw_bed"
+      ],
+      "status": "verified"
+    },
+    {
       "id": "render-authored-model",
       "fact": "render:AuthoredModel",
       "status": "verified",
@@ -1358,7 +1365,8 @@
         "minecraft:grindstone",
         "minecraft:cartography_table",
         "minecraft:smithing_table",
-        "minecraft:beacon"
+        "minecraft:beacon",
+        "minecraft:lectern"
       ]
     },
     {
@@ -1429,6 +1437,103 @@
         "minecraft:iron_door",
         "minecraft:iron_trapdoor"
       ]
+    },
+    {
+      "id": "interactive-classes",
+      "fact": "INTERACTIVE",
+      "status": "verified",
+      "model_family": [
+        "Door",
+        "Trapdoor",
+        "Gate",
+        "Button",
+        "Lever",
+        "Bed",
+        "Chest",
+        "Sign",
+        "Statue",
+        "ChiseledBookshelf"
+      ],
+      "members": [
+        "minecraft:anvil",
+        "minecraft:barrel",
+        "minecraft:beacon",
+        "minecraft:bell",
+        "minecraft:blast_furnace",
+        "minecraft:brewing_stand",
+        "minecraft:cartography_table",
+        "minecraft:cauldron",
+        "minecraft:chain_command_block",
+        "minecraft:chalkboard",
+        "minecraft:chipped_anvil",
+        "minecraft:command_block",
+        "minecraft:composter",
+        "minecraft:compound_creator",
+        "minecraft:crafter",
+        "minecraft:crafting_table",
+        "minecraft:damaged_anvil",
+        "minecraft:daylight_detector",
+        "minecraft:daylight_detector_inverted",
+        "minecraft:decorated_pot",
+        "minecraft:deprecated_anvil",
+        "minecraft:dispenser",
+        "minecraft:dropper",
+        "minecraft:element_constructor",
+        "minecraft:enchanting_table",
+        "minecraft:end_portal_frame",
+        "minecraft:flower_pot",
+        "minecraft:frame",
+        "minecraft:furnace",
+        "minecraft:glow_frame",
+        "minecraft:grindstone",
+        "minecraft:hopper",
+        "minecraft:jigsaw",
+        "minecraft:jukebox",
+        "minecraft:lab_table",
+        "minecraft:lectern",
+        "minecraft:lit_blast_furnace",
+        "minecraft:lit_furnace",
+        "minecraft:lit_smoker",
+        "minecraft:loom",
+        "minecraft:material_reducer",
+        "minecraft:noteblock",
+        "minecraft:powered_comparator",
+        "minecraft:powered_repeater",
+        "minecraft:repeating_command_block",
+        "minecraft:respawn_anchor",
+        "minecraft:smithing_table",
+        "minecraft:smoker",
+        "minecraft:stonecutter_block",
+        "minecraft:structure_block",
+        "minecraft:sweet_berry_bush",
+        "minecraft:unpowered_comparator",
+        "minecraft:unpowered_repeater",
+        "minecraft:vault"
+      ]
+    },
+    {
+      "id": "interactive-shulker_box",
+      "fact": "INTERACTIVE",
+      "status": "verified",
+      "suffix": "shulker_box"
+    },
+    {
+      "id": "interactive-candle",
+      "fact": "INTERACTIVE",
+      "status": "verified",
+      "suffix": "candle"
+    },
+    {
+      "id": "interactive-candle_cake",
+      "fact": "INTERACTIVE",
+      "status": "verified",
+      "suffix": "candle_cake"
+    },
+    {
+      "id": "interactive-shelf",
+      "fact": "INTERACTIVE",
+      "status": "verified",
+      "suffix": "_shelf"
     },
     {
       "id": "humanoid_wearable-31",
@@ -3281,6 +3386,22 @@
       ]
     },
     {
+      "id": "render-lectern",
+      "fact": "render:Lectern",
+      "status": "provisional",
+      "members": [
+        "minecraft:lectern"
+      ]
+    },
+    {
+      "id": "render-bell",
+      "fact": "render:Bell",
+      "status": "provisional",
+      "members": [
+        "minecraft:bell"
+      ]
+    },
+    {
       "id": "render-lever",
       "fact": "render:Lever",
       "status": "provisional",
@@ -3708,7 +3829,9 @@
         "minecraft:barrier",
         "minecraft:structure_void",
         "minecraft:invisible_bedrock",
-        "minecraft:moving_block"
+        "minecraft:moving_block",
+        "minecraft:piston_arm_collision",
+        "minecraft:sticky_piston_arm_collision"
       ],
       "prefix": "light_block_"
     },
@@ -6310,6 +6433,20 @@
     },
     {
       "entry": {
+        "nbt_id": "PistonArm",
+        "route": "model",
+        "renderer": "piston_arm",
+        "diagnostic": "deferred",
+        "geometry": "any"
+      },
+      "members": [
+        "minecraft:piston",
+        "minecraft:sticky_piston"
+      ],
+      "status": "verified"
+    },
+    {
+      "entry": {
         "nbt_id": "Bell",
         "route": "model",
         "renderer": "bell",
@@ -7107,6 +7244,9 @@
       ]
     },
     "ambient_blocks": {
+      "EnderChest": [
+        "minecraft:ender_chest"
+      ],
       "Fire": [
         "minecraft:fire"
       ],
@@ -7176,6 +7316,7 @@
     ],
     "blocks": {
       "RedstoneTorch": "minecraft:redstone_torch",
+      "RedstoneWire": "minecraft:redstone_wire",
       "UnlitRedstoneTorch": "minecraft:unlit_redstone_torch",
       "Beacon": "minecraft:beacon",
       "Obsidian": "minecraft:obsidian",
@@ -7189,7 +7330,10 @@
       "ResinClump": "minecraft:resin_clump",
       "Sunflower": "minecraft:sunflower",
       "Dirt": "minecraft:dirt",
+      "ChorusPlant": "minecraft:chorus_plant",
+      "EndStone": "minecraft:end_stone",
       "SporeBlossom": "minecraft:spore_blossom",
+      "CarvedPumpkin": "minecraft:carved_pumpkin",
       "ChorusFlower": "minecraft:chorus_flower",
       "PointedDripstone": "minecraft:pointed_dripstone",
       "SulfurSpike": "minecraft:sulfur_spike",
@@ -7201,6 +7345,8 @@
       "HeavyCore": "minecraft:heavy_core",
       "Crafter": "minecraft:crafter",
       "DriedGhast": "minecraft:dried_ghast",
+      "TurtleEgg": "minecraft:turtle_egg",
+      "TripWire": "minecraft:trip_wire",
       "SculkSensor": "minecraft:sculk_sensor",
       "CalibratedSculkSensor": "minecraft:calibrated_sculk_sensor",
       "SculkShrieker": "minecraft:sculk_shrieker",
