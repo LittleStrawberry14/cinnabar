@@ -57,6 +57,15 @@ IPA is refused with an explanation). The verdict is pass only when the process s
 the whole `run_seconds` window; the `ios-sim-launch` artifact carries the captured console,
 the client's own `data/logs`, crash reports and periodic screenshots.
 
+The lane's launch phase is complete (the app installs and starts), but the gate still reports a
+documented failure on the simulator: the app exits at the renderer stage. wgpu's Metal backend
+reads base-vertex support through IO GPU feature set 3 with the deprecated `supportsFeatureSet`
+query, which the simulator's proxy device does not answer, so the strict renderer gate rejects
+the emulated adapter (`GPU lacks renderer capabilities: DownlevelFlags(BASE_VERTEX)`) and the
+app reports that no safe adapter remains. Physical iPhone GPUs from feature set 3 (A10) onward
+pass this gate, which is why the device lanes carry the build evidence. Until wgpu derives the
+capability from `MTLGPUFamily` on the simulator, the 45-second survival window cannot run there.
+
 ## Sideload from Windows
 
 Either tool signs the IPA with your Apple ID. A free Apple ID signs it for 7 days; sideload it

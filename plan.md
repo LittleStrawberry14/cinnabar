@@ -1667,7 +1667,11 @@ launches. Native Windows startup, update and crash-restart acceptance remains in
   remains open. On-device first-run preparation, native crash capture, clipboard, local worlds
   and running wasm mods (no JIT) remain unavailable. Sign-in hands the device code to Safari on
   the device, and import buttons open the document picker that copies picks into app storage;
-  neither has device acceptance evidence yet.
+  neither has device acceptance evidence yet. The simulator lane installs and launches the
+  package, but the app exits at the renderer stage: the emulated GPU's base-vertex support is
+  invisible to wgpu's deprecated iOS feature-set query, the strict renderer gate rejects it and
+  the packed chunk renderer has no non-base-vertex path, so simulator launch survival stays
+  open until wgpu reads the capability from MTLGPUFamily on the simulator.
 - Local mods and server experiences still need runtime/input isolation, reload/reorder/
   removal, consent, custom screen transitions and media qualification. Unmeasured shared
   Ordinary touch controls take focus only after a completed tap, preserving manual scroll positions during pending swipes.
